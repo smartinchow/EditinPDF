@@ -4,8 +4,8 @@ import Foundation
 /// localisation, when it comes, has a single entry point. Views and models ask this type for their
 /// text instead of spelling out their own.
 enum Strings {
-    /// The placeholder document screen's only content. The viewer replaces it with the page
-    /// indicator.
+    /// How many pages the document has, shown on the document screen until the page indicator
+    /// replaces it.
     static func pageCount(_ count: Int) -> String {
         String(localized: "\(count) pages", comment: "Placeholder on the document screen: how many pages the document has")
     }

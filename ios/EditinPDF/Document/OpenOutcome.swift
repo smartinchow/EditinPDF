@@ -5,9 +5,9 @@ import os
 /// What opening a file's bytes came to.
 ///
 /// The engine's open is synchronous and can be slow, so it runs where the file is read, which is
-/// off the main actor, and the result crosses to the main-actor `DocumentModel` as this value. The
-/// bridge declares `PdfDocument` `Sendable` (it is safe to share between threads), so the whole
-/// enum is.
+/// off the main actor (observed off the main thread on the iOS 26.5 simulator), and the result
+/// crosses to the main-actor `DocumentModel` as this value. The bridge declares `PdfDocument`
+/// `Sendable` (it is safe to share between threads), so the whole enum is.
 enum OpenOutcome: Sendable {
     /// The file is a PDF the engine opened.
     case open(PdfDocument)

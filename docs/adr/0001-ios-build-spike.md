@@ -153,6 +153,8 @@ scale 0.5 (306 x 396 px), `cargo test` profile on the Apple M5: the first `rende
 includes parsing the document into the first renderer), the second 0.12 ms, the whole test about 1.0 ms with the
 fixture and the open; the page is nearly blank, so this is a floor, to be re-measured with a real document in Task 7.
 
+Tile render on the simulator (Task 7): one 1024 x 1024 tile of a text page (`renderTile` + `TileRenderer.image`, `ContinuousClock`, release Rust core, Debug app, iPhone 17 Pro simulator on iOS 26.5, Apple M5) takes 5.9 ms median uncontended (4.9-6.3 ms over 30 calls; the `CGImage` 0.004 ms, no copy), and 9.6 ms median (p90 16 ms, 160 tiles) while `CATiledLayer` draws several at once and a third waits for one of the two renderers; the cost is linear in pixels (about 5.7 ns each; a whole 306 x 396 page takes 0.7 ms), and Task 3 measured 0.8 ms for the engine's own drawing of such a tile, so most of it is moving the 4 MiB of pixels through the bridge (it copies them several times).
+
 ## Findings for later tasks
 
 - Deployment target. Without `IPHONEOS_DEPLOYMENT_TARGET`, the 371 C objects of `aws-lc-sys` are stamped

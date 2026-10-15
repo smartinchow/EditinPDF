@@ -6,7 +6,9 @@ import UniformTypeIdentifiers
 ///
 /// SwiftUI creates it off the main actor, once per opened file, and requires it to be `Sendable`;
 /// that is why it holds only immutable values (the bytes and what the engine made of them) and
-/// builds the main-actor `DocumentModel` on first use instead of in `init`.
+/// builds the main-actor `DocumentModel` on first use instead of in `init`. Observed off the main
+/// thread on the iOS 26.5 simulator: `init(configuration:)` reported `Thread.isMainThread` false
+/// on every open.
 final class PDFFileDocument: ReferenceFileDocument {
     static var readableContentTypes: [UTType] { [.pdf] }
 
