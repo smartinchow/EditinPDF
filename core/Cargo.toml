@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["editinpdf-core", "uniffi-bindgen"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -34,6 +35,10 @@ hayro = { path = "../upstream/pdfcraft/vendor/hayro" }
 hayro-syntax = { path = "../upstream/pdfcraft/vendor/hayro-syntax" }
 hayro-jbig2 = { path = "../upstream/pdfcraft/vendor/hayro-jbig2" }
 lopdf = { path = "../upstream/pdfcraft/vendor/lopdf" }
+
+# num_threads 0.1.7 (via boa_engine -> time) calls libc::mach_task_self(), which libc only declares for
+# macOS, so it does not compile for iOS. Patched copy; see vendor/num_threads/PATCH.md.
+num_threads = { path = "vendor/num_threads" }
 
 [profile.release]
 opt-level = 3
