@@ -30,7 +30,7 @@ impl From<pdfcraft_render::OpenError> for OpenError {
     }
 }
 
-/// Why a page could not be rendered.
+/// Why a page could not be drawn, or its text could not be read.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum RenderError {
     /// The document has no page with this index (pages count from 0).
@@ -40,8 +40,9 @@ pub enum RenderError {
     /// of zero): both are reported the same way, since either way the size is outside 1 to 4096.
     #[error("tile too large (max 4096 px per side)")]
     TileTooLarge,
-    /// The page could not be drawn: the scale is not a positive, finite number, or the engine could
-    /// not draw the page. `message` says what was wrong.
+    /// The page could not be drawn or its text could not be read: the scale is not a positive,
+    /// finite number, or the engine could not draw the page or read its text. `message` says what
+    /// was wrong.
     #[error("{message}")]
     Failed { message: String },
 }

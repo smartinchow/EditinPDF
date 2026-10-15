@@ -1,5 +1,5 @@
-//! Page rendering: the pool of renderers behind `PdfDocument::render_tile`, and the translation
-//! between the bridge's records and the engine's render requests and results.
+//! Page rendering: the pool of renderers behind `PdfDocument::render_tile` and the page text calls,
+//! and the translation between the bridge's records and the engine's render requests and results.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 
@@ -58,6 +58,23 @@ fn tile_for(rect: TileRect) -> Result<Tile, RenderError> {
     })
 }
 
+/// The request for the text layer of the 0-based `page`: its glyphs, with their Unicode text and
+/// their boxes in view space.
+///
+/// The engine takes it as one more kind of request, so it goes to the same renderers as a drawing.
+/// (Whether `page` exists is for the document to say; this does not know.)
+pub(crate) fn text_request(page: u32) -> Result<RenderRequest, RenderError> {
+    Ok(RenderRequest {
+        page: usize::try_from(page).map_err(|_| RenderError::PageOutOfRange { page })?,
+        kind: RequestKind::Text,
+        tile: None,
+        // The engine reads no scale for text; this is the value of a plain 72 dpi drawing.
+        scale: 1.0,
+        tag: 0,
+        preview: false,
+    })
+}
+
 /// The tile the engine drew, or why it drew none.
 pub(crate) fn into_tile(drawn: RenderedPage) -> Result<RenderedTile, RenderError> {
     let RenderedPage {
@@ -91,6 +108,19 @@ pub(crate) fn into_tile(drawn: RenderedPage) -> Result<RenderedTile, RenderError
         width,
         height,
         rgba: rgba.to_vec(),
+    })
+}
+
+/// The text layer the engine extracted, or why it extracted none.
+///
+/// A page without any text (a scan) is not a failure: the engine answers with a layer that has no
+/// glyphs. A failure is a page it could not read at all, and carries the engine's reason.
+pub(crate) fn into_text(
+    extracted: RenderedPage,
+) -> Result<Arc<pdfcraft_render::PageText>, RenderError> {
+    let RenderedPage { text, error, .. } = extracted;
+    text.ok_or_else(|| RenderError::Failed {
+        message: error.unwrap_or_else(|| "the page's text could not be read".to_owned()),
     })
 }
 
@@ -256,6 +286,15 @@ mod tests {
         assert!(pixel_request(0, f64::from(f32::MAX), None).is_ok());
     }
 
+    #[test]
+    fn a_text_request_asks_for_the_text_layer_of_one_page() {
+        let request = text_request(3).unwrap();
+        assert_eq!(request.page, 3);
+        assert_eq!(request.kind, RequestKind::Text);
+        assert_eq!(request.tile, None);
+        assert!(!request.preview);
+    }
+
     // ---- results
 
     fn drawn(width: u32, height: u32, words: Vec<u32>, error: Option<&str>) -> RenderedPage {
@@ -334,6 +373,47 @@ mod tests {
         assert!(matches!(err, RenderError::Failed { .. }), "{err:?}");
     }
 
+    /// What the engine answers a text request with: the layer, or why there is none.
+    fn extracted(
+        text: Option<Arc<pdfcraft_render::PageText>>,
+        error: Option<&str>,
+    ) -> RenderedPage {
+        RenderedPage {
+            request: RenderRequest::default(),
+            width: 0,
+            height: 0,
+            rgba: Pixels::default(),
+            error: error.map(str::to_owned),
+            text,
+            warnings: Vec::new(),
+            millis: 0,
+        }
+    }
+
+    #[test]
+    fn an_extracted_layer_is_handed_on_as_it_is() {
+        let layer = Arc::new(pdfcraft_render::PageText::default());
+        let text = into_text(extracted(Some(layer.clone()), None)).unwrap();
+        assert!(Arc::ptr_eq(&layer, &text));
+        // A page without text is a layer without glyphs, not a failure.
+        assert!(text.glyphs.is_empty());
+    }
+
+    #[test]
+    fn no_layer_is_a_failure_that_carries_the_engines_reason() {
+        let err = into_text(extracted(None, Some("page 2 does not exist"))).unwrap_err();
+        assert!(
+            matches!(&err, RenderError::Failed { message } if message == "page 2 does not exist"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn no_layer_and_no_reason_is_still_a_failure_with_a_message() {
+        let err = into_text(extracted(None, None)).unwrap_err();
+        assert!(matches!(&err, RenderError::Failed { message } if !message.is_empty()));
+    }
+
     // ---- the pool
 
     #[test]
@@ -349,6 +429,23 @@ mod tests {
             assert_eq!(pool.render(draw_page_zero()).error, None);
         }
         assert_eq!(pool.built(), 1, "an idle renderer is reused, not added to");
+    }
+
+    #[test]
+    fn a_pages_text_is_read_by_the_renderer_that_draws_it() {
+        let pool = RendererPool::new(0, one_page(), None);
+        assert_eq!(pool.render(draw_page_zero()).error, None);
+        let read = pool.render(text_request(0).unwrap());
+        assert_eq!(read.error, None);
+        assert_eq!(read.text.unwrap().plain_text(), "hello");
+        assert_eq!(pool.built(), 1, "text is not read by a renderer of its own");
+        // And a page the document does not have is the engine's failure to report.
+        let missing = pool.render(text_request(5).unwrap());
+        assert!(missing.text.is_none() && missing.error.is_some());
+        assert!(matches!(
+            into_text(missing),
+            Err(RenderError::Failed { .. })
+        ));
     }
 
     #[test]

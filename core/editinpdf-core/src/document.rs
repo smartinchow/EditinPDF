@@ -5,10 +5,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use pdfcraft_engine::{DocId, Session};
 
 use crate::render::{self, RendererPool};
-use crate::{OpenError, PageInfo, RenderError, RenderedTile, TileRect};
+use crate::text::{self, EnginePageText, TextCache};
+use crate::{
+    OpenError, PageInfo, PageText, RenderError, RenderedTile, SearchHit, TextSelection, TileRect,
+};
 
 /// An open PDF document. Safe to share between threads. Calls on one document run one at a time,
-/// except drawing pages, which can run alongside each other and alongside the other calls.
+/// except those that draw a page or read its text, which can run alongside each other and alongside
+/// the other calls.
 #[derive(uniffi::Object)]
 pub struct PdfDocument {
     // The engine session is not `Sync`, so it lives behind a single mutex. Every method locks once
@@ -25,6 +29,10 @@ struct Inner {
     /// revision changes. Shared out as an `Arc`, so a render that is under way keeps its renderers
     /// even if a newer revision has replaced them here.
     renderers: Option<Arc<RendererPool>>,
+    /// The text of the pages read so far, for the revision it was read from. Like `renderers`, it
+    /// is replaced by the first use after the revision changes, so each page's text is read from the
+    /// engine once per revision rather than once per call.
+    text_cache: TextCache,
 }
 
 impl Inner {
@@ -75,6 +83,34 @@ impl PdfDocument {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// The engine's text layer for the 0-based `page` at the current revision: the one read before
+    /// when the cache has it, otherwise read now and cached.
+    ///
+    /// Reading is the engine's work, done on one of the pool's renderers. The state lock is held to
+    /// look in the cache and fetch the renderers, and again to store the result, never while the
+    /// engine reads. Two calls that both miss for the same page both read it, which costs time and
+    /// nothing else.
+    fn text_layer(&self, page: u32) -> Result<Arc<EnginePageText>, RenderError> {
+        let request = render::text_request(page)?;
+        let pool = {
+            let mut inner = self.lock();
+            let revision = inner.revision;
+            if let Some(layer) = inner.text_cache.get(revision, page) {
+                return Ok(layer);
+            }
+            // This is also where a page the document does not have is turned away.
+            inner.render_pool(page)?
+        };
+        let layer = render::into_text(pool.render(request))?;
+        // Filed under the revision the renderers were made for, not the current one: the revision
+        // can have changed while the engine read, and this is then the text of a document that is
+        // gone. The cache drops such a layer.
+        self.lock()
+            .text_cache
+            .insert(pool.revision(), page, layer.clone());
+        Ok(layer)
+    }
 }
 
 #[uniffi::export]
@@ -94,6 +130,7 @@ impl PdfDocument {
                 id,
                 revision: 0,
                 renderers: None,
+                text_cache: TextCache::default(),
             }),
         }))
     }
@@ -136,8 +173,9 @@ impl PdfDocument {
     /// how much) instead of failing. For a tile, a scale outside 0.01 through 400 is clamped to it.
     ///
     /// Safe to call from several threads at once: up to two pages of one document are drawn at the
-    /// same time, further calls wait their turn, and the document's other methods never wait for a
-    /// drawing.
+    /// same time (reading a page's text takes one of the two places while it lasts), further calls
+    /// wait their turn, and the document's other methods, such as `page_count` and `page_info`,
+    /// never wait for a drawing.
     ///
     /// Fails with `PageOutOfRange` for a page the document does not have, with `TileTooLarge` when
     /// `rect` is wider or taller than 4096 pixels or has no area (a zero width or height), and with
@@ -156,6 +194,87 @@ impl PdfDocument {
             inner.render_pool(page)?
         };
         render::into_tile(pool.render(request))
+    }
+
+    /// The text of the 0-based page `page`: its glyphs in reading order, each with the characters it
+    /// stands for and its box in view space (points from the page's top-left corner as shown, after
+    /// its rotation).
+    ///
+    /// A page without text, such as a scan, has no glyphs. A glyph is known by its index in the
+    /// result: selections and search hits name theirs that way, and the indices stay the same for as
+    /// long as the document's `revision` does.
+    ///
+    /// The first call for a page reads its text, which can take a moment. The text is kept, so later
+    /// calls for the page, and selecting and searching in it, are quick until the document changes.
+    ///
+    /// Fails with `PageOutOfRange` for a page the document does not have, and with `Failed` for a
+    /// page whose text the engine cannot read.
+    pub fn page_text(&self, page: u32) -> Result<PageText, RenderError> {
+        let layer = self.text_layer(page)?;
+        Ok(PageText::from_engine(&layer))
+    }
+
+    /// The word at the point (`x`, `y`) of the 0-based page `page`, as a double tap selects it. The
+    /// point is in view space: points from the page's top-left corner as shown, after its rotation.
+    ///
+    /// Nothing when there is no word there: the page has no text, the point is not on a word or
+    /// within half a glyph's size of one, or it is on the blank between two words.
+    ///
+    /// Fails with `PageOutOfRange` for a page the document does not have, and with `Failed` for a
+    /// page whose text the engine cannot read.
+    pub fn select_word(
+        &self,
+        page: u32,
+        x: f64,
+        y: f64,
+    ) -> Result<Option<TextSelection>, RenderError> {
+        let layer = self.text_layer(page)?;
+        Ok(text::select_word(page, &layer, x, y))
+    }
+
+    /// The text of the 0-based page `page` from glyph `start` up to, but not including, glyph `end`,
+    /// the indices being those of the glyphs `page_text` gives: what dragging from one glyph to
+    /// another selects.
+    ///
+    /// An `end` past the last glyph is taken as the last, and a `start` past the `end` as the `end`,
+    /// so the selection comes back shorter or empty; the indices are never an error.
+    ///
+    /// Fails with `PageOutOfRange` for a page the document does not have, and with `Failed` for a
+    /// page whose text the engine cannot read.
+    pub fn select_range(
+        &self,
+        page: u32,
+        start: u32,
+        end: u32,
+    ) -> Result<TextSelection, RenderError> {
+        let layer = self.text_layer(page)?;
+        Ok(text::select_range(page, &layer, start, end))
+    }
+
+    /// Finds `query` in the text of every page. The hits come in page order, and in reading order
+    /// within a page.
+    ///
+    /// Capital and small letters match each other unless `case_sensitive` is set. The words of
+    /// `query` may be separated by any amount of white space, and a match may run over a line break.
+    /// A `query` that is empty or only white space finds nothing, and so does a page without text or
+    /// one whose text cannot be read; the other pages are still searched.
+    ///
+    /// The first search reads the text of every page, which takes a while for a long document, so
+    /// call it away from the main thread. The text is kept, so later searches are quick. A search
+    /// reads one page at a time and holds nothing else of the document, so drawing and the other
+    /// calls carry on alongside it.
+    pub fn search(&self, query: String, case_sensitive: bool) -> Vec<SearchHit> {
+        // Nothing to look for, so there is no reason to read any page.
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        let mut hits = Vec::new();
+        for page in 0..self.page_count() {
+            if let Ok(layer) = self.text_layer(page) {
+                hits.extend(text::search_page(page, &layer, &query, case_sensitive));
+            }
+        }
+        hits
     }
 }
 
@@ -211,6 +330,92 @@ mod tests {
             Err(RenderError::PageOutOfRange { page: 1 })
         ));
         assert!(inner.renderers.is_none(), "nothing was built for it");
+    }
+
+    #[test]
+    fn a_pages_text_is_read_once_per_revision() {
+        let doc = open_one_page();
+        let first = doc.text_layer(0).unwrap();
+        assert_eq!(first.plain_text(), "hello");
+        assert!(
+            Arc::ptr_eq(&first, &doc.text_layer(0).unwrap()),
+            "the same revision keeps the text it read"
+        );
+
+        doc.lock().revision += 1;
+        let second = doc.text_layer(0).unwrap();
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "a new revision reads the page again"
+        );
+        assert_eq!(second.plain_text(), "hello");
+        assert!(
+            Arc::ptr_eq(&second, &doc.text_layer(0).unwrap()),
+            "and keeps that in turn"
+        );
+        // A read that began before the change still holds the old text and can finish.
+        assert_eq!(first.plain_text(), "hello");
+    }
+
+    #[test]
+    fn a_page_that_does_not_exist_has_no_text_and_nothing_is_kept_for_it() {
+        let doc = open_one_page();
+        assert!(matches!(
+            doc.text_layer(1),
+            Err(RenderError::PageOutOfRange { page: 1 })
+        ));
+        let mut inner = doc.lock();
+        assert!(inner.text_cache.get(0, 1).is_none());
+        assert!(inner.renderers.is_none(), "no renderers were built for it");
+    }
+
+    #[test]
+    fn text_is_read_by_the_renderers_the_drawing_uses() {
+        let doc = open_one_page();
+        doc.render_tile(0, 0.25, None).unwrap();
+        let pool = doc.lock().render_pool(0).unwrap();
+        doc.page_text(0).unwrap();
+        assert!(
+            Arc::ptr_eq(&pool, &doc.lock().render_pool(0).unwrap()),
+            "reading the text did not replace the pool"
+        );
+    }
+
+    #[test]
+    fn reading_text_while_both_renderers_are_busy_does_not_hold_up_the_document() {
+        let doc = open_one_page();
+        let pool = doc.lock().render_pool(0).unwrap();
+        // Both renderers are busy, as two long drawings would leave them, so the read has to wait.
+        let busy = pool.hold_all();
+        let (finished, result) = mpsc::channel();
+        let reading = {
+            let doc = doc.clone();
+            thread::spawn(move || {
+                let _ = finished.send(doc.page_text(0).is_ok());
+            })
+        };
+        assert!(
+            result.recv_timeout(Duration::from_millis(200)).is_err(),
+            "the read should be waiting for a renderer"
+        );
+        // If the read held the state lock while it waited, this would never be answered; the
+        // timeout turns a hang into a failure.
+        let (answered, answer) = mpsc::channel();
+        {
+            let doc = doc.clone();
+            thread::spawn(move || {
+                let _ = answered.send((doc.page_count(), doc.revision()));
+            });
+        }
+        assert_eq!(
+            answer
+                .recv_timeout(Duration::from_secs(60))
+                .expect("the document should answer while a read waits"),
+            (1, 0)
+        );
+        drop(busy);
+        assert!(result.recv_timeout(Duration::from_secs(60)).unwrap());
+        reading.join().unwrap();
     }
 
     #[test]

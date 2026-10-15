@@ -76,9 +76,131 @@ impl std::fmt::Debug for RenderedTile {
     }
 }
 
+/// A rectangle on a page, in points (1/72 inch) in *view space*: measured from the top-left corner
+/// of the page as shown (after its `/Rotate`), with `x` growing to the right and `y` growing down.
+#[derive(uniffi::Record, Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    /// Distance from the page's left edge to the rectangle's left edge.
+    pub x: f64,
+    /// Distance from the page's top edge to the rectangle's top edge.
+    pub y: f64,
+    /// Width: the distance from the left edge to the right edge.
+    pub width: f64,
+    /// Height: the distance from the top edge to the bottom edge.
+    pub height: f64,
+}
+
+impl Rect {
+    /// The record for a box the engine reports as `[left, top, right, bottom]`.
+    ///
+    /// The engine's text boxes are in view space already, so nothing is turned or shifted here:
+    /// this is the one place they become records.
+    pub(crate) fn from_engine(rect: [f32; 4]) -> Self {
+        // Widened before subtracting: for page-sized numbers the difference of two single
+        // precision values is exact in double precision, so `x + width` is the engine's right edge.
+        let [left, top, right, bottom] = rect.map(f64::from);
+        Self {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        }
+    }
+}
+
+/// One glyph of a page's text: the characters it stands for and the box it takes up on the page.
+///
+/// A glyph is usually one character. A ligature such as "fi" is one glyph standing for several, and
+/// the space between two words is a glyph of its own when the page draws one.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct TextGlyph {
+    /// The glyph's text: one character, or several for a ligature.
+    pub text: String,
+    /// The box the glyph takes up, in view space.
+    pub rect: Rect,
+}
+
+/// The text of one page: its glyphs in reading order. A page without text, such as a scan, has no
+/// glyphs.
+///
+/// A glyph is known by its index in `glyphs`. Selections and search hits name their glyphs by these
+/// indices, which stay the same for as long as the document's revision does.
+#[derive(uniffi::Record, Clone)]
+pub struct PageText {
+    /// The page's glyphs, in reading order.
+    pub glyphs: Vec<TextGlyph>,
+}
+
+impl PageText {
+    /// The record for the text the engine extracted from a page.
+    pub(crate) fn from_engine(text: &pdfcraft_render::PageText) -> Self {
+        Self {
+            glyphs: text
+                .glyphs
+                .iter()
+                .map(|glyph| TextGlyph {
+                    text: glyph.text.clone(),
+                    rect: Rect::from_engine(glyph.rect),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl std::fmt::Debug for PageText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The glyphs are the page's text, which is the document's business, and a page's worth of
+        // them would drown a log or a failed assertion; say how many there are instead.
+        f.debug_struct("PageText")
+            .field("glyph_count", &self.glyphs.len())
+            .finish()
+    }
+}
+
+/// A run of one page's text, as a tap on a word or a drag between two glyphs selects it.
+///
+/// `start` and `end` are glyph indices into the page's `PageText`: the selection covers the glyphs
+/// from `start` up to, but not including, `end`. They stay valid for as long as the document's
+/// revision stays the same.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct TextSelection {
+    /// The 0-based page the text is on.
+    pub page: u32,
+    /// The index of the first selected glyph.
+    pub start: u32,
+    /// The index one past the last selected glyph, so `end - start` glyphs are selected.
+    pub end: u32,
+    /// The boxes to highlight, in view space and in reading order: one for each line the selection
+    /// runs across, with that line's selected glyphs merged into it.
+    pub rects: Vec<Rect>,
+    /// The selected text as it reads: the spaces between words and the line breaks between lines
+    /// are there, whether or not the page draws them as glyphs.
+    pub text: String,
+}
+
+/// One place a search found its text.
+///
+/// `start` and `end` are glyph indices into the page's `PageText`, as in `TextSelection`: the match
+/// covers the glyphs from `start` up to, but not including, `end`, and the indices stay valid for as
+/// long as the document's revision stays the same.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct SearchHit {
+    /// The 0-based page the match is on.
+    pub page: u32,
+    /// The index of the match's first glyph.
+    pub start: u32,
+    /// The index one past the match's last glyph.
+    pub end: u32,
+    /// The boxes to highlight, in view space: one for each line the match runs across.
+    pub rects: Vec<Rect>,
+    /// The line the match starts on, to show it in context: trimmed, and at most 80 characters.
+    /// A longer line is cut down to the part around the match.
+    pub snippet: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PageInfo, RenderedTile};
+    use super::{PageInfo, PageText, Rect, RenderedTile};
 
     fn engine_page(label: &str, rotation: u16) -> pdfcraft_render::PageInfo {
         pdfcraft_render::PageInfo {
@@ -136,5 +258,78 @@ mod tests {
         let text = format!("{tile:?}");
         assert!(text.contains("4 bytes"), "{text}");
         assert!(!text.contains("33"), "{text}");
+    }
+
+    #[test]
+    fn a_box_becomes_its_left_and_top_edges_and_its_size() {
+        let rect = Rect::from_engine([1.5, 2.0, 4.0, 8.25]);
+        assert_eq!(
+            rect,
+            Rect {
+                x: 1.5,
+                y: 2.0,
+                width: 2.5,
+                height: 6.25
+            }
+        );
+    }
+
+    #[test]
+    fn a_boxs_right_and_bottom_edges_are_the_engines_to_the_last_bit() {
+        // Edges that single precision cannot write exactly, as the engine's real ones are.
+        for edge in [[79.942, 74.2, 86.058, 85.2], [706.8, 72.0, 717.8, 79.942]] {
+            let rect = Rect::from_engine(edge);
+            assert_eq!(rect.x + rect.width, f64::from(edge[2]), "{edge:?}");
+            assert_eq!(rect.y + rect.height, f64::from(edge[3]), "{edge:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_text_has_a_glyph_for_each_engine_glyph() {
+        let glyph = |text: &str, rect: [f32; 4]| pdfcraft_render::TextGlyph {
+            text: text.to_owned(),
+            rect,
+            quad: [[0.0; 2]; 4],
+            direction: [1.0, 0.0],
+        };
+        let engine = pdfcraft_render::PageText {
+            glyphs: vec![
+                glyph("\u{fb01}", [10.0, 20.0, 30.0, 40.0]),
+                glyph(" ", [30.0, 20.0, 35.0, 40.0]),
+            ],
+            line_of: vec![0, 0],
+            space_before: vec![false, false],
+        };
+        let text = PageText::from_engine(&engine);
+        assert_eq!(text.glyphs.len(), 2);
+        assert_eq!(text.glyphs[0].text, "\u{fb01}");
+        assert_eq!(
+            text.glyphs[0].rect,
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                width: 20.0,
+                height: 20.0
+            }
+        );
+        assert_eq!(text.glyphs[1].text, " ");
+        assert!(
+            PageText::from_engine(&pdfcraft_render::PageText::default())
+                .glyphs
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_page_texts_debug_text_leaves_out_the_text() {
+        let text = PageText {
+            glyphs: vec![super::TextGlyph {
+                text: "secret".to_owned(),
+                rect: Rect::from_engine([0.0; 4]),
+            }],
+        };
+        let shown = format!("{text:?}");
+        assert!(shown.contains("glyph_count: 1"), "{shown}");
+        assert!(!shown.contains("secret"), "{shown}");
     }
 }

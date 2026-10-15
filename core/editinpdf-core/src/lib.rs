@@ -3,15 +3,17 @@
 //! Everything the Swift side sees is declared here through UniFFI proc-macros. The engine's
 //! types never cross the FFI boundary; each call maps a small, stable API onto `pdfcraft_engine`.
 //!
-//! - [`PdfDocument`]: one open document (open, page count, page geometry, page pixels).
-//! - [`OpenError`], [`RenderError`], [`PageInfo`], [`TileRect`], [`RenderedTile`]: its error and
-//!   record types.
+//! - [`PdfDocument`]: one open document (open, page count, page geometry, page pixels, page text,
+//!   selecting text and searching).
+//! - [`OpenError`], [`RenderError`], [`PageInfo`], [`TileRect`], [`RenderedTile`], [`Rect`],
+//!   [`PageText`], [`TextGlyph`], [`TextSelection`], [`SearchHit`]: its error and record types.
 
 uniffi::setup_scaffolding!();
 
 mod document;
 mod error;
 mod render;
+mod text;
 mod types;
 
 pub use document::PdfDocument;
