@@ -1,0 +1,5 @@
+[bindings.swift]
+module_name = "EditinPDFCore"
+ffi_module_name = "EditinPDFCoreFFI"
+generate_module_map = true
+omit_argument_labels = false

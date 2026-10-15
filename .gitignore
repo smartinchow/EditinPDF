@@ -1,0 +1,33 @@
+# Rust
+core/target/
+core/**/*.rs.bk
+
+# Generated bridge outputs (rebuilt by `make xcframework`)
+ios/EditinPDFCore/Sources/EditinPDFCore/EditinPDFCore.swift
+ios/EditinPDFCore/EditinPDFCoreFFI.xcframework/
+core/scripts/out/
+
+# Xcode
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/DerivedData/
+ios/build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Local secrets / signing
+ios/Signing.local.xcconfig

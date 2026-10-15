@@ -1,0 +1,30 @@
+[package]
+name = "editinpdf-core"
+description = "EditinPDF's bridge between the PdfCraft engine and the iOS/Android apps (UniFFI)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lib]
+name = "editinpdf_core"
+# staticlib: linked into the iOS app. cdylib: lets uniffi-bindgen read the metadata on the host.
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+uniffi = { workspace = true }
+thiserror = { workspace = true }
+pdfcraft-engine = { workspace = true }
+pdfcraft-render = { workspace = true }
+pdfcraft-annot = { workspace = true }
+
+[dev-dependencies]
+pdfcraft-create = { workspace = true }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

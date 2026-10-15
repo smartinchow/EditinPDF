@@ -1,0 +1,50 @@
+[workspace]
+resolver = "3"
+members = ["editinpdf-core", "uniffi-bindgen"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/smartinchow/EditinPDF"
+publish = false
+
+[workspace.dependencies]
+uniffi = "0.32"
+thiserror = "2"
+serde_json = "1"
+
+# The PdfCraft engine, from the pinned submodule. Never edited here.
+pdfcraft-engine = { path = "../upstream/pdfcraft/crates/engine" }
+pdfcraft-render = { path = "../upstream/pdfcraft/crates/render" }
+pdfcraft-annot = { path = "../upstream/pdfcraft/crates/annot" }
+pdfcraft-forms = { path = "../upstream/pdfcraft/crates/forms" }
+pdfcraft-organize = { path = "../upstream/pdfcraft/crates/organize" }
+pdfcraft-model = { path = "../upstream/pdfcraft/crates/model" }
+pdfcraft-geom = { path = "../upstream/pdfcraft/crates/geom" }
+pdfcraft-create = { path = "../upstream/pdfcraft/crates/create" }
+pdfcraft-automation = { path = "../upstream/pdfcraft/crates/automation" }
+
+# Mirrors upstream's [patch.crates-io]: its renderer and lopdf are patched copies under vendor/.
+# Cargo only honours patches declared in the *root* workspace, so they must be repeated here.
+[patch.crates-io]
+hayro-interpret = { path = "../upstream/pdfcraft/vendor/hayro-interpret" }
+hayro = { path = "../upstream/pdfcraft/vendor/hayro" }
+hayro-syntax = { path = "../upstream/pdfcraft/vendor/hayro-syntax" }
+hayro-jbig2 = { path = "../upstream/pdfcraft/vendor/hayro-jbig2" }
+lopdf = { path = "../upstream/pdfcraft/vendor/lopdf" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = "debuginfo"
+panic = "unwind"   # UniFFI turns Rust panics into Swift errors; never abort the app
+
+[profile.dev]
+# The engine is slow unoptimised; keep dependencies optimised so tests and the simulator stay usable.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
