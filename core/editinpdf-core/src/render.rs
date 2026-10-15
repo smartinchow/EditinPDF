@@ -228,6 +228,26 @@ mod tests {
         Arc::new(bytes)
     }
 
+    /// A two-page document with plenty of lines and words on each page, as the engine shows it.
+    fn several_lines() -> Arc<Vec<u8>> {
+        let page = |n: usize| {
+            (0..30)
+                .map(|i| {
+                    format!(
+                        "page {n} line {i}: the quick brown fox jumps over the lazy dog {}",
+                        i * 37
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let bytes = pdfcraft_engine::Session::new()
+            .create_from_text("fixture", &format!("{}\u{c}{}", page(1), page(2)))
+            .expect("text pages create")
+            .to_vec();
+        Arc::new(bytes)
+    }
+
     fn draw_page_zero() -> RenderRequest {
         pixel_request(0, 0.25, None).expect("a valid request")
     }
@@ -446,6 +466,47 @@ mod tests {
             into_text(missing),
             Err(RenderError::Failed { .. })
         ));
+    }
+
+    #[test]
+    fn a_page_reads_the_same_whichever_renderer_reads_it() {
+        // What a caller is told about a page's text is glyph indices. When the text cache lets go
+        // of a page and it is read again, possibly by another renderer, the indices have to mean the
+        // same glyphs: the layer has to come out identical, glyph for glyph and line for line.
+        let bytes = several_lines();
+        let pool = RendererPool::new(0, bytes.clone(), None);
+        let read =
+            |pool: &RendererPool, page: u32| pool.render(text_request(page).unwrap()).text.unwrap();
+        let first: Vec<_> = (0..2).map(|page| read(&pool, page)).collect();
+        assert!(first.iter().all(|text| text.glyphs.len() > 1_000));
+
+        // With the first renderer busy the pool makes a second one, and that one reads.
+        let busy = pool.claim();
+        for page in 0..2 {
+            assert_eq!(
+                first[page as usize],
+                read(&pool, page),
+                "page {page}, second renderer"
+            );
+        }
+        drop(busy);
+        assert_eq!(
+            pool.built(),
+            2,
+            "the second read was by a renderer of its own"
+        );
+
+        // And renderers of other pools, each of which parses the document afresh.
+        for round in 0..3 {
+            let other = RendererPool::new(0, bytes.clone(), None);
+            for page in 0..2 {
+                assert_eq!(
+                    first[page as usize],
+                    read(&other, page),
+                    "page {page}, parse {round}"
+                );
+            }
+        }
     }
 
     #[test]

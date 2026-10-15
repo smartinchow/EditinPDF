@@ -7,6 +7,8 @@
 //!   selecting text and searching).
 //! - [`OpenError`], [`RenderError`], [`PageInfo`], [`TileRect`], [`RenderedTile`], [`Rect`],
 //!   [`PageText`], [`TextGlyph`], [`TextSelection`], [`SearchHit`]: its error and record types.
+//! - [`MAX_SEARCH_HITS`], [`MAX_QUERY_CHARS`]: the limits of a search, which keep the work and the
+//!   memory of one call bounded whatever the document.
 
 uniffi::setup_scaffolding!();
 
@@ -14,10 +16,12 @@ mod document;
 mod error;
 mod render;
 mod text;
+mod text_cache;
 mod types;
 
 pub use document::PdfDocument;
 pub use error::*;
+pub use text::{MAX_QUERY_CHARS, MAX_SEARCH_HITS};
 pub use types::*;
 
 /// The bridge version and the PdfCraft release it was built against.

@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use pdfcraft_engine::{DocId, Session};
 
 use crate::render::{self, RendererPool};
-use crate::text::{self, EnginePageText, TextCache};
+use crate::text::{self, EnginePageText, MAX_SEARCH_HITS};
+use crate::text_cache::TextCache;
 use crate::{
     OpenError, PageInfo, PageText, RenderError, RenderedTile, SearchHit, TextSelection, TileRect,
 };
@@ -29,10 +30,22 @@ struct Inner {
     /// revision changes. Shared out as an `Arc`, so a render that is under way keeps its renderers
     /// even if a newer revision has replaced them here.
     renderers: Option<Arc<RendererPool>>,
-    /// The text of the pages read so far, for the revision it was read from. Like `renderers`, it
-    /// is replaced by the first use after the revision changes, so each page's text is read from the
-    /// engine once per revision rather than once per call.
+    /// The text of the pages read most recently, for the revision it was read from, within a budget
+    /// of glyphs. Like `renderers`, it is replaced by the first use after the revision changes, so a
+    /// page's text is read from the engine once per revision rather than once per call, unless the
+    /// budget made room for other pages in between.
+    ///
+    /// It lets go of layers as it is used, and does not free them: the calls that use it do that
+    /// once they have released the lock (see `PdfDocument::with_state`).
     text_cache: TextCache,
+}
+
+/// What a call that wants a page's text finds when it looks for it.
+enum Reading {
+    /// The text, read before and kept.
+    Cached(Arc<EnginePageText>),
+    /// Not kept: the renderers to read it with.
+    ToRead(Arc<RendererPool>),
 }
 
 impl Inner {
@@ -66,6 +79,18 @@ impl Inner {
         self.renderers = Some(pool.clone());
         Ok(pool)
     }
+
+    /// Looks for the text of the 0-based `page` at the current revision in the cache, and when it is
+    /// not there fetches the renderers to read it with, once `page` is known to exist.
+    ///
+    /// Cheap, like `render_pool`, so fine to call under the state lock.
+    fn reading(&mut self, page: u32) -> Result<Reading, RenderError> {
+        let revision = self.revision;
+        if let Some(layer) = self.text_cache.get(revision, page) {
+            return Ok(Reading::Cached(layer));
+        }
+        self.render_pool(page).map(Reading::ToRead)
+    }
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -84,31 +109,47 @@ impl PdfDocument {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Runs `f` on the state with the state lock held, and returns what it returns.
+    ///
+    /// This is how the text cache is used. The cache lets go of layers as it works (those of an
+    /// older revision, those that do not fit), and freeing the text of a page is thousands of small
+    /// deallocations. They are done here, once the lock is released, so no other call waits for them.
+    fn with_state<T>(&self, f: impl FnOnce(&mut Inner) -> T) -> T {
+        let (result, retired) = {
+            let mut inner = self.lock();
+            let result = f(&mut inner);
+            (result, inner.text_cache.take_retired())
+        };
+        drop(retired);
+        result
+    }
+
     /// The engine's text layer for the 0-based `page` at the current revision: the one read before
-    /// when the cache has it, otherwise read now and cached.
+    /// when the cache has it, otherwise read now and given to the cache.
     ///
     /// Reading is the engine's work, done on one of the pool's renderers. The state lock is held to
     /// look in the cache and fetch the renderers, and again to store the result, never while the
     /// engine reads. Two calls that both miss for the same page both read it, which costs time and
-    /// nothing else.
+    /// nothing else. The result is the same whichever renderer reads: a page's glyphs come in the
+    /// same order every time, so the indices a caller was given stay right when the cache has let go
+    /// of the page and it is read again.
     fn text_layer(&self, page: u32) -> Result<Arc<EnginePageText>, RenderError> {
         let request = render::text_request(page)?;
-        let pool = {
-            let mut inner = self.lock();
-            let revision = inner.revision;
-            if let Some(layer) = inner.text_cache.get(revision, page) {
-                return Ok(layer);
-            }
-            // This is also where a page the document does not have is turned away.
-            inner.render_pool(page)?
+        // This is also where a page the document does not have is turned away.
+        let pool = match self.with_state(|inner| inner.reading(page))? {
+            Reading::Cached(layer) => return Ok(layer),
+            Reading::ToRead(pool) => pool,
         };
         let layer = render::into_text(pool.render(request))?;
         // Filed under the revision the renderers were made for, not the current one: the revision
         // can have changed while the engine read, and this is then the text of a document that is
-        // gone. The cache drops such a layer.
-        self.lock()
-            .text_cache
-            .insert(pool.revision(), page, layer.clone());
+        // gone. The cache drops such a layer. A layer too big for the cache is not kept; it is still
+        // returned.
+        self.with_state(|inner| {
+            inner
+                .text_cache
+                .insert(pool.revision(), page, layer.clone());
+        });
         Ok(layer)
     }
 }
@@ -204,8 +245,9 @@ impl PdfDocument {
     /// result: selections and search hits name theirs that way, and the indices stay the same for as
     /// long as the document's `revision` does.
     ///
-    /// The first call for a page reads its text, which can take a moment. The text is kept, so later
-    /// calls for the page, and selecting and searching in it, are quick until the document changes.
+    /// The first call for a page reads its text, which can take a moment. The text of the pages used
+    /// most recently is kept, up to 500,000 glyphs in all, so later calls for such a page, and
+    /// selecting and searching in it, are quick until the document changes.
     ///
     /// Fails with `PageOutOfRange` for a page the document does not have, and with `Failed` for a
     /// page whose text the engine cannot read.
@@ -257,21 +299,31 @@ impl PdfDocument {
     /// Capital and small letters match each other unless `case_sensitive` is set. The words of
     /// `query` may be separated by any amount of white space, and a match may run over a line break.
     /// A `query` that is empty or only white space finds nothing, and so does a page without text or
-    /// one whose text cannot be read; the other pages are still searched.
+    /// one whose text cannot be read; the other pages are still searched. A `query` of more than 256
+    /// characters, not counting the white space at its ends, finds nothing either.
     ///
-    /// The first search reads the text of every page, which takes a while for a long document, so
-    /// call it away from the main thread. The text is kept, so later searches are quick. A search
-    /// reads one page at a time and holds nothing else of the document, so drawing and the other
-    /// calls carry on alongside it.
+    /// The result has at most 1,000 hits, the first ones. The search stops there and reads no further
+    /// page, so a result of exactly 1,000 hits means that there may be more.
+    ///
+    /// A search reads the text of the pages it goes through, which takes a while for a long document,
+    /// so call it away from the main thread. Text that has been read is kept for the next search, up
+    /// to 500,000 glyphs in all; beyond that the pages used longest ago are read again when they are
+    /// needed. A search reads one page at a time and holds nothing else of the document, so drawing
+    /// and the other calls carry on alongside it.
     pub fn search(&self, query: String, case_sensitive: bool) -> Vec<SearchHit> {
-        // Nothing to look for, so there is no reason to read any page.
-        if query.trim().is_empty() {
+        // Nothing to look for, or too much to look for: no reason to read any page.
+        let Some(query) = text::search_text(&query) else {
             return Vec::new();
-        }
+        };
         let mut hits = Vec::new();
         for page in 0..self.page_count() {
+            // Each page may give what is left of the budget, and when none is left no page is read.
+            let room = MAX_SEARCH_HITS.saturating_sub(hits.len());
+            if room == 0 {
+                break;
+            }
             if let Ok(layer) = self.text_layer(page) {
-                hits.extend(text::search_page(page, &layer, &query, case_sensitive));
+                hits.extend(text::search_page(page, &layer, query, case_sensitive, room));
             }
         }
         hits
@@ -286,13 +338,24 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::text::MAX_QUERY_CHARS;
 
     fn open_one_page() -> Arc<PdfDocument> {
+        open_pages(&["hello"])
+    }
+
+    /// A document with one page for each entry of `pages`, each showing that text.
+    fn open_pages(pages: &[&str]) -> Arc<PdfDocument> {
         let bytes = Session::new()
-            .create_from_text("fixture", "hello")
-            .expect("a text page creates")
+            .create_from_text("fixture", &pages.join("\u{c}"))
+            .expect("text pages create")
             .to_vec();
-        PdfDocument::open(bytes, None).expect("the page opens")
+        PdfDocument::open(bytes, None).expect("the pages open")
+    }
+
+    /// Gives `doc` a text cache that holds `budget` glyphs.
+    fn limit_the_text_cache(doc: &PdfDocument, budget: usize) {
+        doc.lock().text_cache = TextCache::with_budget(budget);
     }
 
     #[test]
@@ -367,6 +430,111 @@ mod tests {
         let mut inner = doc.lock();
         assert!(inner.text_cache.get(0, 1).is_none());
         assert!(inner.renderers.is_none(), "no renderers were built for it");
+    }
+
+    #[test]
+    fn a_document_keeps_the_text_of_the_pages_used_most_recently_within_its_budget() {
+        let doc = open_pages(&["aaaa", "bbbb", "cccc"]);
+        limit_the_text_cache(&doc, 8); // room for two of the three pages
+        let a = doc.text_layer(0).unwrap();
+        let b = doc.text_layer(1).unwrap();
+        assert!(Arc::ptr_eq(&a, &doc.text_layer(0).unwrap()), "kept");
+        // Page 0 was used last, so reading page 2 makes room by letting go of page 1.
+        let c = doc.text_layer(2).unwrap();
+        assert!(Arc::ptr_eq(&a, &doc.text_layer(0).unwrap()), "page 0 stays");
+        assert!(
+            Arc::ptr_eq(&c, &doc.text_layer(2).unwrap()),
+            "page 2 is kept"
+        );
+        let again = doc.text_layer(1).unwrap();
+        assert!(
+            !Arc::ptr_eq(&b, &again),
+            "page 1 was let go and is read again"
+        );
+        // Read again, it is the same text with the same glyphs in the same order, so the indices
+        // handed out for it before still point at the same glyphs.
+        assert_eq!(*b, *again);
+        assert_eq!(b.plain_text(), "bbbb");
+    }
+
+    #[test]
+    fn what_the_cache_lets_go_of_is_collected_by_the_call_that_made_it_let_go() {
+        // Letting go of a layer is the cache's doing, freeing it is the caller's, once the lock is
+        // released: nothing may be left waiting in the cache after a call.
+        let doc = open_pages(&["aaaa", "bbbb", "cccc"]);
+        limit_the_text_cache(&doc, 8);
+        for page in [0, 1, 2, 0, 1, 2] {
+            doc.text_layer(page).unwrap(); // every one but the first two lets another go
+            assert!(
+                doc.lock().text_cache.take_retired().is_empty(),
+                "page {page}"
+            );
+        }
+        doc.lock().revision += 1;
+        doc.text_layer(0).unwrap(); // the old revision's layers all go
+        assert!(doc.lock().text_cache.take_retired().is_empty());
+    }
+
+    #[test]
+    fn a_layer_too_big_for_the_cache_is_given_to_the_caller_and_not_kept() {
+        let doc = open_pages(&["hello", "world"]);
+        limit_the_text_cache(&doc, 4); // "hello" is 5 glyphs
+        let first = doc.text_layer(0).unwrap();
+        assert_eq!(first.plain_text(), "hello");
+        assert!(doc.lock().text_cache.get(0, 0).is_none(), "not kept");
+        let second = doc.text_layer(0).unwrap();
+        assert!(!Arc::ptr_eq(&first, &second), "so it is read again");
+        // Everything still works, a read at a time.
+        assert_eq!(doc.page_text(1).unwrap().glyphs.len(), 5);
+        assert_eq!(doc.search("o".into(), false).len(), 2);
+        assert!(doc.select_word(0, 1.0, 1.0).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_search_gives_the_same_hits_whether_or_not_the_cache_can_hold_the_text() {
+        let pages = [
+            "needle one",
+            "no luck",
+            "a needle here",
+            "needle needle",
+            "end",
+        ];
+        let places = |doc: &PdfDocument| {
+            doc.search("needle".into(), false)
+                .iter()
+                .map(|h| (h.page, h.start, h.end, h.snippet.clone(), h.rects.clone()))
+                .collect::<Vec<_>>()
+        };
+        let roomy = open_pages(&pages);
+        let tight = open_pages(&pages);
+        limit_the_text_cache(&tight, 12); // about one page at a time
+        let expected = places(&roomy);
+        assert_eq!(expected.len(), 4);
+        for round in 0..3 {
+            assert_eq!(places(&tight), expected, "round {round}");
+        }
+    }
+
+    #[test]
+    fn a_search_that_fills_its_budget_reads_no_further_pages() {
+        // Page 0 alone has more matches than a search returns.
+        let page = vec!["l".repeat(90); 14].join("\n"); // 1,260 glyphs
+        let doc = open_pages(&[page.as_str(), "ll", "ll"]);
+        assert_eq!(doc.search("l".into(), false).len(), MAX_SEARCH_HITS);
+        let mut inner = doc.lock();
+        assert!(inner.text_cache.get(0, 0).is_some(), "page 0 was read");
+        assert!(inner.text_cache.get(0, 1).is_none(), "page 1 was not");
+        assert!(inner.text_cache.get(0, 2).is_none(), "nor page 2");
+    }
+
+    #[test]
+    fn a_query_that_cannot_be_looked_for_reads_no_page() {
+        let doc = open_pages(&["aaa", "bbb"]);
+        for query in ["", "  ", &"a".repeat(MAX_QUERY_CHARS + 1)] {
+            assert!(doc.search(query.to_owned(), false).is_empty());
+        }
+        let mut inner = doc.lock();
+        assert!(inner.text_cache.get(0, 0).is_none() && inner.text_cache.get(0, 1).is_none());
     }
 
     #[test]

@@ -111,3 +111,66 @@ pub fn image_only_doc() -> Vec<u8> {
         .expect("the image page creates")
         .to_vec()
 }
+
+/// A one-page document whose page is a single line of text, `letters`, made of the letters "i", "j"
+/// and "l" only: its text layer has one glyph for each, all on one line.
+///
+/// The engine's text importer wraps lines at the page width, so this is the one fixture written by
+/// hand, as the page of a hostile or oddly made file would be: one string, drawn once. It is set in
+/// a 1 pt font, which is what makes it fit. Each of those letters then advances 0.222 pt, so 60,000
+/// of them are 13,320 pt long, within the widest page the PDF format allows (14,400 pt). A bigger
+/// font does not fit the line on the page, and squeezing a bigger font loses glyphs: the engine
+/// takes a glyph within a fifth of its height of another for a redraw of it, and drops it, and
+/// 0.222 pt is just over a fifth of 1 pt.
+pub fn one_line_doc(letters: &str) -> Vec<u8> {
+    assert!(
+        (1..=60_000).contains(&letters.len()),
+        "the line has to fit the widest page"
+    );
+    assert!(
+        letters.chars().all(|c| matches!(c, 'i' | 'j' | 'l')),
+        "only letters that are 0.222 em wide fit"
+    );
+    let content = format!("BT /F1 1 Tf 1 0 0 1 10 400 Tm ({letters}) Tj ET");
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 14400 800] \
+         /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+            .to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+    ];
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (number, body) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend(format!("{} 0 obj\n{body}\nendobj\n", number + 1).into_bytes());
+    }
+    // The cross-reference table: one 20-byte entry for the free object 0 and one for each object.
+    let table = pdf.len();
+    pdf.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).into_bytes());
+    for offset in offsets {
+        pdf.extend(format!("{offset:010} 00000 n \n").into_bytes());
+    }
+    pdf.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{table}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .into_bytes(),
+    );
+    // Pin the contract, as `text_doc` does: one page.
+    let mut check = session();
+    let id = check
+        .open("fixture.pdf", None, Arc::new(pdf.clone()), None)
+        .expect("the fixture opens");
+    assert_eq!(
+        check.get(id).expect("the fixture is open").info.pages.len(),
+        1
+    );
+    pdf
+}

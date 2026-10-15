@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod fixtures;
-use editinpdf_core::{PdfDocument, RenderError};
+use std::time::{Duration, Instant};
+
+use editinpdf_core::{MAX_QUERY_CHARS, MAX_SEARCH_HITS, PdfDocument, RenderError};
 
 /// All of a page's glyph texts, one after another.
 fn glyph_text(doc: &PdfDocument, page: u32) -> String {
@@ -320,4 +322,104 @@ fn asking_twice_gives_the_same_answer() {
     assert_eq!(places(&doc), places(&doc));
     assert_eq!(places(&doc).len(), 2, "the t of two and the t of three");
     assert_eq!(glyph_text(&doc, 1), "three");
+}
+
+// ---- bounded work on hostile pages
+
+#[test]
+fn a_one_letter_query_on_a_very_long_line_is_answered_quickly() {
+    // One line of 60,000 glyphs, every one of them a match for a one-letter query: "l" for the first
+    // 59,000 and "i" for the last 1,000. Building a hit's snippet used to cost as much as the line is
+    // long, so a search for either took ten seconds.
+    let line = format!("{}{}", "l".repeat(59_000), "i".repeat(1_000));
+    let doc = PdfDocument::open(fixtures::one_line_doc(&line), None).unwrap();
+    let glyphs = doc.page_text(0).unwrap().glyphs.len();
+    assert_eq!(glyphs, 60_000, "the engine keeps every glyph of the line");
+    let whole = doc.select_range(0, 0, 60_000).unwrap();
+    assert_eq!(whole.rects.len(), 1, "and lays them out as one line");
+
+    // Ten searches for each in a row, with the page's text already read. The cap on hits keeps one
+    // search short whatever a hit costs, and it takes the first hits: those of "l" are at the start
+    // of the line and those of "i" at its end. Ten of each make a cost per hit that depends on how
+    // far the hit is from either end of the line show.
+    let started = Instant::now();
+    for query in ["l", "i"] {
+        for _ in 0..10 {
+            let hits = doc.search(query.into(), false);
+            assert_eq!(hits.len(), MAX_SEARCH_HITS, "{query}");
+            assert!(hits.iter().all(|h| h.snippet.chars().count() <= 80));
+        }
+    }
+    let took = started.elapsed();
+    assert!(
+        took < Duration::from_secs(1),
+        "twenty searches of one line of {glyphs} glyphs took {took:?}"
+    );
+}
+
+#[test]
+fn a_search_returns_the_first_hits_and_stops_at_the_cap() {
+    // 45 lines of 90 "l": 4,050 glyphs, each of them a match for "l".
+    let page = vec!["l".repeat(90); 45].join("\n");
+    let doc = PdfDocument::open(fixtures::text_doc(&[page.as_str()]), None).unwrap();
+    assert_eq!(glyph_text(&doc, 0).len(), 4_050);
+    let hits = doc.search("l".into(), false);
+    assert_eq!(hits.len(), MAX_SEARCH_HITS);
+    // They are the first ones, in reading order: the hit at position i is glyph i.
+    for (i, hit) in hits.iter().enumerate() {
+        let i = u32::try_from(i).unwrap();
+        assert_eq!((hit.page, hit.start, hit.end), (0, i, i + 1));
+    }
+}
+
+#[test]
+fn the_cap_runs_across_pages_in_page_order() {
+    // Three pages of 630 matches each. A search takes all of page 0, the first 370 of page 1, and
+    // never looks at page 2.
+    let page = vec!["l".repeat(90); 7].join("\n");
+    let doc = PdfDocument::open(fixtures::text_doc(&[&page, &page, &page]), None).unwrap();
+    let hits = doc.search("l".into(), false);
+    assert_eq!(hits.len(), MAX_SEARCH_HITS);
+    let on = |page| hits.iter().filter(|h| h.page == page).count();
+    assert_eq!((on(0), on(1), on(2)), (630, 370, 0));
+    assert!(
+        hits.windows(2)
+            .all(|w| (w[0].page, w[0].start) < (w[1].page, w[1].start))
+    );
+}
+
+#[test]
+fn a_search_with_fewer_hits_than_the_cap_returns_them_all() {
+    // 11 lines of 90 and a last one of 9 or 10: 999 or 1,000 matches.
+    for last in [9, 10] {
+        let mut lines = vec!["l".repeat(90); 11];
+        lines.push("l".repeat(last));
+        let page = lines.join("\n");
+        let doc = PdfDocument::open(fixtures::text_doc(&[page.as_str()]), None).unwrap();
+        assert_eq!(doc.search("l".into(), false).len(), 990 + last);
+    }
+}
+
+#[test]
+fn a_query_longer_than_the_cap_finds_nothing_even_where_the_page_has_it() {
+    // A sentence of 499 characters, which the page wraps over several lines.
+    let sentence = (0..100)
+        .map(|i| format!("w{i:03}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let doc = PdfDocument::open(fixtures::text_doc(&[sentence.as_str()]), None).unwrap();
+    let glyphs = u32::try_from(doc.page_text(0).unwrap().glyphs.len()).unwrap();
+    let on_the_page = doc.select_range(0, 0, glyphs).unwrap().text;
+    assert_eq!(on_the_page.replace('\n', " "), sentence, "the page has it");
+
+    let longest = &sentence[..MAX_QUERY_CHARS];
+    let hits = doc.search(longest.into(), true);
+    assert_eq!((hits.len(), hits[0].start), (1, 0));
+    assert!(
+        doc.search(sentence[..=MAX_QUERY_CHARS].into(), true)
+            .is_empty()
+    );
+    assert!(doc.search(sentence.clone(), true).is_empty());
+    // The blanks around a query are not counted against it.
+    assert_eq!(doc.search(format!("  {longest}\n "), true).len(), 1);
 }
