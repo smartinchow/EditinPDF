@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use pdfcraft_engine::{Edit, ImageResolution, Protection, Session};
+use pdfcraft_engine::{Algorithm, Edit, ImageResolution, Protection, Session};
 
 /// The fixtures' session clock. Fixed, so the plain fixtures' bytes (their `/ModDate`) are the same
 /// on every run and one dumped to disk does not churn. (An encrypted one still differs: the engine
@@ -73,6 +73,18 @@ pub fn text_doc(pages: &[&str]) -> Vec<u8> {
 pub fn encrypted_doc(pages: &[&str], password: &str) -> Vec<u8> {
     let protection = Protection {
         open_password: Some(password.to_owned()),
+        ..Protection::default()
+    };
+    edited(text_doc(pages), Edit::Protect(protection))
+}
+
+/// `text_doc` protected at the given compatibility level with a different open (user) password and
+/// permissions (owner) password. Either one opens it.
+pub fn protected_doc(pages: &[&str], user: &str, owner: &str, algorithm: Algorithm) -> Vec<u8> {
+    let protection = Protection {
+        open_password: Some(user.to_owned()),
+        permissions_password: Some(owner.to_owned()),
+        algorithm,
         ..Protection::default()
     };
     edited(text_doc(pages), Edit::Protect(protection))

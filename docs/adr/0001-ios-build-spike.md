@@ -139,6 +139,20 @@ fallback in the spec is not needed. Two constraints go with it. `Session` is `Se
 own pool (`Document.renderer`) is not a substitute: it is a latest-wins queue (`set_queue` replaces pending
 work, results come back through `try_recv`) and cannot serve concurrent synchronous callers.
 
+Update 2026-10-16 (Task 3). Superseded by the Task 3 ruling: a lazily grown pool of up to 2 `Mutex<PageRenderer>`
+per revision (try_lock round-robin, else block on slot 0) so CATiledLayer's concurrent tile draws do not serialise
+on one core. It is `RendererPool` in `core/editinpdf-core/src/render.rs`: two slots, each a
+`Mutex<Option<PageRenderer>>` that is filled, under its own lock, the first time a caller finds the slots before
+it busy, so growth needs no lock of its own and the cap is structural. `PdfDocument` keeps the pool in `Inner` as an
+`Option<Arc<RendererPool>>` tagged with the revision it was built for; `render_tile` takes the `Inner` lock only to
+check the page and clone that `Arc` (making an empty pool first when the revision has changed), then draws with the
+lock released.
+
+Baseline render time (Task 3): `whole_page_dimensions_follow_scale`, one line of text on a 612 x 792 pt page at
+scale 0.5 (306 x 396 px), `cargo test` profile on the Apple M5: the first `render_tile` call takes 0.25 ms (it
+includes parsing the document into the first renderer), the second 0.12 ms, the whole test about 1.0 ms with the
+fixture and the open; the page is nearly blank, so this is a floor, to be re-measured with a real document in Task 7.
+
 ## Findings for later tasks
 
 - Deployment target. Without `IPHONEOS_DEPLOYMENT_TARGET`, the 371 C objects of `aws-lc-sys` are stamped

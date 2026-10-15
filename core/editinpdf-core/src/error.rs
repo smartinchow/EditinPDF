@@ -29,3 +29,19 @@ impl From<pdfcraft_render::OpenError> for OpenError {
         }
     }
 }
+
+/// Why a page could not be rendered.
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum RenderError {
+    /// The document has no page with this index (pages count from 0).
+    #[error("page {page} is out of range")]
+    PageOutOfRange { page: u32 },
+    /// The requested tile is wider or taller than 4096 pixels, or has no area (a width or a height
+    /// of zero): both are reported the same way, since either way the size is outside 1 to 4096.
+    #[error("tile too large (max 4096 px per side)")]
+    TileTooLarge,
+    /// The page could not be drawn: the scale is not a positive, finite number, or the engine could
+    /// not draw the page. `message` says what was wrong.
+    #[error("{message}")]
+    Failed { message: String },
+}
