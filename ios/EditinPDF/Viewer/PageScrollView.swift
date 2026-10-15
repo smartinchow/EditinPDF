@@ -27,12 +27,17 @@ struct PageScrollView: UIViewControllerRepresentable {
 
 /// Shows the pages of `model`'s document in one column, each fitted to the width, zooming from 1 to
 /// 8 times. Only the pages in view and the two either side of them have a view; the others are
-/// dropped as they scroll away, with their tiles. Keeps `model.currentPage` on the page at the
-/// centre of the view.
+/// dropped as they scroll away, with their tiles. Keeps `model.currentPage` on the page the reader
+/// is on: the first or the last at either end of the document, otherwise the page at the centre of
+/// the view.
 final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// How many pages above and below those in view keep a view, so they are drawn before they
     /// scroll in.
     static let pagesKeptAround = 2
+
+    /// How near an end of its scroll range, in points, the view counts as at that end. Offsets and
+    /// sizes are rounded to device pixels along the way: a point at most, on a 1x screen.
+    static let endTolerance: CGFloat = 1
 
     let scrollView = UIScrollView()
     /// The view that zooms. It holds the page views, laid out at zoom 1.
@@ -106,6 +111,11 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         update()
     }
 
+    /// The bars' insets decide where the ends of the scroll range are.
+    func scrollViewDidChangeAdjustedContentInset(_ scrollView: UIScrollView) {
+        update()
+    }
+
     // MARK: Layout
 
     /// Lays the pages out for a new width at zoom 1, keeping the page that was at the top of the
@@ -132,7 +142,6 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         } else {
             show(newLayout.frame(of: model.currentPage).minY)
         }
-        update()
     }
 
     /// The page at the top of the visible area and how far down it that is (0 to 1); a point in a
@@ -147,13 +156,15 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     }
 
     /// Scrolls so that layout point `y` (at zoom 1) is at the top of the visible area, as near as
-    /// the ends of the document allow, at the left edge.
+    /// the ends of the document allow, at the left edge; then brings the page views and the current
+    /// page up to date, even when the offset was already there.
     private func show(_ y: CGFloat) {
         let insets = scrollView.adjustedContentInset
         let lowest = -insets.top
         let highest = max(lowest, scrollView.contentSize.height + insets.bottom - scrollView.bounds.height)
         let offsetY = min(max(y * scrollView.zoomScale - insets.top, lowest), highest)
         scrollView.setContentOffset(CGPoint(x: -insets.left, y: offsetY), animated: false)
+        update()
     }
 
     /// The part of the content the bars do not cover, in layout points at zoom 1.
@@ -162,8 +173,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     }
 
     /// Makes views for the pages in view and those kept around them, drops the others, and moves
-    /// the current page to the one at the centre of the visible area. In a gap between two pages,
-    /// or beyond either end, the current page stays what it was.
+    /// the current page to the one the reader is on.
     private func update() {
         guard let layout, let document = model.document() else { return }
         let inView = layout.visiblePages(in: scrollView.convert(scrollView.bounds, to: contentView))
@@ -179,8 +189,24 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
             contentView.addSubview(view)
             pageViews[page] = view
         }
-        if let page = layout.page(at: CGPoint(x: layout.fitWidth / 2, y: visibleArea().midY)), page != model.currentPage {
+        if let page = readerPage(in: layout), page != model.currentPage {
             model.currentPage = page
         }
+    }
+
+    /// The page the reader is on. At the top end of the scroll range (or past it) it is the first
+    /// page, and at the bottom end the last: a first or last page shorter than half the visible area
+    /// never reaches its centre. Between the ends it is the page under the centre of the visible
+    /// area, or nil in a gap between two pages, where the current page stays what it was. A
+    /// document that fits in the view is at both ends at once, and on its first page.
+    private func readerPage(in layout: PageLayout) -> Int? {
+        guard layout.pageCount > 0 else { return nil }
+        let insets = scrollView.adjustedContentInset
+        let offset = scrollView.contentOffset.y
+        if offset <= -insets.top + Self.endTolerance { return 0 }
+        if offset >= scrollView.contentSize.height + insets.bottom - scrollView.bounds.height - Self.endTolerance {
+            return layout.pageCount - 1
+        }
+        return layout.page(at: CGPoint(x: layout.fitWidth / 2, y: visibleArea().midY))
     }
 }

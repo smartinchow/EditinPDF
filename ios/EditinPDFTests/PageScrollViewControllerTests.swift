@@ -7,9 +7,10 @@ import XCTest
 @MainActor
 final class PageScrollViewControllerTests: XCTestCase {
     /// A document of `count` US Letter pages; at 400 points wide each page is 518 tall, so page `n`
-    /// starts at `n * 530`.
-    static func letterPages(_ count: Int) -> Data {
-        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+    /// starts at `n * 530`. Turned to `landscape`, a page is 309 tall and page `n` starts at `n * 321`.
+    static func letterPages(_ count: Int, landscape: Bool = false) -> Data {
+        let size = landscape ? CGSize(width: 792, height: 612) : CGSize(width: 612, height: 792)
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: size))
         return renderer.pdfData { context in
             for page in 1...count {
                 context.beginPage()
@@ -18,8 +19,9 @@ final class PageScrollViewControllerTests: XCTestCase {
         }
     }
 
-    func makeController(pages: Int = 12, size: CGSize = CGSize(width: 400, height: 800)) -> (PageScrollViewController, DocumentModel) {
-        let model = DocumentModel(bytes: Self.letterPages(pages))
+    func makeController(pages: Int = 12, landscape: Bool = false,
+                        size: CGSize = CGSize(width: 400, height: 800)) -> (PageScrollViewController, DocumentModel) {
+        let model = DocumentModel(bytes: Self.letterPages(pages, landscape: landscape))
         XCTAssertEqual(model.pageCount, pages)
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: size)
@@ -90,6 +92,35 @@ final class PageScrollViewControllerTests: XCTestCase {
         XCTAssertEqual(model.currentPage, 7)
         controller.scrollView.contentOffset = CGPoint(x: 0, y: 3_302)       // 3702: the gap, page 7 stays
         XCTAssertEqual(model.currentPage, 7)
+    }
+
+    func testShortPagesAreCurrentAtTheEndsOfTheDocument() {
+        // Ten landscape pages, 3198 points in all, so the 800-point view ends at offset 2398. A page
+        // (309) is shorter than half the view, so the first and the last never reach its centre.
+        let (controller, model) = makeController(pages: 10, landscape: true)
+        // On open the centre (400) is on page 1, but the reader is on page 0, at the top.
+        XCTAssertEqual(controller.scrollView.contentOffset.y, 0)
+        XCTAssertEqual(model.currentPage, 0)
+        // In between, the page at the centre: 1000 + 400 = 1400 is on page 4 (1284 ... 1593).
+        controller.scrollView.contentOffset = CGPoint(x: 0, y: 1_000)
+        XCTAssertEqual(model.currentPage, 4)
+        // At the end the centre (2798) is on page 8, but the reader is on the last page.
+        controller.scroll(to: 9)
+        XCTAssertEqual(controller.scrollView.contentOffset.y, 2_398)
+        XCTAssertEqual(model.currentPage, 9)
+        // Zoomed in, the ends still count: back at the top it is page 0 again.
+        controller.scrollView.zoomScale = 2
+        controller.scrollView.contentOffset = .zero
+        XCTAssertEqual(model.currentPage, 0)
+    }
+
+    func testADocumentThatFitsInTheViewIsOnItsFirstPage() {
+        // Two landscape pages (630 points) fit in the 800-point view: it is at both ends at once, and
+        // the reader is on the first page. So is the reader of a single page.
+        let (_, two) = makeController(pages: 2, landscape: true)
+        XCTAssertEqual(two.currentPage, 0)
+        let (_, one) = makeController(pages: 1)
+        XCTAssertEqual(one.currentPage, 0)
     }
 
     func testZoomingKeepsTheCentrePage() {
