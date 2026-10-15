@@ -1,0 +1,67 @@
+name: EditinPDF
+options:
+  bundleIdPrefix: app.editinpdf
+  deploymentTarget: { iOS: "17.0" }
+  xcodeVersion: "27.0"
+configFiles: { Debug: Config/Base.xcconfig, Release: Config/Base.xcconfig }
+packages:
+  EditinPDFCore: { path: EditinPDFCore }
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # The Rust core is built for Apple-silicon simulators only (aarch64-apple-ios-sim), so a Release
+    # build for the simulator must not also try an Intel slice.
+    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+targets:
+  EditinPDF:
+    type: application
+    platform: iOS
+    sources: [EditinPDF]
+    dependencies: [{ package: EditinPDFCore }]
+    info:
+      path: EditinPDF/Info.plist
+      properties:
+        CFBundleDisplayName: EditinPDF
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportsDocumentBrowser: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UIFileSharingEnabled: true
+        CFBundleDocumentTypes:
+          - { CFBundleTypeName: PDF, LSHandlerRank: Alternate, LSItemContentTypes: [com.adobe.pdf] }
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  EditinPDFTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [EditinPDFTests]
+    dependencies: [{ target: EditinPDF }]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited).tests"
+        GENERATE_INFOPLIST_FILE: YES
+  EditinPDFUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [EditinPDFUITests]
+    dependencies: [{ target: EditinPDF }]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(inherited).uitests"
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  EditinPDF:
+    build: { targets: { EditinPDF: all } }
+    run: { config: Debug }
+    test: { config: Debug, targets: [EditinPDFTests, EditinPDFUITests] }
