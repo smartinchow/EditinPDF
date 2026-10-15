@@ -31,4 +31,19 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.pageCount(1), "1 pages")
         XCTAssertEqual(Strings.pageCount(12), "12 pages")
     }
+
+    func testPageIndicatorIsThePageOverTheCount() {
+        XCTAssertEqual(Strings.pageIndicator(current: 3, count: 12), "3 / 12")
+        XCTAssertEqual(Strings.pageIndicator(current: 1, count: 1), "1 / 1")
+        // Numbers are written the way the reader's region writes them.
+        XCTAssertEqual(Strings.pageIndicator(current: 1204, count: 12345), "1,204 / 12,345")
+    }
+
+    func testThumbnailWording() {
+        XCTAssertEqual(Strings.thumbnails, "Thumbnails")
+        XCTAssertEqual(Strings.thumbnailLabel(page: 3), "Page 3")
+        XCTAssertEqual(Strings.pageNumber(3), "3")
+        XCTAssertEqual(Strings.pageNumber(1204), "1,204")
+        XCTAssertEqual(Strings.done, "Done")
+    }
 }
