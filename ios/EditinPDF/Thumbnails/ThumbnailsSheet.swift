@@ -82,6 +82,12 @@ private struct ThumbnailCell: View {
     let isOpenedOn: Bool
     let store: ThumbnailStore
     let select: () -> Void
+    /// Whether the cell is in or near the view, as `onAppear` and `onDisappear` say. Its picture is
+    /// only part of the cell while it is: a lazy grid may keep a cell after it has scrolled away
+    /// (iOS 17 is reported to), and a picture held there is held outside the store's bounded cache,
+    /// so what the grid holds could grow with the document instead of staying within the cache. The
+    /// picture stays in the cache, so it is back at once when the cell returns.
+    @State private var isOnScreen = false
 
     var body: some View {
         Button(action: select) {
@@ -96,8 +102,14 @@ private struct ThumbnailCell: View {
         .accessibilityLabel(Strings.thumbnailLabel(page: page + 1))
         .accessibilityAddTraits(isOpenedOn ? .isSelected : [])
         .accessibilityIdentifier("thumbnail-\(page)")
-        .onAppear { store.prefetch(page..<page + 1) }
-        .onDisappear { store.cancelPrefetch(page..<page + 1) }
+        .onAppear {
+            isOnScreen = true
+            store.prefetch(page..<page + 1)
+        }
+        .onDisappear {
+            isOnScreen = false
+            store.cancelPrefetch(page..<page + 1)
+        }
     }
 
     /// Reading the picture from the store is what makes SwiftUI draw this cell again when it arrives.
@@ -108,7 +120,9 @@ private struct ThumbnailCell: View {
             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
             .aspectRatio(aspectRatio, contentMode: .fit)
             .overlay {
-                if let image = store.image(for: page) {
+                // Not read while the cell is off screen, so such a cell is not redrawn as pictures
+                // arrive either.
+                if isOnScreen, let image = store.image(for: page) {
                     Image(uiImage: image)
                         .resizable()
                         .interpolation(.high)
@@ -126,10 +140,11 @@ private struct ThumbnailCell: View {
 private extension PageInfo {
     /// The page's width over its height, for the blank paper shown before its picture is there: that
     /// of a US Letter page when the engine reports a size that cannot be used (as the viewer does),
-    /// and no more extreme than 1 to 4 either way, so one odd page cannot make a row of the grid
-    /// enormous.
+    /// and no more extreme than 1 to 4 either way (the store draws no page taller than that), so one
+    /// odd page cannot make a row of the grid enormous.
     var thumbnailAspectRatio: CGFloat {
         guard widthPt.isFinite, heightPt.isFinite, widthPt > 0, heightPt > 0 else { return 612.0 / 792.0 }
-        return min(max(widthPt / heightPt, 0.25), 4)
+        let limit = CGFloat(ThumbnailStore.tallestInWidths)
+        return min(max(widthPt / heightPt, 1 / limit), limit)
     }
 }

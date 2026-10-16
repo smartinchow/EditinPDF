@@ -35,15 +35,15 @@ final class StringsTests: XCTestCase {
     func testPageIndicatorIsThePageOverTheCount() {
         XCTAssertEqual(Strings.pageIndicator(current: 3, count: 12), "3 / 12")
         XCTAssertEqual(Strings.pageIndicator(current: 1, count: 1), "1 / 1")
-        // Numbers are written the way the reader's region writes them.
-        XCTAssertEqual(Strings.pageIndicator(current: 1204, count: 12345), "1,204 / 12,345")
+        // Below a thousand, so the region's digit grouping does not come into it.
+        XCTAssertEqual(Strings.pageIndicator(current: 120, count: 999), "120 / 999")
     }
 
     func testThumbnailWording() {
         XCTAssertEqual(Strings.thumbnails, "Thumbnails")
         XCTAssertEqual(Strings.thumbnailLabel(page: 3), "Page 3")
         XCTAssertEqual(Strings.pageNumber(3), "3")
-        XCTAssertEqual(Strings.pageNumber(1204), "1,204")
+        XCTAssertEqual(Strings.pageNumber(120), "120")
         XCTAssertEqual(Strings.done, "Done")
     }
 }

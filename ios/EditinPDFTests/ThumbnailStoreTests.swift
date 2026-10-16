@@ -245,6 +245,31 @@ final class ThumbnailStoreTests: XCTestCase {
         XCTAssertEqual(probe.scales, [240.0 / 612, 240.0 / 792, 240.0 / 300])
     }
 
+    func testAVeryTallPageIsDrawnNoTallerThanFourTimesTheTargetWidth() async throws {
+        // By its width alone a 30 x 600 point page (1:20) would be drawn at 12 pixels to the point:
+        // 360 x 7,200 pixels, about 10 MB, for a cell that shows it no taller than 1:4.
+        let probe = RenderProbe(pageSize: CGSize(width: 30, height: 600))
+        let pages = [
+            Self.page(0, width: 30, height: 600),   // 1:20
+            Self.page(1, width: 100, height: 400),  // 1:4 exactly: the width and the height agree
+            Self.page(2, width: 612, height: 792),  // an ordinary page: by its width, as before
+            Self.page(3, width: 600, height: 0),    // no height to go by: by its width
+            Self.page(4, width: 600, height: .nan),
+        ]
+        let store = ThumbnailStore(pages: pages, targetWidth: 120, displayScale: 3, render: probe.render)
+        store.prefetch(0..<5)
+        let arrived = await eventually { (0..<5).allSatisfy { store.image(for: $0) != nil } }
+        XCTAssertTrue(arrived)
+        // 4 x 120 points tall at 3 pixels to the point is 1,440 pixels: 2.4 to the PDF point.
+        let tallPageScale: Double = 1440.0 / 600
+        let expected: [Double] = [tallPageScale, 360.0 / 100, 360.0 / 612, 360.0 / 600, 360.0 / 600]
+        XCTAssertEqual(probe.scales, expected)
+        // The tall page's picture is 24 x 480 points: no taller than four target widths.
+        let tall = try XCTUnwrap(store.image(for: 0))
+        XCTAssertEqual(tall.size.height, 480, accuracy: 0.01)
+        XCTAssertEqual(tall.size.width, 24, accuracy: 0.01)
+    }
+
     func testAPageWithNoUsableWidthIsLeftEmptyWithoutAskingTheEngine() async {
         let probe = RenderProbe()
         let pages = [Self.page(0, width: 0, height: 792), Self.page(1, width: .nan, height: 792), Self.page(2, width: 612, height: 792)]

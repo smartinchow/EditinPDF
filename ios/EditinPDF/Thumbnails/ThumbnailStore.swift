@@ -28,15 +28,22 @@ final class ThumbnailStore {
     /// also gives pictures up of its own accord when the system is short of memory.
     static let cacheByteLimit = 48 * 1024 * 1024
 
+    /// The tallest a picture is drawn, in its own widths: a page more than 4 times as tall as it is
+    /// wide is drawn narrower, so that it is 4 widths tall. The grid shows no page taller than that
+    /// (its cell is as tall as 4 widths at most), and a 1:20 page drawn to the full width would take
+    /// five times the memory for pixels nobody sees.
+    nonisolated static let tallestInWidths = 4.0
+
     private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.editinpdf.ios", category: "thumbnails")
 
-    /// How wide every picture is, in points.
+    /// How wide a picture is, in points: of every page but a very tall one (`tallestInWidths`).
     let targetWidth: CGFloat
     /// How many device pixels make a point on the screen the pictures are shown on.
     let displayScale: CGFloat
 
     private let pageInfos: [PageInfo]
     private let render: Render
+    // M2: key by (page, document revision)
     @ObservationIgnored private let cache = NSCache<NSNumber, UIImage>()
     /// The pages waiting for their turn, in the order they were asked for.
     @ObservationIgnored private var pending: [Int] = []
@@ -44,12 +51,14 @@ final class ThumbnailStore {
     @ObservationIgnored private var queued: Set<Int> = []
     @ObservationIgnored private var isDrawing = false
     /// Counts the pictures published. A cache cannot be observed, so `image(for:)` reads this, which
-    /// is what makes SwiftUI ask again when a picture arrives.
-    private var revision = 0
+    /// is what makes SwiftUI ask again when a picture arrives. (Not the document's revision, which
+    /// M2 adds and the cache will be keyed by.)
+    private var publishedCount = 0
 
-    /// A store for `document`, whose pages are described by `pages` (page `n` is `pages[n]`). Every
-    /// picture is `targetWidth` points wide and drawn with `displayScale` pixels to the point; pass
-    /// the screen's own (SwiftUI's `displayScale` environment value) so they are sharp.
+    /// A store for `document`, whose pages are described by `pages` (page `n` is `pages[n]`). A
+    /// picture is `targetWidth` points wide (narrower for a very tall page, see `tallestInWidths`)
+    /// and drawn with `displayScale` pixels to the point; pass the screen's own (SwiftUI's
+    /// `displayScale` environment value) so they are sharp.
     convenience init(document: PdfDocument, pages: [PageInfo], targetWidth: CGFloat = 120, displayScale: CGFloat = 2) {
         self.init(pages: pages, targetWidth: targetWidth, displayScale: displayScale) { page, scale in
             try document.renderTile(page: UInt32(clamping: page), scale: scale, rect: nil)
@@ -67,11 +76,11 @@ final class ThumbnailStore {
         cache.totalCostLimit = Self.cacheByteLimit
     }
 
-    /// The picture of `page` (counting from 0): `targetWidth` points wide, or nil while it is not
-    /// there: not asked for yet, waiting its turn, being drawn, one the engine could not draw, or one
-    /// the cache gave up. A view that finds none is told when one is published.
+    /// The picture of `page` (counting from 0): `targetWidth` points wide (see `tallestInWidths`), or
+    /// nil while it is not there: not asked for yet, waiting its turn, being drawn, one the engine
+    /// could not draw, or one the cache gave up. A view that finds none is told when one is published.
     func image(for page: Int) -> UIImage? {
-        _ = revision
+        _ = publishedCount
         return cache.object(forKey: NSNumber(value: page))
     }
 
@@ -144,18 +153,24 @@ final class ThumbnailStore {
         isDrawing = false
         queued.remove(page)
         if let image {
+            // M2: key by (page, document revision)
             cache.setObject(image, forKey: NSNumber(value: page), cost: Self.byteCount(of: image))
-            revision += 1
+            publishedCount += 1
         }
         drawNext()
     }
 
-    /// Device pixels to the PDF point that make `page` `targetWidth` points wide on screen; nil for
-    /// a page with no width the engine could scale.
+    /// Device pixels to the PDF point that make `page` `targetWidth` points wide on screen, or less
+    /// where that would make it taller than `tallestInWidths` widths; nil for a page with no width
+    /// the engine could scale. A page with no usable height is scaled by its width alone.
     private func pixelsPerPoint(forPage page: Int) -> Double? {
-        let width = pageInfos[page].widthPt
-        guard width.isFinite, width > 0 else { return nil }
-        let scale = Double(targetWidth * displayScale) / width
+        let info = pageInfos[page]
+        guard info.widthPt.isFinite, info.widthPt > 0 else { return nil }
+        let pixelsWide = Double(targetWidth * displayScale)
+        var scale = pixelsWide / info.widthPt
+        if info.heightPt.isFinite, info.heightPt > 0 {
+            scale = min(scale, pixelsWide * Self.tallestInWidths / info.heightPt)
+        }
         return scale.isFinite && scale > 0 ? scale : nil
     }
 
