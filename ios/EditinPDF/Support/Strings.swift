@@ -133,14 +133,21 @@ enum Strings {
 
     // MARK: Password
 
-    /// The title of the prompt for the password of a protected document.
+    /// The title of the prompt for the password of a protected document, and of the screen of a
+    /// protected document whose prompt was put away.
     static var passwordTitle: String {
-        String(localized: "Password Required", comment: "Title of the prompt that asks for a PDF's password")
+        String(localized: "Password Required", comment: "Title of the prompt that asks for a PDF's password, and of the screen of a locked PDF")
     }
 
-    /// What the password prompt says over its field.
+    /// What the password prompt says over its field, and the screen of a protected document whose
+    /// prompt was put away under its title.
     static var passwordExplanation: String {
-        String(localized: "This document is protected. Enter the password to open it.", comment: "Explanation in the prompt that asks for a PDF's password")
+        String(localized: "This document is protected. Enter the password to open it.", comment: "Explanation in the prompt that asks for a PDF's password, and on the screen of a locked PDF")
+    }
+
+    /// The button on the screen of a protected document that brings its password prompt back.
+    static var enterPassword: String {
+        String(localized: "Enter Password", comment: "Button on the screen of a locked PDF that brings back the prompt for its password")
     }
 
     /// What the password field says while it is empty.
@@ -158,9 +165,9 @@ enum Strings {
         String(localized: "Unlock", comment: "Button that tries the password typed for a protected PDF")
     }
 
-    /// The button that gives up on the password and closes the document.
+    /// The button that puts the password prompt away; the document stays locked.
     static var cancel: String {
-        String(localized: "Cancel", comment: "Button that gives up on entering a PDF's password and closes the document")
+        String(localized: "Cancel", comment: "Button that puts away the prompt for a PDF's password; the PDF stays locked")
     }
 
     /// The button of the message about a file that could not be opened; it closes the document.

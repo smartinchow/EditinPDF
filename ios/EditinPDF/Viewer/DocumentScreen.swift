@@ -2,10 +2,16 @@ import SwiftUI
 
 /// The screen for one document: its pages, once it is open, with the search and thumbnails buttons
 /// in the toolbar (and, while text is selected, a Copy button before them), and the page indicator
-/// (and, while a search has hits, the bar to move between them) over the pages. A document that is
-/// locked has no pages to show yet: the prompt for its password (`PasswordSheet`) is over a blank
-/// screen until it is unlocked. One that could not be read has an alert saying so, whose button
-/// closes it.
+/// (and, while a search has hits, the bar to move between them) over the pages.
+///
+/// A document that is locked has no pages to show yet: the prompt for its password (`PasswordSheet`)
+/// comes up over a screen that says it is locked. Cancel puts the prompt away and leaves that screen,
+/// whose Enter Password button brings the prompt back. One that could not be read has an alert saying
+/// so, and once the alert is answered the screen says the same, for as long as it is still there.
+///
+/// Neither relies on closing the document from inside it, which `dismiss` does on iOS 26 but is
+/// reported not to do on iOS 17 and 18: with the prompt or the alert put away, the system's own way
+/// back to the documents, in the navigation bar, is always there.
 struct DocumentScreen: View {
     let model: DocumentModel
     /// A page to jump to, for the thumbnails and search to set.
@@ -21,9 +27,14 @@ struct DocumentScreen: View {
     /// sheet opens with its pictures the next time.
     @State private var thumbnails: ThumbnailStore?
     @Environment(\.displayScale) private var displayScale
-    /// Closes the document, back to the document browser. It is read here, not in the password
-    /// prompt or the alert, where `dismiss` would only close those.
+    /// Closes the document, back to the document browser, on the iOS versions where `dismiss` does
+    /// that for a document scene (iOS 26 does; 17 and 18 are reported not to). Only the alert about a
+    /// file that could not be opened uses it, as a shortcut: the screen behind the alert does not
+    /// depend on it. It is read here, not in the alert, where `dismiss` would only close the alert.
     @Environment(\.dismiss) private var closeDocument
+    /// Whether the password prompt of a locked document is up: from the start, until Cancel puts it
+    /// away; Enter Password brings it back. The prompt goes when the document opens, whatever this says.
+    @State private var promptIsUp = true
     /// Set once the alert about a file that could not be opened has been answered. The document is
     /// failed for good, so without this the alert would be put up again as soon as it went away,
     /// while the document is closing (UIKit logs an attempt to present on a view that is leaving).
@@ -41,10 +52,10 @@ struct DocumentScreen: View {
     var body: some View {
         content
             // Over whatever is behind them, so the prompt and the alert are there as soon as the state
-            // is, and the prompt goes when the password opens the document. Nothing closes the prompt
-            // but Cancel (which closes the document, and it with it) and the password.
-            .sheet(isPresented: .constant(isLocked)) {
-                PasswordSheet(model: model) { closeDocument() }
+            // is, and the prompt goes when the password opens the document. Nothing else closes the
+            // prompt but Cancel (it cannot be swiped away).
+            .sheet(isPresented: showsPasswordPrompt) {
+                PasswordSheet(model: model) { promptIsUp = false }
             }
             .alert(Strings.fileCouldNotBeOpened, isPresented: showsFailure) {
                 // The system alert does not pass the identifier on to its button (observed on the iOS 26.5
@@ -60,6 +71,15 @@ struct DocumentScreen: View {
     /// Whether the document is waiting for its password.
     private var isLocked: Bool {
         if case .locked = model.state { true } else { false }
+    }
+
+    /// Whether the password prompt is up: while the document is locked and the reader has not put the
+    /// prompt away.
+    private var showsPasswordPrompt: Binding<Bool> {
+        Binding(
+            get: { isLocked && promptIsUp },
+            set: { isShown in promptIsUp = isShown }
+        )
     }
 
     /// Whether the document could not be opened.
@@ -111,8 +131,37 @@ struct DocumentScreen: View {
                         SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
                     }
                 }
-        case .locked, .failed:
-            // Nothing to show: the prompt or the alert is what there is to see.
+        case .locked:
+            lockedScreen
+        case .failed:
+            failedScreen
+        }
+    }
+
+    /// What a locked document shows, under its password prompt and once the prompt is put away: a
+    /// lock, what the prompt says, and a button that brings the prompt back.
+    private var lockedScreen: some View {
+        ContentUnavailableView {
+            Label(Strings.passwordTitle, systemImage: "lock.fill")
+        } description: {
+            Text(Strings.passwordExplanation)
+        } actions: {
+            Button(Strings.enterPassword) { promptIsUp = true }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("enterPasswordButton")
+        }
+    }
+
+    /// What a document that could not be opened shows: nothing under the alert that says so, and the
+    /// alert's words once it is answered, for when its Close button could not close the document.
+    @ViewBuilder private var failedScreen: some View {
+        if failureAnswered {
+            ContentUnavailableView {
+                Label(Strings.fileCouldNotBeOpened, systemImage: "exclamationmark.triangle")
+            } description: {
+                if let detail = failureDetail { Text(detail) }
+            }
+        } else {
             Color(.systemBackground)
                 .ignoresSafeArea()
         }

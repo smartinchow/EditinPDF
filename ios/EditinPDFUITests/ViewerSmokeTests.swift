@@ -7,6 +7,11 @@ import XCTest
 ///
 /// Elements are found by their accessibility identifiers, not by their wording; the one thing read
 /// by its text is the page indicator's "page / pages".
+///
+/// Only one of them depends on the app closing a document scene itself, which iOS versions are reported
+/// to do differently: `testAFileThatIsNotAPDFSaysSoAndCloses`, which expects the alert's Close button to
+/// take the reader back to the document browser. Where it does not, the screen left behind says why,
+/// and the system's own way back is there.
 @MainActor
 final class ViewerSmokeTests: XCTestCase {
     // MARK: Reading, scrolling and searching
@@ -120,12 +125,15 @@ final class ViewerSmokeTests: XCTestCase {
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
     }
 
-    /// The prompt cannot be swiped away like other sheets: there is nothing behind it to look at, so
-    /// Cancel is the way out, and it closes the document, back to the document browser.
-    func testOnlyCancelClosesThePasswordPrompt() {
+    /// The prompt cannot be swiped away like other sheets: Cancel puts it away. The document stays
+    /// locked, and its screen says so, with a button that brings the prompt back (and the system's own
+    /// way out of a document, whatever the iOS version, since nothing covers it any more).
+    func testCancelPutsThePromptAwayAndEnterPasswordBringsItBack() {
         let app = launchAndOpen("locked.pdf")
         let field = app.secureTextFields["passwordField"]
         let cancel = app.buttons["cancelUnlockButton"]
+        let enterPassword = app.buttons["enterPasswordButton"]
+        let indicator = app.staticTexts["pageIndicator"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 10), "the password prompt did not come up")
 
         // Drag down from the prompt's title bar, as a person would to dismiss a sheet.
@@ -135,9 +143,18 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertFalse(field.waitForNonExistence(timeout: 2), "the prompt was swiped away")
 
         cancel.tap()
-        XCTAssertTrue(app.cells[browserIdentifier(of: "locked.pdf")].waitForExistence(timeout: 10), "the document browser did not come back")
-        XCTAssertFalse(field.exists, "the prompt is still up")
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "Cancel did not put the prompt away")
+        XCTAssertTrue(enterPassword.waitForExistence(timeout: 5), "the locked document does not offer to enter the password")
+        XCTAssertFalse(indicator.exists, "still locked: no pages")
         XCTAssertEqual(app.state, .runningForeground)
+
+        enterPassword.tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Enter Password did not bring the prompt back")
+        dismissKeyboardIntroduction(in: app)
+        field.typeText("hunter2")
+        app.buttons["unlockButton"].tap()
+        expect(indicator, toRead: "1 / 1", within: 10)
+        XCTAssertFalse(enterPassword.exists, "an open document has nothing to unlock")
     }
 
     // MARK: A file that is not a PDF

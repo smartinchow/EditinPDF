@@ -38,6 +38,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.wrongPassword, "Wrong password")
         XCTAssertEqual(Strings.unlock, "Unlock")
         XCTAssertEqual(Strings.cancel, "Cancel")
+        XCTAssertEqual(Strings.enterPassword, "Enter Password")
         XCTAssertEqual(Strings.close, "Close")
     }
 

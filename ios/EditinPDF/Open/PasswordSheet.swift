@@ -1,15 +1,16 @@
 import SwiftUI
 
 /// The prompt for the password of a protected document: a field, Unlock to try what was typed, and
-/// Cancel to give up and close the document. A refused password says so, empties the field and
-/// leaves the keyboard up for the next try.
+/// Cancel to put the prompt away. A refused password says so, empties the field and leaves the
+/// keyboard up for the next try.
 ///
-/// It cannot be swiped away: there is nothing to show until the document is unlocked, so the ways
-/// out are Unlock, which opens the document and takes the prompt away with it, and Cancel.
+/// It cannot be swiped away, so that a stray swipe does not lose what was typed: the ways out are
+/// Unlock, which opens the document and takes the prompt away with it, and Cancel. Cancel leaves the
+/// document locked, and its screen (`DocumentScreen`) offers to enter the password again; the system's
+/// own way out of the document is there, on every iOS version, once the prompt is out of the way.
 struct PasswordSheet: View {
     let model: DocumentModel
-    /// Gives up and closes the document. It is passed in, not read from the environment here:
-    /// inside a sheet, `dismiss` closes the sheet, not the document.
+    /// Puts the prompt away. Passed in by the screen that presents it, which owns whether it is up.
     let cancel: () -> Void
 
     @State private var password = ""
