@@ -1,7 +1,9 @@
 //! In-memory fixture documents for the bridge tests.
 //!
-//! Every document is built here, in memory, with the engine's own create / edit / save API, so no
-//! binary files are checked in. This module is the single place that knows how to make a PDF.
+//! Every document is built here, in memory, with the engine's own create / edit / save API (and one,
+//! `one_line_doc`, written by hand), so the Rust tests need no binary files. This module is the
+//! single place that knows how to make a PDF. The PDF files that the apps' own tests open are checked
+//! in next to those tests; `fixtures_export.rs` writes them from the documents made here.
 //!
 //! Each integration-test crate compiles this module on its own and uses only some helpers, hence
 //! the `dead_code` allowance; the clippy allowances mirror the ones the test files carry.

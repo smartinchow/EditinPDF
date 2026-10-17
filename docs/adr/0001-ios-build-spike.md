@@ -12,8 +12,9 @@
 Yes to all three, with one workaround. Everything compiles for iOS device, iOS simulator and macOS from a
 cold `target/` in about 75 s per target. One crate, `num_threads 0.1.7`, does not compile for iOS; it is
 replaced by a vendored copy with a two-edit patch (`core/vendor/num_threads`). `PageRenderer` is `Send + Sync`,
-but its `render` takes `&mut self`, so Task 3 shares it as `Arc<Mutex<PageRenderer>>`. The engine's open
-path links to about 23 MiB, inside the 40 MB budget. The bridge links and runs in the iOS Simulator.
+but its `render` takes `&mut self`, so the bridge keeps a pool of two per document revision, each behind its own
+`Mutex` (see "Decision: renderer sharing"). The engine's open path links to about 23 MiB, inside the 40 MB
+budget. The bridge links and runs in the iOS Simulator.
 
 ## Environment
 
@@ -140,13 +141,26 @@ own pool (`Document.renderer`) is not a substitute: it is a latest-wins queue (`
 work, results come back through `try_recv`) and cannot serve concurrent synchronous callers.
 
 Update 2026-10-16 (Task 3). Superseded by the Task 3 ruling: a lazily grown pool of up to 2 `Mutex<PageRenderer>`
-per revision (try_lock round-robin, else block on slot 0) so CATiledLayer's concurrent tile draws do not serialise
-on one core. It is `RendererPool` in `core/editinpdf-core/src/render.rs`: two slots, each a
-`Mutex<Option<PageRenderer>>` that is filled, under its own lock, the first time a caller finds the slots before
-it busy, so growth needs no lock of its own and the cap is structural. `PdfDocument` keeps the pool in `Inner` as an
+per revision, so CATiledLayer's concurrent tile draws do not serialise on one core. It is `RendererPool` in
+`core/editinpdf-core/src/render.rs`: two slots, each a `Mutex<Option<PageRenderer>>` that is filled the first time
+a caller takes it. Task 3 took the first slot whose `try_lock` succeeded and, with both busy, blocked on slot 0
+(the ruling called this round-robin; it was not). `PdfDocument` keeps the pool in `Inner` as an
 `Option<Arc<RendererPool>>` tagged with the revision it was built for; `render_tile` takes the `Inner` lock only to
 check the page and clone that `Arc` (making an empty pool first when the revision has changed), then draws with the
 lock released.
+
+Update 2026-10-18 (final M1 review, I2). Blocking on slot 0 made a tile wait 190-240 ms behind a 73 ms render
+while slot 1 sat idle. The pool now keeps the slots' busy flags and a ticket line under one `Mutex` with a
+`Condvar`: a caller takes the lowest free slot, or waits for whichever is let go of first, and waiting callers are
+served in the order they came, so none can be passed over for ever. That lock is held only to read and set the
+flags, never while a renderer draws; a slot's own `Mutex` is locked only by the caller holding the slot, so it is
+never waited for. The lowest free slot is the one taken, so the second renderer is still built only when the
+first is busy, and never a third. Measured with the review's probe (release build, Apple M5: one thread drawing a
+6120 x 7920 px whole page over and over, three drawing 256 px tiles, for 4 s): the slowest tile took 219-324 ms
+before and 10-11 ms after. The line is fair, and that has a price: the whole-page drawer now gets its turns (102
+drawings in the 4 s instead of 24-25), so the tiles' median rose from 3 ms to 9 ms in that test. Tiles have no
+priority over thumbnails and search's text reads; if the M4 device check shows that they need it, a priority lane
+for tiles is the next step.
 
 Baseline render time (Task 3): `whole_page_dimensions_follow_scale`, one line of text on a 612 x 792 pt page at
 scale 0.5 (306 x 396 px), `cargo test` profile on the Apple M5: the first `render_tile` call takes 0.25 ms (it
@@ -169,8 +183,9 @@ Tile render on the simulator (Task 7): one 1024 x 1024 tile of a text page (`ren
   `-framework CoreFoundation -liconv -lSystem -lc -lm`; macOS also `-framework Security` (from
   `security-framework`, which only the macOS build pulls in). Linking the spike from Swift needed none of
   them explicitly on the macOS and simulator slices (the Swift link already brings in Foundation, hence
-  CoreFoundation and, on macOS, Security). A binary target carries no link flags, so if a later link fails
-  with undefined symbols, add them to the Swift package's `linkerSettings`.
+  CoreFoundation and, on macOS, Security). A binary target carries no link flags, so the Swift package
+  declares them in its `linkerSettings` (`ios/EditinPDFCore/Package.swift`): CoreFoundation and iconv on every
+  slice, Security on macOS.
 - `uniffi-bindgen --library` reads the macOS `.dylib` directly (the `UNIFFI_META_*` symbols survive
   `strip = "debuginfo"`), so the `.a` fallback is not needed. With `core/editinpdf-core/uniffi.toml` the
   generated files are `EditinPDFCore.swift`, `EditinPDFCoreFFI.h` and `EditinPDFCoreFFI.modulemap`, as the
@@ -192,16 +207,17 @@ Tile render on the simulator (Task 7): one 1024 x 1024 tile of a text page (`ren
 
 ## Status at M1
 
-M1 (the viewer) is complete at commit 8befba6, plus the CI and documentation commit after it. This section records
-the end state in numbers, all measured on 2026-10-18 on the Mac of the Environment table, except that Xcode is now
-27.1 (27A9275; the spike used 27.0). The simulator is an iPhone 17 Pro on iOS 26.5 (23F77), the Xcode project is
-generated with XcodeGen 2.45.4, and the engine is still PdfCraft v0.7.1.
+M1 (the viewer) is complete at commit 8befba6, plus the CI and documentation commit after it and the fix wave that
+followed the whole-branch review. This section records the end state in numbers, all measured on 2026-10-18 on the
+Mac of the Environment table, except that Xcode is now 27.1 (27A9275; the spike used 27.0). The simulator is an
+iPhone 17 Pro on iOS 26.5 (23F77), the Xcode project is generated with XcodeGen 2.45.4, and the engine is still
+PdfCraft v0.7.1. The test counts are those after the fix wave; the sizes were measured before it.
 
 | Item | Value |
 |---|---|
-| Rust tests, `cargo test -p editinpdf-core --locked` | 153 passed, 0 failed, 1 ignored: 101 unit tests, 10 in `tests/open.rs`, 17 in `tests/render.rs`, 25 in `tests/text.rs`. The ignored one is `dump_fixtures` (`tests/fixtures_export.rs`), which writes the UI tests' sample PDFs |
+| Rust tests, `cargo test -p editinpdf-core --locked` | 160 passed, 0 failed, 1 ignored: 107 unit tests, 10 in `tests/open.rs`, 18 in `tests/render.rs`, 25 in `tests/text.rs`. The ignored one is `dump_fixtures` (`tests/fixtures_export.rs`), which writes the PDFs the apps' tests open |
 | Swift package tests, `swift test` in `ios/EditinPDFCore` (macOS) | 4 passed |
-| App tests, `xcodebuild test`, scheme EditinPDF, iPhone 17 Pro simulator | 261 passed, 0 failed: 254 unit tests (15 files in `ios/EditinPDFTests`) and 7 UI tests. The UI tests' cases add up to 92 s and the unit tests' to 5 s; `make test` takes 116 s with everything built already |
+| App tests, `xcodebuild test`, scheme EditinPDF, iPhone 17 Pro simulator | 276 passed, 0 failed: 269 unit tests (16 files in `ios/EditinPDFTests`) and 7 UI tests. Testing takes 117 s, almost all of it the UI tests; `make lint test release-check` takes 138 s with everything built already |
 | Tile render, one 1024 x 1024 px tile of a text page | 5.9 ms median uncontended, 9.6 ms median (p90 16 ms) while `CATiledLayer` draws several at once. Measured in Task 7 (see "Tile render on the simulator" above); not measured again since |
 | `libeditinpdf_core.a`, release | `ios-arm64` 352,085,640 B (335.8 MiB), `ios-arm64-simulator` 351,736,656 B (335.4 MiB), `macos-arm64` 352,851,792 B (336.5 MiB): 0.8 MiB more per slice than the spike's |
 | `EditinPDFCoreFFI.xcframework`, three slices (git-ignored) | 1,032,016 KiB (0.98 GiB) |

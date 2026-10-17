@@ -17,7 +17,8 @@ the ArtCraft team or Adobe Inc.
 
 ## What works today
 
-The viewer opens PDFs read-only, on iPhone and iPad (iOS 17 and later):
+The viewer opens PDFs read-only, on iPhone and iPad (iOS 17 and later; so far tested on the iOS 26.5 simulator
+only, see below):
 
 - **Open** a PDF from the Files document browser. A password-protected file asks for its password; a file that
   is not a readable PDF says so and closes.
@@ -27,8 +28,11 @@ The viewer opens PDFs read-only, on iPhone and iPad (iOS 17 and later):
 - **Search** for text: hits are highlighted on the pages, and you can step through them or pick one from the list.
 - **Select and copy** text: long-press a word, drag the handles to extend the selection, then Copy.
 
-Still to come: organizing pages (M2), annotations and forms (M3), and the app icon, Licenses screen, privacy
-manifest and TestFlight build (M4). Tested on the iOS Simulator; not yet on a physical device.
+Still to come: organizing pages (M2), annotations and forms (M3), and the app icon, Licenses screen and
+TestFlight build (M4). The privacy manifest ships already: no tracking and no data collected.
+
+Tested on the iOS 26.5 simulator only: the app is built for iOS 17 and later, but iOS 17 and 18 are untested
+(Xcode 27 offers no iOS 17 simulator runtime to download), and nothing has run on a physical device yet.
 
 ## Building
 
