@@ -35,9 +35,9 @@ final class ThumbnailStore {
     nonisolated static let tallestInWidths = 4.0
 
     private nonisolated static let log = Logger(subsystem: Diagnostics.subsystem, category: "thumbnails")
-    /// Marks each picture's drawing as an interval ("renderThumbnail") for Instruments' Points of
+    /// Marks each picture's drawing as an interval ("renderThumbnail") in Instruments' Points of
     /// Interest, beside the tiles' (`PageTiledLayer`): the two share the engine's renderers.
-    private nonisolated static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: "thumbnails")
+    private nonisolated static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: .pointsOfInterest)
 
     /// How wide a picture is, in points: of every page but a very tall one (`tallestInWidths`).
     let targetWidth: CGFloat

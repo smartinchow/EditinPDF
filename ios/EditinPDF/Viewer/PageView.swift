@@ -78,10 +78,10 @@ final class PageTiledLayer: CATiledLayer {
 
     private static let log = Logger(subsystem: Diagnostics.subsystem, category: "tiles")
     /// Marks each tile's call to the engine as an interval ("renderTile", with its page, scale and
-    /// pixels), and each tile left blank as an event ("tileLeftBlank"), so that Instruments' Points of
-    /// Interest can tell a tile that waited for a renderer, or one that failed, from one never asked
-    /// for.
-    private static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: "tiles")
+    /// pixels), and each tile left blank as an event ("tileLeftBlank"), in Instruments' Points of
+    /// Interest: that tells a tile that waited for a renderer, or one that failed, from one never
+    /// asked for.
+    private static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: .pointsOfInterest)
 
     private let sourceLock = OSAllocatedUnfairLock<Source?>(initialState: nil)
 
