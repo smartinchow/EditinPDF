@@ -1,0 +1,6 @@
+# Settings for actionlint (https://github.com/rhysd/actionlint). It checks runner labels against a fixed
+# list, and `xcode-27` (the GitHub-hosted macOS image that has Xcode 27, in public preview) is not on the
+# list of 1.7.12. Delete this file once actionlint knows the label.
+self-hosted-runner:
+  labels:
+    - xcode-27

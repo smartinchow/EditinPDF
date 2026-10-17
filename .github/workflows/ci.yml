@@ -1,0 +1,207 @@
+name: CI
+
+# Everything the repository can check without a device: the Rust core (format, lints, tests), the Swift
+# package, the app's unit and UI tests on a simulator, and that a Release build ships no sample PDFs.
+# `make lint test release-check` runs the same checks locally (`make project` and `git status` show the
+# committed Xcode project's drift, which the job also checks).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# One run per branch or pull request: a newer push cancels the one still running for that ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # `bash -eo pipefail`: a failing command inside a pipe fails the step (the default shell does not).
+    shell: bash
+
+env:
+  # The Xcode to build with: ios/project.yml's xcodeVersion. The runner image keeps several side by side
+  # as /Applications/Xcode_<version>.app; the job fails loudly if this one is missing or does not report
+  # Xcode 27.
+  XCODE_VERSION: "27.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  HOMEBREW_NO_ENV_HINTS: "1"
+
+jobs:
+  test:
+    name: Rust core, Swift package, iOS app
+    # Xcode 27 is not on macos-26 (nor on macos-latest, which points at it): that image ships Xcode 26.x. It
+    # is on its own image, `xcode-27`: macOS 27, Apple silicon, 3 cores, 7 GB RAM, 14 GB SSD, in public
+    # *preview* (no SLA). Read on 2026-10-18 from the image's README (version 20261012.0260.1):
+    # https://github.com/actions/runner-images/blob/main/images/macos/xcode-27-arm64-Readme.md
+    # It has Xcode 27.0 as the default (27.1 RC and 27.2 beta too), cmake, Rust 1.99 and the iOS 27.0
+    # simulator runtime, but not XcodeGen. Use the plain macOS label once it ships Xcode 27;
+    # `xcode-27-xlarge` is the bigger machine, if this one turns out too small for the Rust link steps.
+    runs-on: xcode-27
+    # On a 10-core Mac the Rust half takes 7 minutes cold (clippy 47 s, tests 110 s, XCFramework 253 s)
+    # and the app's UI tests about 90 s; expect three to four times as long on this runner's 3 cores.
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out, with the engine submodule
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: |
+          app="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [[ ! -d "$app" ]]; then
+            echo "::error title=Xcode ${XCODE_VERSION} is not installed::$app does not exist. Xcode apps on this runner: $(printf '%s ' /Applications/Xcode*)"
+            exit 1
+          fi
+          sudo xcode-select -s "$app/Contents/Developer"
+          version="$(xcodebuild -version)"
+          echo "$version"
+          case "$version" in
+            "Xcode 27."*) ;;
+            *)
+              echo "::error title=Xcode 27 is required::xcodebuild reports '${version%%$'\n'*}' for $app"
+              exit 1
+              ;;
+          esac
+
+      # The simulator is whatever the runner image has: the first available iPhone on the newest iOS runtime.
+      # No device name is written down (the iOS 27 image has no "iPhone 17 Pro"). Picked before the slow
+      # steps, so that a runner without an iPhone simulator fails now and not after the Rust build. The UDID
+      # is exported as SIMULATOR_UDID for the steps that follow.
+      - name: Pick the simulator
+        run: |
+          xcrun simctl list devices available
+          udid="$(scripts/pick-simulator.sh)"
+          echo "SIMULATOR_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Runner resources
+        run: |
+          sw_vers
+          echo "cores: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GiB"
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Install Rust (stable) with the iOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+          components: clippy, rustfmt
+
+      # The Cargo registry and git dependencies only, not core/target. The build output is about 9.5 GiB once the
+      # XCFramework is built (4.4 GiB for the host debug build that clippy and the tests make, 3 x 1.6 GiB for
+      # the three release builds; measured on a Mac), against a 14 GB runner disk and GitHub's 10 GB cache quota
+      # per repository, which a target cache would not fit comfortably. The price is a cold Rust build on every
+      # run, which is also the check that a clean clone builds. Saved from main only.
+      # To cache core/target after all, set cache-targets to true and drop the "Free the disk" step.
+      - name: Cache the Cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          cache-targets: false
+          cache-bin: false
+          cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # cmake is on the image already; the check is for a future image that drops it.
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          command -v cmake > /dev/null || brew install cmake
+
+      - name: Tool versions
+        run: |
+          xcodegen --version
+          cmake --version
+          rustc -vV
+          cargo -vV
+          jq --version
+
+      - name: Rust format
+        working-directory: core
+        run: cargo fmt --check
+
+      # The committed project is what people open in Xcode and what the steps below build, so it has to be
+      # what project.yml makes. Checked before the slow steps; `git status` also catches a new, untracked file.
+      # XcodeGen 2.45.4 and 2.46.0 (what Homebrew installs today) make the same project from today's
+      # project.yml; if a later XcodeGen changes the output, this step shows the diff, and the fix is to
+      # regenerate with `make project` and commit.
+      - name: The committed Xcode project matches project.yml
+        working-directory: ios
+        run: |
+          xcodegen generate
+          if [[ -n "$(git status --porcelain -- EditinPDF.xcodeproj)" ]]; then
+            echo "::error title=EditinPDF.xcodeproj is out of date::It differs from what 'xcodegen generate' makes of ios/project.yml (XcodeGen $(xcodegen --version)). Run 'make project' and commit the result."
+            git status --short -- EditinPDF.xcodeproj
+            git --no-pager diff --unified=1 -- EditinPDF.xcodeproj
+            exit 1
+          fi
+
+      - name: Rust lints (clippy, warnings are errors)
+        working-directory: core
+        run: cargo clippy -p editinpdf-core --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        working-directory: core
+        run: cargo test -p editinpdf-core --locked
+
+      # Builds the three libraries, generates the Swift bindings and assembles the XCFramework that the
+      # Swift package and the app link. CI is set by the runner already (the script then passes --locked to
+      # cargo, so a stale Cargo.lock fails the build); it is written out here so that the dependency is visible.
+      - name: Build the Rust core and the XCFramework
+        timeout-minutes: 60
+        env:
+          CI: "1"
+        run: core/scripts/build-xcframework.sh
+
+      # Everything from here on links the XCFramework, not core/target.
+      - name: Free the disk (Cargo build output)
+        run: |
+          df -h "$GITHUB_WORKSPACE"
+          rm -rf core/target core/scripts/out
+          df -h "$GITHUB_WORKSPACE"
+
+      - name: Swift package tests (macOS)
+        working-directory: ios/EditinPDFCore
+        run: swift test
+
+      # A first boot on a fresh runner can take minutes; do it here, where a hang is easy to read, and
+      # not inside the first test.
+      - name: Boot the simulator
+        timeout-minutes: 15
+        run: xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+
+      - name: App tests (unit and UI) on the simulator
+        timeout-minutes: 45
+        working-directory: ios
+        env:
+          NSUnbufferedIO: "YES"
+        run: |
+          xcodebuild test \
+            -project EditinPDF.xcodeproj \
+            -scheme EditinPDF \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -resultBundlePath "$RUNNER_TEMP/EditinPDF-tests.xcresult"
+
+      # Screenshots, logs and per-test timings of a failed run; open it in Xcode.
+      - name: Upload the test result bundle
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: EditinPDF-tests.xcresult
+          path: ${{ runner.temp }}/EditinPDF-tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Release builds must not ship the UI tests' sample documents.
+      - name: Release build ships no PDFs
+        timeout-minutes: 30
+        run: scripts/check-release-bundle.sh

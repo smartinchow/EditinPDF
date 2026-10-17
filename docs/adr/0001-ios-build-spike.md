@@ -190,9 +190,36 @@ Tile render on the simulator (Task 7): one 1024 x 1024 tile of a text page (`ren
 - Plan details for Task 3: `RequestKind` has `Pixels` and `Text` (there is no `Raster`); `RenderRequest.scale`
   is `f32` device pixels per point and `Tile { x, y, w, h }` is in device pixels at that scale.
 
+## Status at M1
+
+M1 (the viewer) is complete at commit 8befba6, plus the CI and documentation commit after it. This section records
+the end state in numbers, all measured on 2026-10-18 on the Mac of the Environment table, except that Xcode is now
+27.1 (27A9275; the spike used 27.0). The simulator is an iPhone 17 Pro on iOS 26.5 (23F77), the Xcode project is
+generated with XcodeGen 2.45.4, and the engine is still PdfCraft v0.7.1.
+
+| Item | Value |
+|---|---|
+| Rust tests, `cargo test -p editinpdf-core --locked` | 153 passed, 0 failed, 1 ignored: 101 unit tests, 10 in `tests/open.rs`, 17 in `tests/render.rs`, 25 in `tests/text.rs`. The ignored one is `dump_fixtures` (`tests/fixtures_export.rs`), which writes the UI tests' sample PDFs |
+| Swift package tests, `swift test` in `ios/EditinPDFCore` (macOS) | 4 passed |
+| App tests, `xcodebuild test`, scheme EditinPDF, iPhone 17 Pro simulator | 261 passed, 0 failed: 254 unit tests (15 files in `ios/EditinPDFTests`) and 7 UI tests. The UI tests' cases add up to 92 s and the unit tests' to 5 s; `make test` takes 116 s with everything built already |
+| Tile render, one 1024 x 1024 px tile of a text page | 5.9 ms median uncontended, 9.6 ms median (p90 16 ms) while `CATiledLayer` draws several at once. Measured in Task 7 (see "Tile render on the simulator" above); not measured again since |
+| `libeditinpdf_core.a`, release | `ios-arm64` 352,085,640 B (335.8 MiB), `ios-arm64-simulator` 351,736,656 B (335.4 MiB), `macos-arm64` 352,851,792 B (336.5 MiB): 0.8 MiB more per slice than the spike's |
+| `EditinPDFCoreFFI.xcframework`, three slices (git-ignored) | 1,032,016 KiB (0.98 GiB) |
+| cdylib, release (the spike's proxy for the linked size) | 23,752,760 B (22.7 MiB) for `aarch64-apple-ios`, 24,169,632 B (23.0 MiB) for `aarch64-apple-ios-sim`, 24,361,664 B (23.2 MiB) for `aarch64-apple-darwin`: about 0.1 MiB more than the spike's, so the real API (open, render, text, search) cost next to nothing. Well inside the 40 MB budget |
+| `EditinPDF.app`, Release, for the simulator (arm64) | 25,040 KiB (24.5 MiB) in 5 files, the executable being 25,623,872 B; no PDF in it (`make release-check`) |
+| Cold Rust pipeline, fresh target directory, `CI=1` | `cargo fmt --check` 0 s, clippy 47 s, `cargo test` 110 s, `build-xcframework.sh` 253 s: 7 minutes. `core/target` is 9.5 GiB afterwards: 4.4 GiB of host debug build, 1.6 GiB for each of the three release builds |
+
+CI. `.github/workflows/ci.yml` runs these steps on GitHub's `xcode-27` runner image, the only hosted image with
+Xcode 27 on 2026-10-18 (`macos-26`, and so `macos-latest`, ships Xcode 26.x; `xcode-27` is a public preview).
+That runner is documented as 3 cores, 7 GB of RAM and a 14 GB disk, which is why the workflow does not cache
+`core/target` (9.5 GiB) and deletes it before the Xcode steps. The workflow has been checked with actionlint
+1.7.12 and its commands run on this Mac, but it has not run on a hosted runner: there is no GitHub remote yet. The
+first run is also the first on an iOS 27 simulator; this Mac only has the iOS 26.5 runtime.
+
 ## Reproduce
 
 ```
 core/scripts/build-xcframework.sh        # from any directory; PROFILE=debug for a dev build
 cd core && cargo check -p editinpdf-core
+make lint test release-check             # the M1 checks that CI runs (needs the XCFramework: make xcframework)
 ```
