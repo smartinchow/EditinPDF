@@ -1,3 +1,4 @@
+import EditinPDFCore
 import UIKit
 import XCTest
 @testable import EditinPDF
@@ -112,6 +113,45 @@ final class DocumentModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTAssertEqual(search.hits.count, 1)
+    }
+
+    func testAnOpenDocumentHasASelectionAndOthersDoNot() throws {
+        let open = DocumentModel(bytes: try fixture())
+        let selection = try XCTUnwrap(open.selection)
+        XCTAssertTrue(selection === open.selection, "one selection for the document, not a new one at every look")
+        XCTAssertNil(selection.selection)
+
+        XCTAssertNil(DocumentModel(bytes: Data("garbage".utf8)).selection, "nothing to select in a file that did not open")
+
+        // A locked document gets its selection when the password opens it.
+        let locked = DocumentModel(bytes: Self.encryptedPDF(openPassword: "s3cret"))
+        XCTAssertNil(locked.selection)
+        XCTAssertFalse(locked.unlock(password: "nope"))
+        XCTAssertNil(locked.selection)
+        XCTAssertTrue(locked.unlock(password: "s3cret"))
+        let unlocked = try XCTUnwrap(locked.selection)
+        XCTAssertTrue(locked.unlock(password: "anything"), "an open document stays open")
+        XCTAssertTrue(unlocked === locked.selection, "and keeps its selection")
+    }
+
+    func testTheSelectionDoesNotKeepTheModelAlive() throws {
+        var model: DocumentModel? = DocumentModel(bytes: try fixture())
+        weak let weakModel = model
+        let selection = model?.selection
+        model = nil
+        XCTAssertNil(weakModel, "the selection holds the engine's document, never the model")
+        XCTAssertNotNil(selection)
+    }
+
+    func testTheModelsSelectionSelectsTextInItsDocument() async throws {
+        let model = DocumentModel(bytes: try fixture())
+        let selection = try XCTUnwrap(model.selection)
+        // "Hello world" is drawn at the page's top left, so a point inside it, a little in from the corner.
+        let text = try XCTUnwrap(model.document()).pageText(page: 0)
+        let glyph = try XCTUnwrap(text.glyphs.first)
+        selection.beginWord(page: 0, at: CGPoint(x: glyph.rect.x + glyph.rect.width / 2, y: glyph.rect.y + glyph.rect.height / 2))
+        await selection.waitUntilSettled()
+        XCTAssertEqual(selection.text, "Hello")
     }
 
     /// A one-page PDF that needs `openPassword` to open, made by the system's own PDF writer so that

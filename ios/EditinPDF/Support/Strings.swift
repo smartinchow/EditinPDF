@@ -91,6 +91,24 @@ enum Strings {
         String(localized: "End search", comment: "Button that clears the search and its highlights")
     }
 
+    // MARK: Selection
+
+    /// The action that puts the selected text on the pasteboard: the item of the menu that comes up
+    /// over a selection, and the toolbar button that does the same without the menu.
+    static var copy: String {
+        String(localized: "Copy", comment: "Action that copies the selected text: the item of the menu over a selection, and a toolbar button")
+    }
+
+    /// What the handle at the start of the selected text is called, for VoiceOver and UI tests.
+    static var selectionStart: String {
+        String(localized: "Start of selection", comment: "Accessibility label of the handle at the start of the selected text")
+    }
+
+    /// What the handle at the end of the selected text is called, for VoiceOver and UI tests.
+    static var selectionEnd: String {
+        String(localized: "End of selection", comment: "Accessibility label of the handle at the end of the selected text")
+    }
+
     /// The sentence that starts every message about a file the engine could not read.
     static var fileCouldNotBeOpened: String {
         String(localized: "This file could not be opened.", comment: "Message shown when a PDF cannot be read")

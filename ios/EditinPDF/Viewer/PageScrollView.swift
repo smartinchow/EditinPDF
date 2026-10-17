@@ -29,6 +29,8 @@ struct PageScrollView: UIViewControllerRepresentable {
     var highlights: [Int: [CGRect]] = [:]
     /// The hit being looked at, which is drawn in its own colour over the others.
     var activeHighlight: ActiveHighlight?
+    /// The selected text: its page and its boxes there, in PDF points. Nil when nothing is selected.
+    var selection: (page: Int, rects: [CGRect])?
 
     func makeUIViewController(context: Context) -> PageScrollViewController {
         PageScrollViewController(model: model)
@@ -37,6 +39,7 @@ struct PageScrollView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: PageScrollViewController, context: Context) {
         controller.highlightsByPage = highlights
         controller.activeHighlight = activeHighlight
+        controller.selection = selection
         guard scrollTarget != nil || revealRect != nil else { return }
         let target = scrollTarget
         let reveal = revealRect
@@ -59,6 +62,10 @@ struct PageScrollView: UIViewControllerRepresentable {
 /// dropped as they scroll away, with their tiles. Keeps `model.currentPage` on the page the reader
 /// is on: the first or the last at either end of the document, otherwise the page at the centre of
 /// the view.
+///
+/// The reader can select text on the pages: a long press, then handles to drag, then Copy. The gestures
+/// and the handles are `SelectionInteraction`'s; what is selected arrives as `selection`, to be drawn by
+/// the page views' overlays like the search hits are.
 final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// How many pages above and below those in view keep a view, so they are drawn before they
     /// scroll in.
@@ -84,7 +91,20 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         didSet { if activeHighlight != oldValue { applyHighlightsToPageViews() } }
     }
 
-    private let model: DocumentModel
+    /// The selected text: its page and its boxes there, in PDF points, drawn on that page's overlay. A
+    /// page view is given its boxes when it is made as well as when they change, as the search hits
+    /// are, so they are still there when the page scrolls out of the window of page views and back.
+    var selection: (page: Int, rects: [CGRect])? {
+        didSet {
+            guard !Self.isSame(oldValue, selection) else { return }
+            for view in pageViews.values { applyOverlay(to: view) }
+            selectionInteraction.selectionDidChange()
+        }
+    }
+
+    let model: DocumentModel
+    /// The long press, the tap, the handles and the menu of text selection.
+    private(set) lazy var selectionInteraction = SelectionInteraction(host: self)
     /// Nil until the view has a width.
     private var layout: PageLayout?
     private var pageViews: [Int: PageView] = [:]
@@ -119,6 +139,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         scrollView.accessibilityIdentifier = "pageScrollView"
         scrollView.addSubview(contentView)
         view = scrollView
+        selectionInteraction.install()
     }
 
     override func viewDidLayoutSubviews() {
@@ -158,10 +179,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         guard (0..<layout.pageCount).contains(target.page),
               [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else { return }
         // The box in layout points at zoom 1: the page is fitted to the width by its own scale.
-        let frame = layout.frame(of: target.page)
-        let scale = layout.scale(of: target.page)
-        let box = CGRect(x: frame.minX + rect.minX * scale, y: frame.minY + rect.minY * scale,
-                         width: rect.width * scale, height: rect.height * scale)
+        let box = Self.layoutRect(of: rect, onPage: target.page, in: layout)
         guard !visibleArea().contains(box) else { return }
 
         let zoom = scrollView.zoomScale
@@ -186,6 +204,41 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         length <= viewport ? low + (length - viewport) / 2 - inset : low - inset
     }
 
+    // MARK: Where things are, for the selection
+
+    /// The page under `point` (the content view's coordinates: layout points at zoom 1) and where on it,
+    /// in PDF points. Nil in a gap between pages, outside the column, or before there is a layout.
+    func pageLocation(of point: CGPoint) -> (page: Int, point: CGPoint)? {
+        guard let layout, let page = layout.page(at: point) else { return nil }
+        let scale = layout.scale(of: page)
+        guard scale > 0 else { return nil }
+        let frame = layout.frame(of: page)
+        return (page, CGPoint(x: (point.x - frame.minX) / scale, y: (point.y - frame.minY) / scale))
+    }
+
+    /// `rect` (PDF points on `page`) in the scroll view's own coordinates, which is where the zoom and the
+    /// scrolling are: what a view placed in the scroll view, beside the content, lines up with. Nil
+    /// before there is a layout, or for a page the document does not have.
+    func scrollViewRect(of rect: CGRect, onPage page: Int) -> CGRect? {
+        guard let layout, (0..<layout.pageCount).contains(page) else { return nil }
+        return contentView.convert(Self.layoutRect(of: rect, onPage: page, in: layout), to: scrollView)
+    }
+
+    /// `rect` (PDF points on `page`) in layout points at zoom 1, the content view's coordinates: the page is
+    /// fitted to the width by its own scale, and sits where the layout puts it.
+    private static func layoutRect(of rect: CGRect, onPage page: Int, in layout: PageLayout) -> CGRect {
+        let frame = layout.frame(of: page)
+        let scale = layout.scale(of: page)
+        return CGRect(x: frame.minX + rect.minX * scale, y: frame.minY + rect.minY * scale,
+                      width: rect.width * scale, height: rect.height * scale)
+    }
+
+    /// How many points of the scroll view a PDF point of `page` is, at the zoom the view is at: 0
+    /// before there is a layout, or for a page the document does not have.
+    func screenScale(ofPage page: Int) -> CGFloat {
+        (layout?.scale(of: page) ?? 0) * scrollView.zoomScale
+    }
+
     // MARK: UIScrollViewDelegate
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -194,6 +247,14 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         update()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        selectionInteraction.viewportWillChange()
+    }
+
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        selectionInteraction.viewportWillChange()
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -280,27 +341,38 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
             let info = model.pages[page]
             let view = PageView(page: page, document: document, pointSize: CGSize(width: info.widthPt, height: info.heightPt))
             view.frame = layout.frame(of: page)
-            applyHighlights(to: view)
+            applyOverlay(to: view)
             contentView.addSubview(view)
             pageViews[page] = view
         }
         if let page = readerPage(in: layout), page != model.currentPage {
             model.currentPage = page
         }
+        // The zoom and the layout move the selection on screen, and its handles with it.
+        selectionInteraction.layoutHandles()
     }
 
     private func applyHighlightsToPageViews() {
-        for view in pageViews.values { applyHighlights(to: view) }
+        for view in pageViews.values { applyOverlay(to: view) }
     }
 
-    /// Gives `view` the boxes of its own page.
-    private func applyHighlights(to view: PageView) {
+    /// Gives `view` the boxes of its own page: the search hits and the selected text.
+    private func applyOverlay(to view: PageView) {
         view.overlay.highlights = highlightsByPage[view.page] ?? []
         if let active = activeHighlight, active.page == view.page {
             view.overlay.activeHighlights = active.rects
         } else {
             view.overlay.activeHighlights = []
         }
+        if let selection, selection.page == view.page {
+            view.overlay.selection = selection.rects
+        } else {
+            view.overlay.selection = []
+        }
+    }
+
+    private static func isSame(_ a: (page: Int, rects: [CGRect])?, _ b: (page: Int, rects: [CGRect])?) -> Bool {
+        a?.page == b?.page && a?.rects == b?.rects
     }
 
     /// The page the reader is on. At the top end of the scroll range (or past it) it is the first

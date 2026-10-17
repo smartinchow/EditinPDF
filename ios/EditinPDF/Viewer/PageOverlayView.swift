@@ -27,8 +27,8 @@ final class PageOverlayView: UIView {
         didSet { if activeHighlights != oldValue { update() } }
     }
 
-    /// The boxes of the selected text, in PDF points: light blue, at 30 % alpha, under the hits.
-    /// Declared for text selection, which fills it.
+    /// The boxes of the selected text, in PDF points: light blue, at 30 % alpha, under the hits. The
+    /// scroll view controller fills it with the page's part of the selection.
     var selection: [CGRect] = [] {
         didSet { if selection != oldValue { update() } }
     }

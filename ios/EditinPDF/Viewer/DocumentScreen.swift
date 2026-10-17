@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// The screen for one document: its pages, once it is open, with the search and thumbnails buttons
-/// in the toolbar, and the page indicator (and, while a search has hits, the bar to move between
-/// them) over the pages. A locked or unreadable document still shows the placeholder page count,
-/// until the password prompt and the error message replace it.
+/// in the toolbar (and, while text is selected, a Copy button before them), and the page indicator
+/// (and, while a search has hits, the bar to move between them) over the pages. A locked or
+/// unreadable document still shows the placeholder page count, until the password prompt and the
+/// error message replace it.
 struct DocumentScreen: View {
     let model: DocumentModel
     /// A page to jump to, for the thumbnails and search to set.
@@ -34,7 +35,8 @@ struct DocumentScreen: View {
         case .open:
             PageScrollView(model: model, scrollTarget: $scrollTarget, revealRect: $revealRect,
                            highlights: model.search?.highlightsByPage ?? [:],
-                           activeHighlight: model.search?.activeHighlight)
+                           activeHighlight: model.search?.activeHighlight,
+                           selection: model.selection?.pageRects)
                 .ignoresSafeArea()
                 // An overlay, not a bar: the scroll view's insets do not change when it appears.
                 .overlay(alignment: .bottom) {
@@ -45,6 +47,7 @@ struct DocumentScreen: View {
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        copyButton
                         searchButton
                         thumbnailsButton
                     }
@@ -80,6 +83,20 @@ struct DocumentScreen: View {
     @ViewBuilder private var searchHitBar: some View {
         if let search = model.search, !search.hits.isEmpty {
             SearchHitBar(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
+        }
+    }
+
+    /// Copies the selected text: the same as the menu over the selection, for whoever cannot reach it.
+    /// Only while text is selected.
+    @ViewBuilder private var copyButton: some View {
+        if let selection = model.selection, selection.selection != nil {
+            Button {
+                selection.copySelection()
+            } label: {
+                Image(systemName: "doc.on.doc")
+            }
+            .accessibilityLabel(Strings.copy)
+            .accessibilityIdentifier("copyButton")
         }
     }
 

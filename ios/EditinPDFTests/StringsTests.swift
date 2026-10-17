@@ -63,6 +63,12 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.searchPosition(current: 1, count: 1), "1 of 1")
     }
 
+    func testSelectionWording() {
+        XCTAssertEqual(Strings.copy, "Copy")
+        XCTAssertEqual(Strings.selectionStart, "Start of selection")
+        XCTAssertEqual(Strings.selectionEnd, "End of selection")
+    }
+
     /// The limit is the engine's, so the note says whatever number it is given, written the way the
     /// reader's region writes it (this test writes it the same way, so it holds in any region).
     func testTheTruncationNoteNamesTheLimit() {
