@@ -3,8 +3,8 @@ import Foundation
 import Observation
 
 /// What SwiftUI shows for one document: whether it is open, locked behind a password or could not
-/// be read; its pages; and which page the reader is on. Everything lives on the main actor, since
-/// views read it directly.
+/// be read; its pages; which page the reader is on; and its search. Everything lives on the main
+/// actor, since views read it directly.
 @MainActor
 @Observable
 final class DocumentModel {
@@ -22,6 +22,10 @@ final class DocumentModel {
     private(set) var pages: [PageInfo]
     /// The page the reader is on, counting from 0; the scroll view keeps it current.
     var currentPage = 0
+    /// The search of the document: made once, when the document opens, and the same one for as long as
+    /// the model lives; nil unless the document is open. It holds the engine's document, not the
+    /// model.
+    private(set) var search: SearchController?
 
     /// How many pages the document has; 0 unless it is open.
     var pageCount: Int { pages.count }
@@ -34,6 +38,7 @@ final class DocumentModel {
 
     init(outcome: OpenOutcome) {
         (state, pages) = Self.resolve(outcome)
+        search = document().map(SearchController.init(document:))
     }
 
     /// Tries `password` on a locked document, and says whether the document is open afterwards. A
@@ -48,6 +53,7 @@ final class DocumentModel {
             return false
         case .locked(let bytes, _):
             (state, pages) = Self.resolve(OpenOutcome(bytes: bytes, password: password))
+            search = document().map(SearchController.init(document:))
             return document() != nil
         }
     }

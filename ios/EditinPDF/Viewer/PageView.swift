@@ -6,7 +6,8 @@ import UIKit
 ///
 /// A thin view: its layer, a `PageTiledLayer`, does the drawing. The view hands the layer what to
 /// draw and sets it up: 1024-pixel tiles, and levels of detail from the screen's own resolution
-/// up to 16 times it, so tiles are drawn again, sharper, as the page is zoomed in.
+/// up to 16 times it, so tiles are drawn again, sharper, as the page is zoomed in. Above the tiles
+/// sits an overlay, with the search hits and the selected text.
 final class PageView: UIView {
     override class var layerClass: AnyClass { PageTiledLayer.self }
 
@@ -14,6 +15,9 @@ final class PageView: UIView {
     let page: Int
     /// The page's size in PDF points, as shown (its rotation applied).
     let pointSize: CGSize
+    /// What is drawn over the tiles: the boxes of search hits and of selected text. It always has
+    /// the view's bounds, so the scroll view's zoom scales it with the page.
+    let overlay: PageOverlayView
 
     /// A view for page `page` of `document`, whose size is `pointSize` PDF points. The page is
     /// drawn to fill the view's bounds, which the scroll view sets to the page's place in the
@@ -21,10 +25,12 @@ final class PageView: UIView {
     init(page: Int, document: PdfDocument, pointSize: CGSize) {
         self.page = page
         self.pointSize = pointSize
+        overlay = PageOverlayView(pointSize: pointSize)
         super.init(frame: .zero)
         // Paper: what shows until a tile has been drawn, and where one could not be.
         backgroundColor = .white
         isOpaque = true
+        addSubview(overlay)
         guard let tiledLayer = layer as? PageTiledLayer else { return }
         tiledLayer.attach(PageTiledLayer.Source(document: document, page: UInt32(clamping: page), pointSize: pointSize))
         tiledLayer.tileSize = CGSize(width: TileMath.maxTileSide, height: TileMath.maxTileSide)
@@ -36,6 +42,11 @@ final class PageView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        overlay.frame = bounds
+    }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()

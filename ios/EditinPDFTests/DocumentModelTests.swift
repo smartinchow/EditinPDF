@@ -75,6 +75,45 @@ final class DocumentModelTests: XCTestCase {
         guard case .failed = m.state else { return XCTFail("expected failed, got \(m.state)") }
     }
 
+    func testAnOpenDocumentHasASearchAndOthersDoNot() throws {
+        let open = DocumentModel(bytes: try fixture())
+        let search = try XCTUnwrap(open.search)
+        XCTAssertTrue(search === open.search, "one search for the document, not a new one at every look")
+        XCTAssertTrue(search.hits.isEmpty)
+
+        XCTAssertNil(DocumentModel(bytes: Data("garbage".utf8)).search, "nothing to search in a file that did not open")
+
+        // A locked document gets its search when the password opens it.
+        let locked = DocumentModel(bytes: Self.encryptedPDF(openPassword: "s3cret"))
+        XCTAssertNil(locked.search)
+        XCTAssertFalse(locked.unlock(password: "nope"))
+        XCTAssertNil(locked.search)
+        XCTAssertTrue(locked.unlock(password: "s3cret"))
+        let unlocked = try XCTUnwrap(locked.search)
+        XCTAssertTrue(locked.unlock(password: "anything"), "an open document stays open")
+        XCTAssertTrue(unlocked === locked.search, "and keeps its search")
+    }
+
+    func testTheSearchDoesNotKeepTheModelAlive() throws {
+        var model: DocumentModel? = DocumentModel(bytes: try fixture())
+        weak let weakModel = model
+        let search = model?.search
+        model = nil
+        XCTAssertNil(weakModel, "the search holds the engine's document, never the model")
+        XCTAssertNotNil(search)
+    }
+
+    func testTheModelsSearchFindsTextInItsDocument() async throws {
+        let model = DocumentModel(bytes: try fixture())
+        let search = try XCTUnwrap(model.search)
+        search.query = "world"
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while search.hits.count != 1, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(search.hits.count, 1)
+    }
+
     /// A one-page PDF that needs `openPassword` to open, made by the system's own PDF writer so that
     /// the engine is tested against a file it did not produce itself.
     static func encryptedPDF(openPassword: String) -> Data {

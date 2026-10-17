@@ -1,12 +1,16 @@
 import SwiftUI
 
-/// The screen for one document: its pages, once it is open, with the thumbnails button in the
-/// toolbar and the page indicator over the pages. A locked or unreadable document still shows the
-/// placeholder page count, until the password prompt and the error message replace it.
+/// The screen for one document: its pages, once it is open, with the search and thumbnails buttons
+/// in the toolbar, and the page indicator (and, while a search has hits, the bar to move between
+/// them) over the pages. A locked or unreadable document still shows the placeholder page count,
+/// until the password prompt and the error message replace it.
 struct DocumentScreen: View {
     let model: DocumentModel
     /// A page to jump to, for the thumbnails and search to set.
     @State private var scrollTarget: Int?
+    /// Whether the search sheet is up. The search itself is the model's, so it is the same one each
+    /// time the sheet opens.
+    @State private var showsSearch = false
     /// Set to show the thumbnails sheet, and cleared when it closes.
     @State private var thumbnailsSheet: ThumbnailsPresentation?
     /// Made when the thumbnails are first asked for and kept while the document is on screen, so the
@@ -26,15 +30,30 @@ struct DocumentScreen: View {
     var body: some View {
         switch model.state {
         case .open:
-            PageScrollView(model: model, scrollTarget: $scrollTarget)
+            PageScrollView(model: model, scrollTarget: $scrollTarget,
+                           highlights: model.search?.highlightsByPage ?? [:],
+                           activeHighlight: model.search?.activeHighlight)
                 .ignoresSafeArea()
                 // An overlay, not a bar: the scroll view's insets do not change when it appears.
-                .overlay(alignment: .bottom) { pageIndicator }
+                .overlay(alignment: .bottom) {
+                    VStack(spacing: 8) {
+                        searchHitBar
+                        pageIndicator
+                    }
+                }
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) { thumbnailsButton }
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        searchButton
+                        thumbnailsButton
+                    }
                 }
                 .sheet(item: $thumbnailsSheet) { presentation in
                     ThumbnailsSheet(model: model, store: presentation.store, scrollTarget: $scrollTarget)
+                }
+                .sheet(isPresented: $showsSearch) {
+                    if let search = model.search {
+                        SearchSheet(search: search, scrollTarget: $scrollTarget)
+                    }
                 }
         case .locked, .failed:
             pageCount
@@ -53,6 +72,24 @@ struct DocumentScreen: View {
                 .padding(.bottom, 8)
                 .accessibilityIdentifier("pageIndicator")
         }
+    }
+
+    /// Moves between the hits of a search and ends it; only while there are hits.
+    @ViewBuilder private var searchHitBar: some View {
+        if let search = model.search, !search.hits.isEmpty {
+            SearchHitBar(search: search, scrollTarget: $scrollTarget)
+        }
+    }
+
+    private var searchButton: some View {
+        Button {
+            showsSearch = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+        }
+        .disabled(model.pageCount == 0)
+        .accessibilityLabel(Strings.search)
+        .accessibilityIdentifier("searchButton")
     }
 
     private var thumbnailsButton: some View {

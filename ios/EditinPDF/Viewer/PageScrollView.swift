@@ -2,18 +2,31 @@ import EditinPDFCore
 import SwiftUI
 import UIKit
 
+/// The boxes of the search hit being looked at, on its page, in PDF points: one for each line the
+/// hit runs across. They are drawn in another colour than the other hits' boxes.
+struct ActiveHighlight: Equatable {
+    let page: Int
+    let rects: [CGRect]
+}
+
 /// The open document's pages, one below the other, scrolling and zooming.
 struct PageScrollView: UIViewControllerRepresentable {
     let model: DocumentModel
     /// A page to bring to the top of the view, set by whatever wants to jump there (the thumbnails,
     /// search). It is cleared once the jump is made.
     @Binding var scrollTarget: Int?
+    /// The boxes to highlight on each page, in PDF points: the hits of a search.
+    var highlights: [Int: [CGRect]] = [:]
+    /// The hit being looked at, which is drawn in its own colour over the others.
+    var activeHighlight: ActiveHighlight?
 
     func makeUIViewController(context: Context) -> PageScrollViewController {
         PageScrollViewController(model: model)
     }
 
     func updateUIViewController(_ controller: PageScrollViewController, context: Context) {
+        controller.highlightsByPage = highlights
+        controller.activeHighlight = activeHighlight
         guard let target = scrollTarget else { return }
         // The jump changes the current page and the request is cleared, and SwiftUI's state must not
         // change while it updates views: both happen just after the update instead.
@@ -42,6 +55,18 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     let scrollView = UIScrollView()
     /// The view that zooms. It holds the page views, laid out at zoom 1.
     let contentView = UIView()
+
+    /// The boxes to highlight on each page, in PDF points: the hits of a search. A page view is given
+    /// its page's boxes when it is made as well as when they change, so they are still there when a
+    /// page scrolls out of the window of page views and back.
+    var highlightsByPage: [Int: [CGRect]] = [:] {
+        didSet { if highlightsByPage != oldValue { applyHighlightsToPageViews() } }
+    }
+
+    /// The hit being looked at: its boxes get the active colour, on its page.
+    var activeHighlight: ActiveHighlight? {
+        didSet { if activeHighlight != oldValue { applyHighlightsToPageViews() } }
+    }
 
     private let model: DocumentModel
     /// Nil until the view has a width.
@@ -186,11 +211,26 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
             let info = model.pages[page]
             let view = PageView(page: page, document: document, pointSize: CGSize(width: info.widthPt, height: info.heightPt))
             view.frame = layout.frame(of: page)
+            applyHighlights(to: view)
             contentView.addSubview(view)
             pageViews[page] = view
         }
         if let page = readerPage(in: layout), page != model.currentPage {
             model.currentPage = page
+        }
+    }
+
+    private func applyHighlightsToPageViews() {
+        for view in pageViews.values { applyHighlights(to: view) }
+    }
+
+    /// Gives `view` the boxes of its own page.
+    private func applyHighlights(to view: PageView) {
+        view.overlay.highlights = highlightsByPage[view.page] ?? []
+        if let active = activeHighlight, active.page == view.page {
+            view.overlay.activeHighlights = active.rects
+        } else {
+            view.overlay.activeHighlights = []
         }
     }
 

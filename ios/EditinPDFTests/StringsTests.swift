@@ -46,4 +46,27 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.pageNumber(120), "120")
         XCTAssertEqual(Strings.done, "Done")
     }
+
+    func testSearchWording() {
+        XCTAssertEqual(Strings.search, "Search")
+        XCTAssertEqual(Strings.searchPlaceholder, "Search")
+        XCTAssertEqual(Strings.searchHitPage(3), "Page 3")
+        XCTAssertEqual(Strings.searchHitLabel(page: 3, snippet: "Page three is here"), "Page 3: Page three is here")
+        XCTAssertEqual(Strings.searchNoMatches, "No matches found")
+        XCTAssertEqual(Strings.searchPrevious, "Previous match")
+        XCTAssertEqual(Strings.searchNext, "Next match")
+        XCTAssertEqual(Strings.searchEnd, "End search")
+    }
+
+    func testSearchPositionIsTheHitOverTheCount() {
+        XCTAssertEqual(Strings.searchPosition(current: 3, count: 12), "3 of 12")
+        XCTAssertEqual(Strings.searchPosition(current: 1, count: 1), "1 of 1")
+    }
+
+    /// The limit is the engine's, so the note says whatever number it is given, written the way the
+    /// reader's region writes it (this test writes it the same way, so it holds in any region).
+    func testTheTruncationNoteNamesTheLimit() {
+        XCTAssertEqual(Strings.searchTruncated(limit: 1_000), "Showing the first \(1_000.formatted()) matches")
+        XCTAssertEqual(Strings.searchTruncated(limit: 50), "Showing the first 50 matches")
+    }
 }
