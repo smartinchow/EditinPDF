@@ -25,6 +25,17 @@ final class ViewerSmokeTests: XCTestCase {
         app.swipeDown()
         expect(indicator, toRead: "1 / 3", within: 5)
 
+        // Zoomed in and out again, the indicator still names a page of the three.
+        let pages = app.scrollViews["pageScrollView"]
+        XCTAssertTrue(pages.exists, "no page scroll view")
+        pages.pinch(withScale: 2, velocity: 1)
+        expect(indicator, toReadAPageOf: 3, within: 5)
+        pages.pinch(withScale: 0.5, velocity: -1)
+        expect(indicator, toReadAPageOf: 3, within: 5)
+        // Back to the top, where the search below starts from.
+        app.swipeDown()
+        expect(indicator, toRead: "1 / 3", within: 5)
+
         app.buttons["searchButton"].tap()
         let field = app.textFields["searchField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the search sheet did not come up")
@@ -191,6 +202,14 @@ final class ViewerSmokeTests: XCTestCase {
         }
         XCTAssertTrue(cell.exists, "the document browser never listed \(file)")
         cell.tap()
+    }
+
+    /// Waits until the page indicator names one of the `count` pages: "N / count", N from 1 to `count`.
+    private func expect(_ indicator: XCUIElement, toReadAPageOf count: Int, within seconds: TimeInterval, file: StaticString = #filePath, line: UInt = #line) {
+        let pages = (1...count).map(String.init).joined(separator: "|")
+        let reads = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label MATCHES %@", "^(\(pages)) / \(count)$"), object: indicator)
+        let result = XCTWaiter().wait(for: [reads], timeout: seconds)
+        XCTAssertEqual(result, .completed, "the page indicator \(indicator.exists ? "reads \"\(indicator.label)\"" : "is not there"), not a page of \(count)", file: file, line: line)
     }
 
     /// Waits until the page indicator reads `text`.
