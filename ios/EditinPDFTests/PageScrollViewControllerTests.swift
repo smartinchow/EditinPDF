@@ -168,4 +168,189 @@ final class PageScrollViewControllerTests: XCTestCase {
         XCTAssertEqual(controller.scrollView.contentOffset.y, 6 * 788)
         XCTAssertEqual(model.currentPage, 6)
     }
+
+    // MARK: Revealing a box (a search hit): the page's top is not always where the hit is
+
+    /// `count` pages of `size` PDF points, each with some text near its top.
+    static func pages(_ count: Int, size: CGSize) -> Data {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: size))
+        return renderer.pdfData { context in
+            for page in 1...count {
+                context.beginPage()
+                ("Page \(page)" as NSString).draw(at: CGPoint(x: 72, y: 72), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            }
+        }
+    }
+
+    /// A controller over `count` pages 612 points wide and `height` tall, in a view `size` big: at 400 wide
+    /// a page is 400 / 612 layout points to a PDF point, so one 3,000 points tall is 1,961 layout points.
+    func makeTallController(count: Int = 1, height: CGFloat = 3_000,
+                            size: CGSize = CGSize(width: 400, height: 800)) -> (PageScrollViewController, DocumentModel) {
+        let model = DocumentModel(bytes: Self.pages(count, size: CGSize(width: 612, height: height)))
+        XCTAssertEqual(model.pageCount, count)
+        let controller = PageScrollViewController(model: model)
+        controller.view.frame = CGRect(origin: .zero, size: size)
+        controller.view.layoutIfNeeded()
+        return (controller, model)
+    }
+
+    /// The part of the content in view, in layout points at zoom 1: what the bars and the zoom leave.
+    func inView(_ controller: PageScrollViewController) -> CGRect {
+        let scrollView = controller.scrollView
+        return scrollView.convert(scrollView.bounds.inset(by: scrollView.adjustedContentInset), to: controller.contentView)
+    }
+
+    /// A box on a 612-point-wide page fitted to 400 points, as the layout draws it, with the page at `top`.
+    func fitted(_ box: CGRect, top: CGFloat = 0, scale: CGFloat = 400.0 / 612.0) -> CGRect {
+        CGRect(x: box.minX * scale, y: top + box.minY * scale, width: box.width * scale, height: box.height * scale)
+    }
+
+    /// The box is near the bottom of a page three times as tall as the view: the page's top does not show it.
+    func testARevealedBoxNearTheBottomOfATallPageComesIntoView() {
+        let (controller, _) = makeTallController()
+        let box = CGRect(x: 100, y: 2_800, width: 80, height: 20)
+        controller.scroll(to: 0)
+        XCTAssertFalse(inView(controller).intersects(fitted(box)), "the page's top is far from it")
+
+        // What the representable does for a hit: jump to the page, then reveal.
+        controller.reveal(PageRect(page: 0, rect: box))
+        XCTAssertTrue(inView(controller).contains(fitted(box)), "\(inView(controller)) should contain \(fitted(box))")
+        // It is near the end of the page, so the view stops at the end of the document and cannot centre it.
+        XCTAssertEqual(controller.scrollView.contentOffset.y, controller.scrollView.contentSize.height - 800)
+    }
+
+    func testARevealedBoxThatFitsIsInTheMiddleOfTheView() {
+        let (controller, _) = makeTallController()
+        let box = CGRect(x: 100, y: 1_500, width: 80, height: 20)
+        controller.reveal(PageRect(page: 0, rect: box))
+        let shown = fitted(box)
+        XCTAssertTrue(inView(controller).contains(shown))
+        XCTAssertEqual(inView(controller).midY, shown.midY, accuracy: 0.5, "centred up and down")
+        XCTAssertEqual(controller.scrollView.contentOffset.y, shown.midY - 400, accuracy: 0.5)
+        XCTAssertEqual(controller.scrollView.contentOffset.x, 0, "nothing to scroll across at zoom 1")
+    }
+
+    func testARevealedBoxAlreadyInViewDoesNotMoveTheView() {
+        let (controller, _) = makeTallController()
+        controller.scrollView.contentOffset = CGPoint(x: 0, y: 600)
+        // 600 ... 1,400 is in view; this box is at 800 ... 850 in layout points.
+        let box = CGRect(x: 100, y: 1_240, width: 80, height: 20)
+        XCTAssertTrue(inView(controller).contains(fitted(box)))
+        controller.reveal(PageRect(page: 0, rect: box))
+        XCTAssertEqual(controller.scrollView.contentOffset, CGPoint(x: 0, y: 600))
+    }
+
+    /// Zoomed in 4 times the view shows 100 x 200 layout points, and the box is not at the page's corner.
+    func testARevealedBoxComesIntoViewWhenZoomedIn() {
+        let (controller, _) = makeTallController()
+        controller.scrollView.zoomScale = 4
+        controller.scroll(to: 0)
+        let box = CGRect(x: 400, y: 1_500, width: 80, height: 20)
+        XCTAssertFalse(inView(controller).intersects(fitted(box)))
+        controller.reveal(PageRect(page: 0, rect: box))
+        let shown = fitted(box)
+        XCTAssertEqual(inView(controller).width, 100, accuracy: 0.001)
+        XCTAssertEqual(inView(controller).height, 200, accuracy: 0.001)
+        XCTAssertTrue(inView(controller).contains(shown), "\(inView(controller)) should contain \(shown)")
+        XCTAssertEqual(inView(controller).midX, shown.midX, accuracy: 0.5, "centred across")
+        XCTAssertEqual(inView(controller).midY, shown.midY, accuracy: 0.5, "and up and down")
+    }
+
+    func testARevealedBoxNearTheRightEdgeOfAZoomedPageStopsAtTheEdge() {
+        let (controller, _) = makeTallController()
+        controller.scrollView.zoomScale = 4
+        let box = CGRect(x: 560, y: 1_500, width: 40, height: 20)
+        controller.reveal(PageRect(page: 0, rect: box))
+        let shown = fitted(box)
+        XCTAssertTrue(inView(controller).contains(shown))
+        XCTAssertEqual(inView(controller).maxX, 400, accuracy: 0.001, "the page's right edge; centring would go past it")
+    }
+
+    /// A box larger than the view cannot be centred: the view starts at its top and left edges.
+    func testARevealedBoxLargerThanTheViewStartsAtItsTopLeftEdge() {
+        let (controller, _) = makeTallController()
+        controller.scrollView.zoomScale = 4
+        // 500 x 400 points is about 327 x 261 layout points; the view shows 100 x 200.
+        let box = CGRect(x: 100, y: 1_000, width: 500, height: 400)
+        controller.reveal(PageRect(page: 0, rect: box))
+        let shown = fitted(box)
+        XCTAssertEqual(inView(controller).minX, shown.minX, accuracy: 0.5)
+        XCTAssertEqual(inView(controller).minY, shown.minY, accuracy: 0.5)
+    }
+
+    /// The bars cover the top and bottom of the view: the box lands in what they leave, not under them.
+    func testARevealedBoxLandsBetweenTheBars() {
+        let (controller, _) = makeTallController()
+        controller.scrollView.contentInset = UIEdgeInsets(top: 60, left: 0, bottom: 40, right: 0)
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.scrollView.adjustedContentInset.top, 60)
+        let box = CGRect(x: 100, y: 1_500, width: 80, height: 20)
+        controller.reveal(PageRect(page: 0, rect: box))
+        let shown = fitted(box)
+        // 700 points are in view: 60 below the top, 40 above the bottom.
+        XCTAssertEqual(inView(controller).height, 700)
+        XCTAssertTrue(inView(controller).contains(shown))
+        XCTAssertEqual(inView(controller).midY, shown.midY, accuracy: 0.5)
+        XCTAssertEqual(controller.scrollView.contentOffset.y, shown.midY - 60 - 350, accuracy: 0.5)
+    }
+
+    func testARevealedBoxOnALaterPageUsesThatPagesPlace() {
+        let (controller, _) = makeTallController(count: 3)
+        // Pages 1,961 tall, 12 apart: page 2 starts at 3,946.
+        let box = CGRect(x: 100, y: 1_000, width: 80, height: 20)
+        controller.reveal(PageRect(page: 2, rect: box))
+        XCTAssertTrue(inView(controller).contains(fitted(box, top: 2 * (1_961 + 12))))
+    }
+
+    /// Each page is fitted to the width on its own: a box on a narrow page is magnified more.
+    func testARevealedBoxIsScaledByItsOwnPage() {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage(withBounds: CGRect(x: 0, y: 0, width: 612, height: 792), pageInfo: [:])
+            context.beginPage(withBounds: CGRect(x: 0, y: 0, width: 306, height: 396), pageInfo: [:])
+        }
+        let model = DocumentModel(bytes: data)
+        let controller = PageScrollViewController(model: model)
+        controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+        controller.view.layoutIfNeeded()
+        // Page 1 is 400 / 306 times its size, and starts at 518 + 12. The page's own scale puts the box
+        // near the end of the document (928 of 1,048), the first page's would put it 200 points higher.
+        let box = CGRect(x: 100, y: 300, width: 50, height: 10)
+        controller.reveal(PageRect(page: 1, rect: box))
+        let scale = 400.0 / 306.0
+        XCTAssertTrue(inView(controller).contains(fitted(box, top: 530, scale: scale)))
+    }
+
+    func testRevealingNothingOrAPageThatIsNotThereDoesNothing() {
+        let (controller, _) = makeTallController()
+        controller.scrollView.contentOffset = CGPoint(x: 0, y: 300)
+        let box = CGRect(x: 100, y: 2_800, width: 80, height: 20)
+        for target in [PageRect(page: 1, rect: box), PageRect(page: -1, rect: box), PageRect(page: 0, rect: .null),
+                       PageRect(page: 0, rect: CGRect(x: CGFloat.nan, y: 2_800, width: 80, height: 20)),
+                       PageRect(page: 0, rect: CGRect(x: 100, y: CGFloat.infinity, width: 80, height: 20))] {
+            controller.reveal(target)
+            XCTAssertEqual(controller.scrollView.contentOffset, CGPoint(x: 0, y: 300), "\(target)")
+        }
+    }
+
+    /// A box asked for before the view has a width waits for the first layout, as a page does.
+    func testARevealedBoxAskedForBeforeTheFirstLayoutIsShownAfterIt() {
+        let model = DocumentModel(bytes: Self.pages(1, size: CGSize(width: 612, height: 3_000)))
+        let controller = PageScrollViewController(model: model)
+        let box = CGRect(x: 100, y: 1_500, width: 80, height: 20)
+        controller.scroll(to: 0)
+        controller.reveal(PageRect(page: 0, rect: box))
+        controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 800)
+        controller.view.layoutIfNeeded()
+        XCTAssertTrue(inView(controller).contains(fitted(box)))
+        XCTAssertEqual(inView(controller).midY, fitted(box).midY, accuracy: 0.5)
+    }
+
+    /// The page views are made for what is in view afterwards, so the box's page has its view.
+    func testTheViewOfARevealedBoxsPageExistsAfterwards() throws {
+        let (controller, model) = makeTallController(count: 3)
+        controller.reveal(PageRect(page: 2, rect: CGRect(x: 100, y: 1_000, width: 80, height: 20)))
+        XCTAssertNotNil(controller.pageView(for: 2))
+        XCTAssertEqual(model.currentPage, 2)
+    }
 }

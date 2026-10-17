@@ -24,6 +24,12 @@ final class SearchControllerTests: XCTestCase {
         return true
     }
 
+    /// Keeps the main thread busy for `seconds` without yielding the main actor, as a slow moment
+    /// would. (A function of its own: the compiler refuses `Thread.sleep` straight in an async test.)
+    static func blockTheMainThread(for seconds: TimeInterval) {
+        Thread.sleep(forTimeInterval: seconds)
+    }
+
     /// Gives the main actor time to handle whatever is already waiting for it: a result that has
     /// been handed back from a task is applied (or dropped) before this returns.
     func letTheMainActorCatchUp() async {
@@ -258,6 +264,24 @@ final class SearchControllerTests: XCTestCase {
         XCTAssertEqual(controller.activeIndex, 1, "and the reader keeps their place among the hits")
     }
 
+    /// A search whose wait has ended is on its way to the engine, and typing again cannot call it back:
+    /// cancelling a task whose sleep has already finished does nothing. So the search looks once more
+    /// before it asks the engine. The wait is let begin, and then the main thread is held past its end:
+    /// the timer fires and the search is lined up behind this test when the next key is typed.
+    func testAQueryTypedOverAfterItsWaitEndedNeverReachesTheEngine() async {
+        let probe = SearchProbe(counts: ["a": 1, "b": 1])
+        let controller = SearchController(debounce: .milliseconds(300), search: probe.search)
+        controller.query = "a"
+        try? await Task.sleep(for: .milliseconds(20))
+        Self.blockTheMainThread(for: 0.4)
+        controller.query = "b"
+        let found = await eventually { controller.hits.count == 1 }
+        XCTAssertTrue(found)
+        await letTheMainActorCatchUp()
+        XCTAssertEqual(probe.queries, ["b"], "the engine is never asked for words that were typed over")
+        XCTAssertFalse(controller.isSearching)
+    }
+
     // MARK: Moving between the hits
 
     func testNextAndPreviousWrapAround() async {
@@ -326,6 +350,86 @@ final class SearchControllerTests: XCTestCase {
         let second = await eventually { controller.hits.count == 2 }
         XCTAssertTrue(second)
         XCTAssertEqual(controller.activeIndex, 0)
+    }
+
+    // MARK: Picking a hit
+
+    /// A controller whose search finds `hits` for any query, and has found them.
+    func makeController(finding hits: [SearchHit]) async -> SearchController {
+        let controller = SearchController(debounce: .milliseconds(5)) { _ in hits }
+        controller.query = "x"
+        let found = await eventually { controller.hits.count == hits.count }
+        XCTAssertTrue(found)
+        return controller
+    }
+
+    func testSelectMakesAHitActiveAndNamesItsPageAndBox() async {
+        let controller = await makeController(finding: [
+            SearchProbe.hit(page: 0, index: 0),
+            SearchProbe.hit(page: 4, index: 1, rects: [Rect(x: 72, y: 100, width: 30, height: 12)]),
+            SearchProbe.hit(page: 7, index: 2),
+        ])
+        XCTAssertEqual(controller.activeIndex, 0)
+        let target = controller.select(1)
+        XCTAssertEqual(controller.activeIndex, 1)
+        // The box with a few points round it, so the hit is not flush with the edge of the view.
+        XCTAssertEqual(target, PageRect(page: 4, rect: CGRect(x: 66, y: 94, width: 42, height: 24)))
+        XCTAssertEqual(controller.activeHit, controller.hits[1])
+        XCTAssertEqual(controller.activeHighlight?.page, 4)
+    }
+
+    /// A match over a line break has a box on each line: the box to bring into view holds them all.
+    func testSelectNamesTheUnionOfAHitsBoxes() async {
+        let controller = await makeController(finding: [
+            SearchProbe.hit(page: 2, index: 0, rects: [Rect(x: 400, y: 100, width: 40, height: 12),
+                                                       Rect(x: 72, y: 114, width: 20, height: 12)]),
+        ])
+        // (72, 100) to (440, 126), and six points more all round.
+        XCTAssertEqual(controller.select(0), PageRect(page: 2, rect: CGRect(x: 66, y: 94, width: 380, height: 38)))
+    }
+
+    func testSelectOfAnIndexThatIsNotAHitChangesNothing() async {
+        let controller = await makeController(finding: [SearchProbe.hit(page: 0, index: 0), SearchProbe.hit(page: 1, index: 1)])
+        controller.select(1)
+        XCTAssertEqual(controller.activeIndex, 1)
+        XCTAssertNil(controller.select(2))
+        XCTAssertNil(controller.select(-1))
+        XCTAssertNil(controller.select(Int.max))
+        XCTAssertEqual(controller.activeIndex, 1, "the active hit stays the active hit")
+    }
+
+    func testSelectWithoutAnyHitDoesNothing() {
+        let controller = makeController(SearchProbe())
+        XCTAssertNil(controller.select(0))
+        XCTAssertNil(controller.activeIndex)
+    }
+
+    /// A hit with no box that can be drawn still has a page to go to.
+    func testSelectOfAHitWithNoBoxStillNamesItsPage() async {
+        let controller = await makeController(finding: [
+            SearchProbe.hit(page: 3, index: 0, rects: [Rect(x: 10, y: 10, width: 0, height: 5)]),
+            SearchProbe.hit(page: 5, index: 1, rects: []),
+        ])
+        XCTAssertEqual(controller.select(0), PageRect(page: 3, rect: .null))
+        XCTAssertEqual(controller.select(1), PageRect(page: 5, rect: .null))
+        XCTAssertEqual(controller.activeIndex, 1)
+    }
+
+    /// Next and previous pick a hit like a tap does, and say where to take the viewer.
+    func testNextAndPreviousNameWhereToTakeTheViewer() async {
+        let controller = await makeController(finding: [
+            SearchProbe.hit(page: 0, index: 0, rects: [Rect(x: 10, y: 20, width: 30, height: 10)]),
+            SearchProbe.hit(page: 2, index: 1, rects: [Rect(x: 50, y: 60, width: 30, height: 10)]),
+        ])
+        XCTAssertEqual(controller.next(), PageRect(page: 2, rect: CGRect(x: 44, y: 54, width: 42, height: 22)))
+        XCTAssertEqual(controller.activeIndex, 1)
+        XCTAssertEqual(controller.next(), PageRect(page: 0, rect: CGRect(x: 4, y: 14, width: 42, height: 22)), "round to the first")
+        XCTAssertEqual(controller.previous(), PageRect(page: 2, rect: CGRect(x: 44, y: 54, width: 42, height: 22)), "back round to the last")
+        XCTAssertEqual(controller.activeIndex, 1)
+
+        let none = makeController(SearchProbe())
+        XCTAssertNil(none.next())
+        XCTAssertNil(none.previous())
     }
 
     // MARK: Truncation

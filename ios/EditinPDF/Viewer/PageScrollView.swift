@@ -9,12 +9,22 @@ struct ActiveHighlight: Equatable {
     let rects: [CGRect]
 }
 
+/// A box on a page, in PDF points (view space: origin at the page's top-left, y down): what to bring
+/// into view when a search hit is picked. `rect` is `.null` for a page with no box to show.
+struct PageRect: Equatable {
+    let page: Int
+    let rect: CGRect
+}
+
 /// The open document's pages, one below the other, scrolling and zooming.
 struct PageScrollView: UIViewControllerRepresentable {
     let model: DocumentModel
     /// A page to bring to the top of the view, set by whatever wants to jump there (the thumbnails,
     /// search). It is cleared once the jump is made.
     @Binding var scrollTarget: Int?
+    /// A box to bring into view once the view is at `scrollTarget`'s page, set with it by search, for
+    /// a hit that may be far down a page taller than the view. It is cleared once it has been done.
+    @Binding var revealRect: PageRect?
     /// The boxes to highlight on each page, in PDF points: the hits of a search.
     var highlights: [Int: [CGRect]] = [:]
     /// The hit being looked at, which is drawn in its own colour over the others.
@@ -27,13 +37,19 @@ struct PageScrollView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: PageScrollViewController, context: Context) {
         controller.highlightsByPage = highlights
         controller.activeHighlight = activeHighlight
-        guard let target = scrollTarget else { return }
-        // The jump changes the current page and the request is cleared, and SwiftUI's state must not
+        guard scrollTarget != nil || revealRect != nil else { return }
+        let target = scrollTarget
+        let reveal = revealRect
+        // The jump changes the current page and the requests are cleared, and SwiftUI's state must not
         // change while it updates views: both happen just after the update instead.
-        let request = $scrollTarget
+        let targetRequest = $scrollTarget
+        let revealRequest = $revealRect
         Task { @MainActor in
-            controller.scroll(to: target)
-            request.wrappedValue = nil
+            if let target { controller.scroll(to: target) }
+            // After the jump, so that the page is where it belongs and the box is only moved into view.
+            if let reveal { controller.reveal(reveal) }
+            targetRequest.wrappedValue = nil
+            revealRequest.wrappedValue = nil
         }
     }
 }
@@ -74,6 +90,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     private var pageViews: [Int: PageView] = [:]
     /// A page asked for before there was a layout to find it in.
     private var pendingTarget: Int?
+    /// A box asked for before there was a layout to find its page in.
+    private var pendingReveal: PageRect?
 
     init(model: DocumentModel) {
         self.model = model
@@ -122,6 +140,52 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         show(layout.frame(of: page).minY)
     }
 
+    /// Scrolls, if need be, so that `target.rect` (PDF points on its page) is wholly in the part of the
+    /// view the bars leave: with the box in the middle of it when it fits, as near as the ends of the
+    /// document allow, and at its top and left edges when it is larger. Zoomed in, it scrolls across
+    /// as well as down. Nothing happens when the box is in view already, when there is no box to show
+    /// (`.null`, or not finite), or when the document does not have its page. Waits for the first
+    /// layout if there is none yet.
+    ///
+    /// Search uses it after `scroll(to:)`: the page's top is not where the hit is when the page is
+    /// taller than the view (a phone or an iPad on its side, a page zoomed in).
+    func reveal(_ target: PageRect) {
+        guard let layout else {
+            pendingReveal = target
+            return
+        }
+        let rect = target.rect
+        guard (0..<layout.pageCount).contains(target.page),
+              [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite) else { return }
+        // The box in layout points at zoom 1: the page is fitted to the width by its own scale.
+        let frame = layout.frame(of: target.page)
+        let scale = layout.scale(of: target.page)
+        let box = CGRect(x: frame.minX + rect.minX * scale, y: frame.minY + rect.minY * scale,
+                         width: rect.width * scale, height: rect.height * scale)
+        guard !visibleArea().contains(box) else { return }
+
+        let zoom = scrollView.zoomScale
+        let insets = scrollView.adjustedContentInset
+        let size = scrollView.bounds.size
+        let offset = CGPoint(
+            x: Self.offset(showing: box.minX * zoom, length: box.width * zoom, in: size.width - insets.left - insets.right, inset: insets.left),
+            y: Self.offset(showing: box.minY * zoom, length: box.height * zoom, in: size.height - insets.top - insets.bottom, inset: insets.top))
+        // As `show(_:)` keeps to the ends of the scroll range.
+        let lowest = CGPoint(x: -insets.left, y: -insets.top)
+        let highest = CGPoint(x: max(lowest.x, scrollView.contentSize.width + insets.right - size.width),
+                              y: max(lowest.y, scrollView.contentSize.height + insets.bottom - size.height))
+        scrollView.setContentOffset(CGPoint(x: min(max(offset.x, lowest.x), highest.x), y: min(max(offset.y, lowest.y), highest.y)),
+                                    animated: false)
+        update()
+    }
+
+    /// The scroll offset along one axis that puts the span of `length` starting at `low` (scroll view
+    /// points) in the middle of the `viewport` that lies past `inset`, or at its start when the span is
+    /// longer than the viewport.
+    private static func offset(showing low: CGFloat, length: CGFloat, in viewport: CGFloat, inset: CGFloat) -> CGFloat {
+        length <= viewport ? low + (length - viewport) / 2 - inset : low - inset
+    }
+
     // MARK: UIScrollViewDelegate
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -166,6 +230,11 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
             show(frame.minY + anchor.fraction * frame.height)
         } else {
             show(newLayout.frame(of: model.currentPage).minY)
+        }
+
+        if let reveal = pendingReveal {
+            pendingReveal = nil
+            self.reveal(reveal)
         }
     }
 

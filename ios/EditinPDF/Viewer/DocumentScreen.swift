@@ -8,6 +8,8 @@ struct DocumentScreen: View {
     let model: DocumentModel
     /// A page to jump to, for the thumbnails and search to set.
     @State private var scrollTarget: Int?
+    /// A box to bring into view on that page, for search to set along with it.
+    @State private var revealRect: PageRect?
     /// Whether the search sheet is up. The search itself is the model's, so it is the same one each
     /// time the sheet opens.
     @State private var showsSearch = false
@@ -30,7 +32,7 @@ struct DocumentScreen: View {
     var body: some View {
         switch model.state {
         case .open:
-            PageScrollView(model: model, scrollTarget: $scrollTarget,
+            PageScrollView(model: model, scrollTarget: $scrollTarget, revealRect: $revealRect,
                            highlights: model.search?.highlightsByPage ?? [:],
                            activeHighlight: model.search?.activeHighlight)
                 .ignoresSafeArea()
@@ -52,7 +54,7 @@ struct DocumentScreen: View {
                 }
                 .sheet(isPresented: $showsSearch) {
                     if let search = model.search {
-                        SearchSheet(search: search, scrollTarget: $scrollTarget)
+                        SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
                     }
                 }
         case .locked, .failed:
@@ -77,7 +79,7 @@ struct DocumentScreen: View {
     /// Moves between the hits of a search and ends it; only while there are hits.
     @ViewBuilder private var searchHitBar: some View {
         if let search = model.search, !search.hits.isEmpty {
-            SearchHitBar(search: search, scrollTarget: $scrollTarget)
+            SearchHitBar(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
         }
     }
 

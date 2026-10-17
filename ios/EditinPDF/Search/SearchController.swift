@@ -30,6 +30,10 @@ final class SearchController {
     /// and the engine never disagree.
     static let hitLimit = Int(searchHitLimit())
 
+    /// How many PDF points of the page are brought into view round a hit's boxes, so it is not flush
+    /// with the edge of the view.
+    nonisolated static let revealPadding: CGFloat = 6
+
     /// What the reader has typed. Changing it starts a search for it, a moment later; blanks around
     /// the words are not looked for, and a query that is only blanks clears the hits at once, with no
     /// call to the engine.
@@ -94,23 +98,39 @@ final class SearchController {
     }
 
     /// Makes the next hit the active one, going round to the first after the last. With no hit active
-    /// it is the first. Nothing happens when there are no hits.
-    func next() {
+    /// it is the first. Nothing happens when there are no hits. Says where to take the viewer, as
+    /// `select(_:)` does.
+    @discardableResult
+    func next() -> PageRect? {
         step(by: 1)
     }
 
     /// Makes the previous hit the active one, going round to the last before the first. With no hit
-    /// active it is the last. Nothing happens when there are no hits.
-    func previous() {
+    /// active it is the last. Nothing happens when there are no hits. Says where to take the viewer,
+    /// as `select(_:)` does.
+    @discardableResult
+    func previous() -> PageRect? {
         step(by: -1)
     }
 
-    private func step(by delta: Int) {
-        guard !hits.isEmpty else { return }
+    /// Makes hit `index` the active one, for a reader who picked it or stepped to it, and says where to
+    /// take the viewer: its page, and the box to bring into view there, the union of the boxes of the
+    /// hit (a match over a line break has one on each line) with `revealPadding` points round it.
+    /// The box is `.null` for a hit with none that can be drawn, which still has its page. Nil, and
+    /// nothing changed, when `index` is not a hit.
+    @discardableResult
+    func select(_ index: Int) -> PageRect? {
+        guard hits.indices.contains(index) else { return nil }
+        activeIndex = index
+        return Self.revealTarget(of: hits[index])
+    }
+
+    private func step(by delta: Int) -> PageRect? {
+        guard !hits.isEmpty else { return nil }
         let current = activeIndex.flatMap { hits.indices.contains($0) ? $0 : nil }
         // From no hit, going forward arrives at the first and going back at the last.
         let from = current ?? (delta > 0 ? -1 : 0)
-        activeIndex = ((from + delta) % hits.count + hits.count) % hits.count
+        return select(((from + delta) % hits.count + hits.count) % hits.count)
     }
 
     // MARK: Searching
@@ -141,6 +161,10 @@ final class SearchController {
     /// Asks the engine for `words` off the main actor and keeps the answer if no newer words have
     /// been typed since.
     private func find(_ words: String, generation: Int) async {
+        // Typing again cancels the wait before this, but cannot call back a wait that has just ended
+        // and is on its way here: this is the last chance to keep the engine from looking for words
+        // that have been typed over.
+        guard generation == self.generation else { return }
         let search = search
         let found = await Task.detached(priority: .userInitiated) { search(words) }.value
         guard generation == self.generation else { return }
@@ -166,6 +190,14 @@ final class SearchController {
                   box.width > 0, box.height > 0 else { return nil }
             return CGRect(x: box.x, y: box.y, width: box.width, height: box.height)
         }
+    }
+
+    /// Where to take the viewer for `hit`: its page, and the union of its boxes (see `rects(of:)`) with
+    /// `revealPadding` points round it; `.null` when it has no box.
+    nonisolated static func revealTarget(of hit: SearchHit) -> PageRect {
+        let union = rects(of: hit).reduce(CGRect.null) { $0.union($1) }
+        let box = union.isNull ? union : union.insetBy(dx: -revealPadding, dy: -revealPadding)
+        return PageRect(page: Int(hit.page), rect: box)
     }
 
     /// The boxes of `hits` by the page (counting from 0) they are on, each page's in the order of the

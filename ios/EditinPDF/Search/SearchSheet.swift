@@ -3,14 +3,16 @@ import SwiftUI
 
 /// The search: a field for the words, and the places they are found in the document, each with its
 /// page and the text around it. Typing searches (a moment after the last key); tapping a result
-/// makes it the active hit, sets `scrollTarget` to its page for the viewer to jump to, and closes
-/// the sheet, so the page is on show with the hit highlighted.
+/// makes it the active hit, sets `scrollTarget` to its page and `revealRect` to its box for the
+/// viewer to jump there and bring the hit into view, and closes the sheet, so the hit is on show,
+/// highlighted.
 ///
 /// The words and the results belong to the document's `SearchController`, not to the sheet: closing
 /// the sheet leaves the highlights in the viewer, and opening it again shows the same results.
 struct SearchSheet: View {
     @Bindable var search: SearchController
     @Binding var scrollTarget: Int?
+    @Binding var revealRect: PageRect?
 
     @Environment(\.dismiss) private var dismiss
     @FocusState private var fieldIsFocused: Bool
@@ -131,11 +133,12 @@ struct SearchSheet: View {
             .accessibilityIdentifier("searchTruncatedNote")
     }
 
-    /// Makes hit `index` the active one and jumps to its page.
+    /// Makes hit `index` the active one and takes the viewer to it.
     private func select(_ index: Int) {
-        guard search.hits.indices.contains(index) else { return }
-        search.activeIndex = index
-        scrollTarget = Int(search.hits[index].page)
+        if let target = search.select(index) {
+            scrollTarget = target.page
+            revealRect = target
+        }
         dismiss()
     }
 }
