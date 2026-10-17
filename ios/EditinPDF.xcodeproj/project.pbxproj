@@ -408,11 +408,15 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					46374B9992CF061D2A0846CE = {
+						DevelopmentTeam = FLZ648PYXU;
+					};
 					A24B7818AED997599AFD0CAD = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = FLZ648PYXU;
 						ProvisioningStyle = Automatic;
 					};
 					A9939769074514DFA86BA3F4 = {
+						DevelopmentTeam = FLZ648PYXU;
 						TestTargetID = A24B7818AED997599AFD0CAD;
 					};
 				};
@@ -629,7 +633,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
 				EXCLUDED_SOURCE_FILE_NAMES = "*/EditinPDFUITests/Fixtures/*";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = EditinPDF/Info.plist;
@@ -649,7 +652,6 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = EditinPDF/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
