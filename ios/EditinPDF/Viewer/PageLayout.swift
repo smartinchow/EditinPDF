@@ -9,6 +9,13 @@ import EditinPDFCore
 /// so every page starts on a whole point and its edges fall on device pixels at zoom 1 (an edge
 /// between pixels would make Core Animation blur the whole page).
 ///
+/// A page is laid out at most `maxAspect` (1,000) times as tall as it is wide, and at least a
+/// 1,000th as tall. A hostile file can give a page a box one point wide and 10^38 points tall, which
+/// fitted to the width would be taller than Core Animation, which works in single precision, can
+/// place. Real pages stay far within the bound: even a long receipt, or a web page saved whole, is
+/// rarely a hundred times as tall as it is wide. A page beyond it keeps its width's scale
+/// (`scale(of:)`), so it is drawn as any page is, and only the part of it within the bound is shown.
+///
 /// Pure geometry in layout points: the scroll view's content coordinates at zoom 1, origin
 /// top-left, y down. The scroll view multiplies everything by its zoom scale.
 struct PageLayout {
@@ -23,6 +30,9 @@ struct PageLayout {
     /// `scale(of:)`, since every page is fitted to the width.
     var scalePerPoint: CGFloat { scale(of: 0) }
 
+    /// The most a page is laid out tall, in its own widths, and the inverse of the least.
+    static let maxAspect: CGFloat = 1_000
+
     private let frames: [CGRect]
     private let scales: [CGFloat]
 
@@ -36,7 +46,8 @@ struct PageLayout {
         for page in pages {
             if !frames.isEmpty { y += gap }
             let size = Self.usableSize(of: page)
-            let height = max(1, (width * size.height / size.width).rounded())
+            let aspect = min(max(size.height / size.width, 1 / Self.maxAspect), Self.maxAspect)
+            let height = max(1, (width * aspect).rounded())
             frames.append(CGRect(x: 0, y: y, width: width, height: height))
             scales.append(width / size.width)
             y += height

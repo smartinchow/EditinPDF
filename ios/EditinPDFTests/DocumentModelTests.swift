@@ -54,6 +54,37 @@ final class DocumentModelTests: XCTestCase {
         XCTAssertEqual(m.pageCount, 1)
     }
 
+    // MARK: The pages are read where the file is opened, off the main actor
+
+    func testAnOpenOutcomeCarriesTheGeometryOfEveryPage() async throws {
+        let bytes = try fixture()
+        let outcome = await Task.detached { OpenOutcome(bytes: bytes) }.value
+        guard case .open(let document, let pages) = outcome else { return XCTFail("expected open, got \(outcome)") }
+        XCTAssertEqual(pages.count, Int(document.pageCount()))
+        XCTAssertEqual(pages, (0..<document.pageCount()).compactMap { document.pageInfo(page: $0) })
+    }
+
+    /// The model takes the pages from the outcome as they are: it does not ask the engine for them
+    /// again, on the main actor. (These are not the document's own, so they show where they came from.)
+    func testTheModelTakesItsPagesFromTheOutcome() throws {
+        let document = try PdfDocument.open(bytes: try fixture(), password: nil)
+        let pages = [PageInfo(index: 0, widthPt: 100, heightPt: 50, rotationDegrees: 0, label: "i")]
+        let m = DocumentModel(outcome: .open(document, pages: pages))
+        XCTAssertEqual(m.pages, pages)
+        XCTAssertTrue(m.document() === document)
+    }
+
+    func testAnUnlockTakesItsPagesFromTheOutcomeToo() async {
+        let m = DocumentModel(bytes: Self.encryptedPDF(openPassword: "s3cret"))
+        let pages = [PageInfo(index: 0, widthPt: 100, heightPt: 50, rotationDegrees: 0, label: nil)]
+        let opened = await m.unlock(password: "s3cret") { bytes, password in
+            guard case .open(let document, _) = OpenOutcome(bytes: bytes, password: password) else { return .failed(detail: nil) }
+            return .open(document, pages: pages)
+        }
+        XCTAssertTrue(opened)
+        XCTAssertEqual(m.pages, pages)
+    }
+
     func testWrongPasswordThreeTimesThenTheRightOne() async {
         let m = DocumentModel(bytes: Self.encryptedPDF(openPassword: "s3cret"))
         // Without a password it is locked, and nothing has been refused yet.

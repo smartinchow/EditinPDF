@@ -1,5 +1,6 @@
 //! Writes the fixture documents that the apps' own tests need as files, so they are checked in
-//! next to those tests rather than rebuilt there: the Swift package's tests open `hello.pdf`, and
+//! next to those tests rather than rebuilt there: the Swift package's tests open `hello.pdf`; the
+//! app's unit tests open `hello.pdf` too, and `rotated.pdf` (one page turned by `/Rotate 90`); and
 //! the app's UI tests open `sample.pdf` (three readable pages), `locked.pdf` (one page behind a
 //! password) and `garbage.pdf` (not a PDF at all).
 //!
@@ -22,6 +23,13 @@ fn swift_fixtures() -> PathBuf {
     crate_dir.join("../../ios/EditinPDFCore/Tests/EditinPDFCoreTests/Fixtures")
 }
 
+/// The app's unit-test fixture folder, `ios/EditinPDFTests/Fixtures`. Only the unit-test bundle
+/// carries what is in it; the app never does.
+fn app_test_fixtures() -> PathBuf {
+    let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    crate_dir.join("../../ios/EditinPDFTests/Fixtures")
+}
+
 /// The app's UI-test fixture folder, `ios/EditinPDFUITests/Fixtures`. The Debug build of the app
 /// bundles what is in it too, for `-openFixture` to put in its Documents folder.
 fn ui_test_fixtures() -> PathBuf {
@@ -32,10 +40,24 @@ fn ui_test_fixtures() -> PathBuf {
 #[test]
 #[ignore = "writes into the working tree; run with `-- --ignored dump_fixtures`"]
 fn dump_fixtures() {
+    // One page reading "Hello world": the Swift bridge tests and the app's unit tests count its pages,
+    // draw it and search it.
+    let hello = fixtures::text_doc(&["Hello world"]);
     let dir = swift_fixtures();
     fs::create_dir_all(&dir).unwrap();
-    // One page reading "Hello world": the Swift bridge tests count its pages, draw it and search it.
-    fs::write(dir.join("hello.pdf"), fixtures::text_doc(&["Hello world"])).unwrap();
+    fs::write(dir.join("hello.pdf"), &hello).unwrap();
+
+    let dir = app_test_fixtures();
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("hello.pdf"), &hello).unwrap();
+    // One Letter page with `/Rotate 90`, so it is shown landscape, reading "Rotated page": the app's
+    // unit tests check that a search hit's box, laid out and drawn the way the viewer does, lands on
+    // the text of a turned page.
+    fs::write(
+        dir.join("rotated.pdf"),
+        fixtures::rotated_doc("Rotated page"),
+    )
+    .unwrap();
 
     let dir = ui_test_fixtures();
     fs::create_dir_all(&dir).unwrap();

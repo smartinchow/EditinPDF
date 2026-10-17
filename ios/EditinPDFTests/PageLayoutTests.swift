@@ -99,6 +99,52 @@ final class PageLayoutTests: XCTestCase {
         XCTAssertEqual(l.frame(of: -1), .zero)
     }
 
+    /// A hostile page box can be a point wide and 10^38 points tall. Fitted to the width, it would be
+    /// about 10^41 points tall: more than Core Animation, which works in single precision, can hold.
+    /// It is laid out 1,000 widths tall instead.
+    func testAPageFarTallerThanItIsWideIsLaidOutAThousandWidthsTall() {
+        let odd = [PageInfo(index: 0, widthPt: 1, heightPt: 3e38, rotationDegrees: 0, label: nil),
+                   PageInfo(index: 1, widthPt: 612, heightPt: 792, rotationDegrees: 0, label: nil)]
+        let l = PageLayout(pages: odd, fitWidth: 390, gap: 10)
+        XCTAssertEqual(l.frame(of: 0), CGRect(x: 0, y: 0, width: 390, height: 390_000))
+        XCTAssertEqual(l.frame(of: 1).minY, 390_010)
+        XCTAssertEqual(l.scale(of: 0), 390, "the page is still drawn at its width's scale; only its top shows")
+        Self.assertCoreAnimationCanHold(l)
+    }
+
+    /// The other way round: 10^38 points wide and one tall. Its height is at least a thousandth of its
+    /// width, as the tall page's is at most 1,000 widths.
+    func testAPageFarWiderThanItIsTallIsLaidOutAThousandthOfItsWidthTall() {
+        let odd = [PageInfo(index: 0, widthPt: 3e38, heightPt: 1, rotationDegrees: 0, label: nil),
+                   PageInfo(index: 1, widthPt: 612, heightPt: 792, rotationDegrees: 0, label: nil)]
+        let l = PageLayout(pages: odd, fitWidth: 4_000, gap: 10)
+        XCTAssertEqual(l.frame(of: 0), CGRect(x: 0, y: 0, width: 4_000, height: 4))
+        XCTAssertEqual(l.frame(of: 1).minY, 14)
+        Self.assertCoreAnimationCanHold(l)
+        // At a phone's width that is less than a point, and a page is never less than one.
+        XCTAssertEqual(PageLayout(pages: odd, fitWidth: 390).frame(of: 0).height, 1)
+    }
+
+    func testPagesWithinAThousandToOneAreNotChanged() {
+        let thin = [PageInfo(index: 0, widthPt: 10, heightPt: 9_990, rotationDegrees: 0, label: nil),
+                    PageInfo(index: 1, widthPt: 9_990, heightPt: 10, rotationDegrees: 0, label: nil)]
+        let l = PageLayout(pages: thin, fitWidth: 100, gap: 0)
+        XCTAssertEqual(l.frame(of: 0).height, 99_900)
+        XCTAssertEqual(l.frame(of: 1).height, 1)
+    }
+
+    /// Every frame, the column and the scales are finite, and within the range of a `Float`.
+    static func assertCoreAnimationCanHold(_ l: PageLayout, file: StaticString = #filePath, line: UInt = #line) {
+        let numbers = (0..<l.pageCount).flatMap { page -> [CGFloat] in
+            let f = l.frame(of: page)
+            return [f.minX, f.minY, f.width, f.height, l.scale(of: page)]
+        } + [l.contentSize.width, l.contentSize.height]
+        for number in numbers {
+            XCTAssertTrue(number.isFinite && Float(number).isFinite, "\(number)", file: file, line: line)
+        }
+        XCTAssertLessThanOrEqual(l.contentSize.height, 1e7, file: file, line: line)
+    }
+
     func testAPageWithoutAUsableSizeStillTakesItsPlace() {
         // A page box the engine reports as empty must not break the column: it gets the shape of a
         // Letter page instead of an infinite or zero height.

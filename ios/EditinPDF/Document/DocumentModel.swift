@@ -19,7 +19,8 @@ final class DocumentModel {
     }
 
     private(set) var state: State
-    /// The geometry of every page, read once when the document opens; empty until then.
+    /// The geometry of every page, read once when the document opens (off the main actor, with the
+    /// open: `OpenOutcome`); empty until then.
     private(set) var pages: [PageInfo]
     /// The page the reader is on, counting from 0; the scroll view keeps it current.
     var currentPage = 0
@@ -78,10 +79,8 @@ final class DocumentModel {
 
     private static func resolve(_ outcome: OpenOutcome) -> (State, [PageInfo]) {
         switch outcome {
-        case .open(let document):
-            // `pageInfo` answers for every index below `pageCount`; `compactMap` only means that a
-            // page it did not answer for would be left out instead of trapping.
-            return (.open(document), (0..<document.pageCount()).compactMap { document.pageInfo(page: $0) })
+        case .open(let document, let pages):
+            return (.open(document), pages)
         case .locked(let bytes, let wrongPassword):
             return (.locked(bytes, wrongPassword: wrongPassword), [])
         case .failed(let detail):
