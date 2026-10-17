@@ -14,7 +14,7 @@ struct SearchHitBar: View {
             button("chevron.up", label: Strings.searchPrevious, id: "searchPreviousButton") {
                 show(search.previous())
             }
-            Text(Strings.searchPosition(current: (search.activeIndex ?? 0) + 1, count: search.hits.count))
+            Text(Self.position(of: search))
                 .font(.footnote.monospacedDigit())
                 .padding(.horizontal, 4)
                 .accessibilityIdentifier("searchPosition")
@@ -36,6 +36,15 @@ struct SearchHitBar: View {
         }
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
+    }
+
+    /// Which hit is on show and how many there are: "3 of 12", or "3 of 1,000+" when the search stopped
+    /// at the most hits it gives and there may be more.
+    static func position(of search: SearchController) -> String {
+        let current = (search.activeIndex ?? 0) + 1
+        return search.isTruncated
+            ? Strings.searchPositionTruncated(current: current, count: search.hits.count)
+            : Strings.searchPosition(current: current, count: search.hits.count)
     }
 
     /// Takes the viewer to the hit that was just made the active one.

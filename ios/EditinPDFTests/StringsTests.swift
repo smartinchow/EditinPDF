@@ -72,6 +72,14 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.searchPosition(current: 1, count: 1), "1 of 1")
     }
 
+    /// When a search stopped at its limit, the count is a floor: "1 of 1,000+", the numbers written the
+    /// way the reader's region writes them (as this test writes them, so it holds in any region).
+    func testATruncatedSearchPositionSaysThereMayBeMore() {
+        XCTAssertEqual(Strings.searchPositionTruncated(current: 1, count: 1_000), "1 of \(1_000.formatted())+")
+        XCTAssertEqual(Strings.searchPositionTruncated(current: 1_000, count: 1_000), "\(1_000.formatted()) of \(1_000.formatted())+")
+        XCTAssertEqual(Strings.searchPositionTruncated(current: 7, count: 50), "7 of 50+")
+    }
+
     func testSelectionWording() {
         XCTAssertEqual(Strings.copy, "Copy")
         XCTAssertEqual(Strings.selectionStart, "Start of selection")

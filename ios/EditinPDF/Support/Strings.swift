@@ -70,6 +70,13 @@ enum Strings {
         String(localized: "\(current) of \(count)", comment: "Which search result is on show, and how many there are")
     }
 
+    /// `searchPosition` for a search that stopped at the most results it gives (`count`), so there may
+    /// be more: "1 of 1,000+". The numbers are written the way the reader's region writes them.
+    static func searchPositionTruncated(current: Int, count: Int) -> String {
+        String(localized: "\(current.formatted()) of \(count.formatted())+",
+               comment: "Which search result is on show, and how many were found when the search stopped at its limit, so there may be more")
+    }
+
     /// The button that moves to the result before the one on show.
     static var searchPrevious: String {
         String(localized: "Previous match", comment: "Button that moves to the previous search result")

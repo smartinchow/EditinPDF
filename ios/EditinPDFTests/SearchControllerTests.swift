@@ -512,6 +512,26 @@ final class SearchControllerTests: XCTestCase {
         XCTAssertTrue(controller.isTruncated, "a result of exactly the limit means there may be more")
     }
 
+    /// The bar over the pages says so too: "1 of 1,000+" (the number written the way the reader's
+    /// region writes it), not "1 of 1000", which would claim there are no more.
+    func testTheHitBarSaysThereMayBeMoreWhenTheListIsFull() async {
+        let limit = Int(searchHitLimit())
+        let probe = SearchProbe(counts: ["full": limit, "almost": limit - 1])
+        let controller = makeController(probe)
+
+        controller.query = "almost"
+        let almost = await eventually { controller.hits.count == limit - 1 }
+        XCTAssertTrue(almost)
+        XCTAssertEqual(SearchHitBar.position(of: controller), "1 of \(limit - 1)")
+
+        controller.query = "full"
+        let full = await eventually { controller.hits.count == limit }
+        XCTAssertTrue(full)
+        XCTAssertEqual(SearchHitBar.position(of: controller), "1 of \(limit.formatted())+")
+        controller.previous()
+        XCTAssertEqual(SearchHitBar.position(of: controller), "\(limit.formatted()) of \(limit.formatted())+")
+    }
+
     // MARK: What the viewer draws
 
     func testTheActiveHitAndItsBoxesFollowTheActiveIndex() async {
