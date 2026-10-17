@@ -55,6 +55,7 @@
 		F2369F1BC22A70765767B6BF /* TileRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F72434B26DC8C06AC6AB44F6 /* TileRenderer.swift */; };
 		F378BECF62FAE30C5FD8980B /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25040FA92841FEC2602C8763 /* LaunchTests.swift */; };
 		FA4B8AA1028D578B338F701E /* hello.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 22177CB12AF8A846F8AE260E /* hello.pdf */; };
+		FCA38D3107881E65B6D090C8 /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD94C82B0C570CCAA23791C4 /* Diagnostics.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -113,6 +114,7 @@
 		B586A0723E56ED0039E2CA16 /* PageScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageScrollView.swift; sourceTree = "<group>"; };
 		B7AEE25132378BBD7977FCA8 /* SelectionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionController.swift; sourceTree = "<group>"; };
 		B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageScrollViewControllerTests.swift; sourceTree = "<group>"; };
+		BD94C82B0C570CCAA23791C4 /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		C1B1F544650AF31086A3A94C /* FixtureStagingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureStagingTests.swift; sourceTree = "<group>"; };
 		C29853682BBB082F8EADB99E /* GlyphLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlyphLines.swift; sourceTree = "<group>"; };
 		C886BE236F046F62791FDD5E /* ThumbnailStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailStoreTests.swift; sourceTree = "<group>"; };
@@ -258,6 +260,7 @@
 		871288AC001CE237FBF5CE8E /* Support */ = {
 			isa = PBXGroup;
 			children = (
+				BD94C82B0C570CCAA23791C4 /* Diagnostics.swift */,
 				A09A727CE94FC70B23ED5AAE /* Strings.swift */,
 			);
 			path = Support;
@@ -491,6 +494,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FCA38D3107881E65B6D090C8 /* Diagnostics.swift in Sources */,
 				EA9E8CBC33084C980E5EFB30 /* DocumentModel.swift in Sources */,
 				EEBF42B37A47DC4E9832A0CF /* DocumentScreen.swift in Sources */,
 				851BDA976FE7597B8F80BDBF /* EditinPDFApp.swift in Sources */,

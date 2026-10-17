@@ -20,7 +20,7 @@ actor SelectionWorker {
     /// selection that moves between pages.
     static let pagesKept = 4
 
-    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.editinpdf.ios", category: "selection")
+    private static let log = Logger(subsystem: Diagnostics.subsystem, category: "selection")
 
     private let document: any PdfDocumentProtocol
     private var lines: [Int: GlyphLines] = [:]

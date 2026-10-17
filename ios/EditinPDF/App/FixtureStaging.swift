@@ -22,7 +22,7 @@ enum FixtureStaging {
         case notBundled(String)
     }
 
-    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "EditinPDF", category: "fixtures")
+    private static let log = Logger(subsystem: Diagnostics.subsystem, category: "fixtures")
 
     /// The name of the document that `arguments` ask for; nil if they do not ask for one.
     static func requestedFixture(in arguments: [String]) -> String? {

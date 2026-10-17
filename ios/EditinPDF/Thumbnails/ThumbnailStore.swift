@@ -34,7 +34,10 @@ final class ThumbnailStore {
     /// five times the memory for pixels nobody sees.
     nonisolated static let tallestInWidths = 4.0
 
-    private nonisolated static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.editinpdf.ios", category: "thumbnails")
+    private nonisolated static let log = Logger(subsystem: Diagnostics.subsystem, category: "thumbnails")
+    /// Marks each picture's drawing as an interval ("renderThumbnail") for Instruments' Points of
+    /// Interest, beside the tiles' (`PageTiledLayer`): the two share the engine's renderers.
+    private nonisolated static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: "thumbnails")
 
     /// How wide a picture is, in points: of every page but a very tall one (`tallestInWidths`).
     let targetWidth: CGFloat
@@ -178,7 +181,10 @@ final class ThumbnailStore {
     /// nil. The reason stays private in the log, since the engine's message can quote the document.
     private nonisolated static func thumbnail(page: Int, scale: Double, displayScale: CGFloat, render: Render) -> UIImage? {
         do {
-            let tile = try render(page, scale)
+            let tile = try signposter.withIntervalSignpost("renderThumbnail", id: signposter.makeSignpostID(),
+                                                           "page \(page) scale \(scale)") {
+                try render(page, scale)
+            }
             guard let image = TileRenderer.image(for: tile) else {
                 log.error("page \(page) thumbnail was left out: the pixels do not fill \(tile.width) x \(tile.height)")
                 return nil

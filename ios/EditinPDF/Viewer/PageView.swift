@@ -76,7 +76,12 @@ final class PageTiledLayer: CATiledLayer {
         let pointSize: CGSize
     }
 
-    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.editinpdf.ios", category: "tiles")
+    private static let log = Logger(subsystem: Diagnostics.subsystem, category: "tiles")
+    /// Marks each tile's call to the engine as an interval ("renderTile", with its page, scale and
+    /// pixels), and each tile left blank as an event ("tileLeftBlank"), so that Instruments' Points of
+    /// Interest can tell a tile that waited for a renderer, or one that failed, from one never asked
+    /// for.
+    private static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: "tiles")
 
     private let sourceLock = OSAllocatedUnfairLock<Source?>(initialState: nil)
 
@@ -119,7 +124,13 @@ final class PageTiledLayer: CATiledLayer {
         }
         let image: CGImage
         do {
-            let tile = try source.document.renderTile(page: source.page, scale: request.scale, rect: request.rect)
+            let rect = request.rect
+            let tile = try Self.signposter.withIntervalSignpost(
+                "renderTile", id: Self.signposter.makeSignpostID(),
+                "page \(source.page) scale \(request.scale) x \(rect.x) y \(rect.y) w \(rect.width) h \(rect.height)"
+            ) {
+                try source.document.renderTile(page: source.page, scale: request.scale, rect: rect)
+            }
             guard let made = TileRenderer.image(for: tile) else {
                 return fail(ctx, clip, page: source.page, reason: "the pixels do not fill \(tile.width) x \(tile.height)")
             }
@@ -143,6 +154,7 @@ final class PageTiledLayer: CATiledLayer {
     /// in the log, since the engine's message can quote the document.
     private func fail(_ ctx: CGContext, _ clip: CGRect, page: UInt32, reason: String) {
         Self.log.error("page \(page) tile \(clip.debugDescription, privacy: .public) was left blank: \(reason, privacy: .private)")
+        Self.signposter.emitEvent("tileLeftBlank", "page \(page) tile \(clip.debugDescription, privacy: .public)")
         ctx.setFillColor(gray: 1, alpha: 1)
         ctx.fill(clip)
     }

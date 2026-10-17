@@ -18,7 +18,7 @@ enum OpenOutcome: Sendable {
     /// go under `Strings.fileCouldNotBeOpened`; nil when there is none fit to show.
     case failed(detail: String?)
 
-    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "EditinPDF", category: "open")
+    private static let log = Logger(subsystem: Diagnostics.subsystem, category: "open")
 
     /// Opens `bytes` with `password` (none for a first try). Blocks for as long as the engine takes.
     init(bytes: Data, password: String? = nil) {
