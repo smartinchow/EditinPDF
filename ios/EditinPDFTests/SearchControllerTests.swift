@@ -205,26 +205,64 @@ final class SearchControllerTests: XCTestCase {
     }
 
     /// The engine's search cannot be called off, so a slow one for a query that has been typed over
-    /// finishes anyway, and its result must not replace the newer one's.
+    /// finishes anyway. Its result must not replace the newer one's, and the newer query, which
+    /// waited for it, is looked for as soon as it is done.
     func testAResultThatArrivesAfterANewerQueryWasTypedIsIgnored() async {
         let probe = SearchProbe(counts: ["hello": 1, "zzz": 0])
         probe.hold("hello")
+        probe.hold("zzz")
         let controller = makeController(probe)
 
         controller.query = "hello"
         let started = await eventually { probe.queries == ["hello"] }
         XCTAssertTrue(started, "the first search is inside the engine")
         controller.query = "zzz"
-        let newer = await eventually { probe.finished == ["zzz"] && !controller.isSearching }
-        XCTAssertTrue(newer, "the second search answered while the first was still going")
-        XCTAssertTrue(controller.hits.isEmpty)
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(probe.queries, ["hello"], "the newer search waits for the one in the engine")
+        XCTAssertTrue(controller.isSearching)
 
         probe.release("hello")
-        let late = await eventually { probe.finished == ["zzz", "hello"] }
-        XCTAssertTrue(late)
+        let next = await eventually { probe.queries == ["hello", "zzz"] }
+        XCTAssertTrue(next, "the newer search goes to the engine once the first is out")
         await letTheMainActorCatchUp()
         XCTAssertTrue(controller.hits.isEmpty, "the late result is for a query that is gone")
+        XCTAssertTrue(controller.isSearching, "the newer words have no answer yet")
+
+        probe.release("zzz")
+        let done = await eventually { !controller.isSearching }
+        XCTAssertTrue(done)
+        XCTAssertTrue(controller.hits.isEmpty)
         XCTAssertNil(controller.activeIndex)
+        XCTAssertEqual(probe.mostAtOnce, 1)
+    }
+
+    /// Searches do not pile up behind a slow one either: while it is in the engine, the queries typed
+    /// after it wait, each in place of the one before, and only the latest is looked for next.
+    func testWhileASearchIsInTheEngineOnlyTheLatestQueryWaitsForIt() async {
+        let probe = SearchProbe(counts: ["a": 1, "b": 2, "c": 3])
+        probe.hold("a")
+        let controller = makeController(probe)
+
+        controller.query = "a"
+        let started = await eventually { probe.queries == ["a"] }
+        XCTAssertTrue(started, "the first search is inside the engine")
+        // Each of the next two is let wait out its debounce while the first is still inside.
+        controller.query = "b"
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(probe.queries, ["a"], "one search at a time: the second waits for the first")
+        controller.query = "c"
+        try? await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(probe.queries, ["a"])
+        XCTAssertTrue(controller.isSearching)
+
+        probe.release("a")
+        let found = await eventually { controller.hits.count == 3 }
+        XCTAssertTrue(found, "the latest query's hits")
+        await letTheMainActorCatchUp()
+        XCTAssertEqual(probe.queries, ["a", "c"], "the query typed over while it waited never reaches the engine")
+        XCTAssertEqual(probe.mostAtOnce, 1, "never two searches in the engine at once")
+        XCTAssertEqual(controller.hits.count, 3)
+        XCTAssertEqual(controller.activeIndex, 0)
         XCTAssertFalse(controller.isSearching)
     }
 
@@ -243,6 +281,29 @@ final class SearchControllerTests: XCTestCase {
         let late = await eventually { probe.finished == ["hello"] }
         XCTAssertTrue(late)
         await letTheMainActorCatchUp()
+        XCTAssertTrue(controller.hits.isEmpty)
+        XCTAssertFalse(controller.isSearching)
+    }
+
+    /// A query waiting for the engine is dropped when the query is emptied: nothing is looked for.
+    func testAQueryWaitingForTheEngineIsDroppedWhenTheQueryIsEmptied() async {
+        let probe = SearchProbe(counts: ["a": 1, "b": 1])
+        probe.hold("a")
+        let controller = makeController(probe)
+
+        controller.query = "a"
+        let started = await eventually { probe.queries == ["a"] }
+        XCTAssertTrue(started)
+        controller.query = "b"
+        try? await Task.sleep(for: .milliseconds(100))
+        controller.query = ""
+        XCTAssertFalse(controller.isSearching)
+
+        probe.release("a")
+        let late = await eventually { probe.finished == ["a"] }
+        XCTAssertTrue(late)
+        await letTheMainActorCatchUp()
+        XCTAssertEqual(probe.queries, ["a"], "the waiting query was dropped with the words")
         XCTAssertTrue(controller.hits.isEmpty)
         XCTAssertFalse(controller.isSearching)
     }
@@ -531,6 +592,8 @@ final class SearchProbe: @unchecked Sendable {
     private var _queries: [String] = []
     private var _finished: [String] = []
     private var _onMainThread = 0
+    private var _inside = 0
+    private var _mostAtOnce = 0
 
     /// `counts` is how many hits each query finds; a query that is not in it finds none.
     init(counts: [String: Int] = [:]) {
@@ -542,6 +605,8 @@ final class SearchProbe: @unchecked Sendable {
     /// Every query the engine has answered, in order.
     var finished: [String] { lock.withLock { _finished } }
     var askedOnTheMainThread: Int { lock.withLock { _onMainThread } }
+    /// The most queries that were inside the engine at the same time.
+    var mostAtOnce: Int { lock.withLock { _mostAtOnce } }
 
     /// Makes the engine keep `query` inside its call until `release(_:)`.
     func hold(_ query: String) {
@@ -560,10 +625,15 @@ final class SearchProbe: @unchecked Sendable {
         let (count, gate) = lock.withLock { () -> (Int, DispatchSemaphore?) in
             _queries.append(query)
             if Thread.isMainThread { _onMainThread += 1 }
+            _inside += 1
+            _mostAtOnce = max(_mostAtOnce, _inside)
             return (counts[query] ?? 0, holds[query])
         }
         gate?.wait()
-        lock.withLock { _finished.append(query) }
+        lock.withLock {
+            _finished.append(query)
+            _inside -= 1
+        }
         return (0..<count).map { Self.hit(page: $0 / 2, index: $0) }
     }
 

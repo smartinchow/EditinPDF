@@ -9,10 +9,15 @@ import Observation
 /// The engine's search reads the text of every page, which takes a while for a long document (about
 /// 600 ms for 200 pages the first time), and a call cannot be cancelled once it has started. So
 /// nothing here calls it on the main actor: a search starts a moment after the reader stops typing
-/// (`debounce`), in a task off the main actor, and what it finds is only kept if its words are still
-/// the latest. Every change of the words counts a new generation, and a result tagged with an older
-/// one is dropped: a slow search for words that have been typed over finishes anyway, and must not
-/// replace what the newer one found.
+/// (`debounce`), on a serial queue of the controller's own, and what it finds is only kept if its
+/// words are still the latest. Every change of the words counts a new generation, and a result
+/// tagged with an older one is dropped: a slow search for words that have been typed over finishes
+/// anyway, and must not replace what the newer one found.
+///
+/// One search is in the engine at a time. Words whose debounce ends while a search is in the engine
+/// wait for it to return, in place of any words that were waiting before them, and are looked for
+/// then if they are still the latest: searches for words typed over do not pile up behind a slow
+/// one, competing with it and with the page drawing for the engine's renderers.
 ///
 /// The controller belongs to one document and holds only the engine's document, never the model
 /// that holds the controller.
@@ -84,6 +89,13 @@ final class SearchController {
     private var requested = ""
     /// The wait before a search, and the search; replaced when newer words are typed.
     @ObservationIgnored private var pending: Task<Void, Never>?
+    /// Whether a search is in the engine.
+    @ObservationIgnored private var engineIsBusy = false
+    /// The words to look for next, with their generation, while a search is in the engine: only the
+    /// latest, since words that have been typed over are not looked for.
+    @ObservationIgnored private var waiting: (words: String, generation: Int)?
+    /// Where the engine's searches run, one after the other, off the main actor.
+    @ObservationIgnored private let queue = DispatchQueue(label: "app.editinpdf.search", qos: .userInitiated)
 
     /// A search of `document`, ignoring case.
     convenience init(document: PdfDocument) {
@@ -159,16 +171,35 @@ final class SearchController {
     }
 
     /// Asks the engine for `words` off the main actor and keeps the answer if no newer words have
-    /// been typed since.
+    /// been typed since. With a search in the engine already, `words` waits for it instead (see the
+    /// type's documentation), and this returns at once.
     private func find(_ words: String, generation: Int) async {
         // Typing again cancels the wait before this, but cannot call back a wait that has just ended
         // and is on its way here: this is the last chance to keep the engine from looking for words
         // that have been typed over.
         guard generation == self.generation else { return }
+        waiting = (words, generation)
+        guard !engineIsBusy else { return }
+        engineIsBusy = true
+        // Words that were typed over while they waited are dropped here: the newer ones come through
+        // `find` themselves once their debounce ends, and find the engine free.
+        while let next = waiting, next.generation == self.generation {
+            waiting = nil
+            let found = await engineSearch(next.words)
+            guard next.generation == self.generation else { continue }
+            apply(found)
+        }
+        waiting = nil
+        engineIsBusy = false
+    }
+
+    /// The engine's answer for `words`, from the controller's queue.
+    private func engineSearch(_ words: String) async -> [SearchHit] {
         let search = search
-        let found = await Task.detached(priority: .userInitiated) { search(words) }.value
-        guard generation == self.generation else { return }
-        apply(found)
+        let queue = queue
+        return await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: search(words)) }
+        }
     }
 
     /// Makes `found` the hits, with the first the active one, and the search over.
