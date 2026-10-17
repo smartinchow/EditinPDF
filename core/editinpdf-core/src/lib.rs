@@ -7,11 +7,23 @@
 //!   selecting text and searching).
 //! - [`OpenError`], [`RenderError`], [`PageInfo`], [`TileRect`], [`RenderedTile`], [`Rect`],
 //!   [`PageText`], [`TextGlyph`], [`TextSelection`], [`SearchHit`]: its error and record types.
-//! - [`MAX_SEARCH_HITS`], [`MAX_QUERY_CHARS`]: the limits of a search, which keep the work and the
-//!   memory of one call bounded whatever the document. [`search_hit_limit`] hands the first to the
-//!   apps, which cannot read a Rust constant.
+//! - [`MAX_SEARCH_HITS`], [`MAX_QUERY_CHARS`]: the limits of a search. They bound what one search
+//!   hands back (its hits, and so the memory they take) and the work of matching the query against
+//!   a page's text. They do not bound the time a search takes: reading each page's text is the
+//!   engine's work, which grows with the page and the document. [`search_hit_limit`] hands the first
+//!   to the apps, which cannot read a Rust constant.
 //! - [`min_tile_scale`], [`max_tile_scale`]: the scales a tile is drawn at, for the apps to keep
 //!   their requests within.
+//!
+//! # Panics
+//!
+//! A method that returns a `Result` reports a panic as an error: UniFFI catches it at the FFI
+//! boundary, and Swift sees an error thrown. A method that returns no `Result` has no way to report
+//! one: the Swift bindings call it with `try!`, and a panic there ends the app. So the methods and
+//! functions without a `Result` (`page_count`, `page_info`, `revision`, `search`, and the free
+//! functions here) must never panic. They only read the document's state, under a lock that
+//! recovers from poisoning, except `search`, which runs the engine's text code and therefore catches
+//! a panic itself, page by page. Keep it that way when adding one.
 
 uniffi::setup_scaffolding!();
 

@@ -1,5 +1,6 @@
 //! `PdfDocument`: one open PDF, as the Swift side sees it.
 
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
@@ -313,8 +314,29 @@ impl PdfDocument {
     /// needed. A search reads one page at a time and holds nothing else of the document, so drawing
     /// and the other calls carry on alongside it.
     pub fn search(&self, query: String, case_sensitive: bool) -> Vec<SearchHit> {
+        self.search_pages(&query, |page, layer, query, room| {
+            text::search_page(page, layer, query, case_sensitive, room)
+        })
+    }
+}
+
+impl PdfDocument {
+    /// What `search` does, with `search_page` finding the hits of one page: given the page, its
+    /// text, what to look for and the most hits it may give.
+    ///
+    /// A page whose reading or searching panics is skipped, like a page whose text cannot be read,
+    /// and the search goes on with the next. `search` has no error to report the panic with: the
+    /// Swift side calls it without `try`, so a panic that reached the FFI boundary would end the app
+    /// (see the crate's documentation). The panic itself has been reported by the panic hook, and the
+    /// page is logged as skipped, by its number only (its text is the user's business). The state
+    /// lock recovers from the poisoning such a panic can leave behind (`lock`).
+    fn search_pages(
+        &self,
+        query: &str,
+        mut search_page: impl FnMut(u32, &EnginePageText, &str, usize) -> Vec<SearchHit>,
+    ) -> Vec<SearchHit> {
         // Nothing to look for, or too much to look for: no reason to read any page.
-        let Some(query) = text::search_text(&query) else {
+        let Some(query) = text::search_text(query) else {
             return Vec::new();
         };
         let mut hits = Vec::new();
@@ -324,8 +346,17 @@ impl PdfDocument {
             if room == 0 {
                 break;
             }
-            if let Ok(layer) = self.text_layer(page) {
-                hits.extend(text::search_page(page, &layer, query, case_sensitive, room));
+            let found = panic::catch_unwind(AssertUnwindSafe(|| {
+                self.text_layer(page)
+                    .map(|layer| search_page(page, &layer, query, room))
+            }));
+            match found {
+                Ok(Ok(found)) => hits.extend(found),
+                // A page whose text cannot be read has nothing to find.
+                Ok(Err(_)) => {}
+                Err(_) => {
+                    log::warn!("search skipped page {page}: reading or searching it panicked")
+                }
             }
         }
         hits
@@ -537,6 +568,21 @@ mod tests {
         }
         let mut inner = doc.lock();
         assert!(inner.text_cache.get(0, 0).is_none() && inner.text_cache.get(0, 1).is_none());
+    }
+
+    #[test]
+    fn a_page_whose_search_panics_is_skipped_and_the_others_are_searched() {
+        let doc = open_pages(&["needle one", "needle two", "needle three"]);
+        let hits = doc.search_pages("needle", |page, layer, query, room| {
+            if page == 1 {
+                panic!("a page the search cannot cope with");
+            }
+            text::search_page(page, layer, query, false, room)
+        });
+        assert_eq!(hits.iter().map(|hit| hit.page).collect::<Vec<_>>(), [0, 2]);
+        // The panic left nothing behind: the document is searched in full again.
+        assert_eq!(doc.search("needle".into(), false).len(), 3);
+        assert_eq!(doc.page_text(1).unwrap().glyphs.len(), 10);
     }
 
     #[test]

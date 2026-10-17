@@ -17,12 +17,9 @@ crate-type = ["lib", "staticlib", "cdylib"]
 [dependencies]
 uniffi = { workspace = true }
 thiserror = { workspace = true }
+log = { workspace = true }
 pdfcraft-engine = { workspace = true }
 pdfcraft-render = { workspace = true }
-pdfcraft-annot = { workspace = true }
-
-[dev-dependencies]
-pdfcraft-create = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "deny"
