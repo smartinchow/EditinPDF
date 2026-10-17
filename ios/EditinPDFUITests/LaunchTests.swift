@@ -1,7 +1,7 @@
 import XCTest
 
-// Proves the app launches under XCUITest. The real viewer smoke test arrives with the password
-// prompt and error handling.
+// Proves the app launches under XCUITest, with nothing asked of it. What it does with documents is
+// ViewerSmokeTests'.
 final class LaunchTests: XCTestCase {
     @MainActor
     func testAppLaunches() {

@@ -4,12 +4,6 @@ import Foundation
 /// localisation, when it comes, has a single entry point. Views and models ask this type for their
 /// text instead of spelling out their own.
 enum Strings {
-    /// How many pages the document has, shown on the document screen while the document is locked
-    /// or could not be read, until the password prompt and the error message replace it.
-    static func pageCount(_ count: Int) -> String {
-        String(localized: "\(count) pages", comment: "Placeholder on the document screen: how many pages the document has")
-    }
-
     /// The page indicator over an open document: the page the reader is on, counting from 1, and
     /// how many pages the document has.
     static func pageIndicator(current: Int, count: Int) -> String {
@@ -109,21 +103,61 @@ enum Strings {
         String(localized: "End of selection", comment: "Accessibility label of the handle at the end of the selected text")
     }
 
-    /// The sentence that starts every message about a file the engine could not read.
+    // MARK: Files that do not open
+
+    /// The title of the alert about a file the engine could not read; the engine's explanation goes
+    /// under it (`fileCouldNotBeOpenedDetail`).
     static var fileCouldNotBeOpened: String {
-        String(localized: "This file could not be opened.", comment: "Message shown when a PDF cannot be read")
+        String(localized: "This file could not be opened.", comment: "Title of the message shown when a PDF cannot be read")
     }
 
-    /// `detail` is the engine's own wording for why it could not read the file (an
-    /// `OpenError.Corrupt` message). It is not ours, so it follows our sentence instead of replacing
+    /// `engineText` is the engine's own wording for why it could not read the file (an
+    /// `OpenError.Corrupt` message). It is not ours, so it goes under our title instead of replacing
     /// it, and it is only tidied into a sentence (the engine writes fragments: lower case, no full
-    /// stop). The file is not called "damaged": the engine also refuses files that are sound but use
-    /// something it does not support.
-    static func fileCouldNotBeOpened(detail: String) -> String {
-        var reason = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = reason.first else { return fileCouldNotBeOpened }
-        reason = first.uppercased() + reason.dropFirst()
-        if let last = reason.last, !".!?…".contains(last) { reason += "." }
-        return "\(fileCouldNotBeOpened) \(reason)"
+    /// stop); nil if there is nothing in it to show. The file is not called "damaged": the engine also
+    /// refuses files that are sound but use something it does not support.
+    static func fileCouldNotBeOpenedDetail(_ engineText: String) -> String? {
+        var detail = engineText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = detail.first else { return nil }
+        detail = first.uppercased() + detail.dropFirst()
+        if let last = detail.last, !".!?…".contains(last) { detail += "." }
+        return detail
+    }
+
+    // MARK: Password
+
+    /// The title of the prompt for the password of a protected document.
+    static var passwordTitle: String {
+        String(localized: "Password Required", comment: "Title of the prompt that asks for a PDF's password")
+    }
+
+    /// What the password prompt says over its field.
+    static var passwordExplanation: String {
+        String(localized: "This document is protected. Enter the password to open it.", comment: "Explanation in the prompt that asks for a PDF's password")
+    }
+
+    /// What the password field says while it is empty.
+    static var passwordPlaceholder: String {
+        String(localized: "Password", comment: "Placeholder of the field a PDF's password is typed in")
+    }
+
+    /// Under the password field once a password was tried and refused.
+    static var wrongPassword: String {
+        String(localized: "Wrong password", comment: "Shown under the password field when the password typed does not open the PDF")
+    }
+
+    /// The button that tries the password.
+    static var unlock: String {
+        String(localized: "Unlock", comment: "Button that tries the password typed for a protected PDF")
+    }
+
+    /// The button that gives up on the password and closes the document.
+    static var cancel: String {
+        String(localized: "Cancel", comment: "Button that gives up on entering a PDF's password and closes the document")
+    }
+
+    /// The button of the message about a file that could not be opened; it closes the document.
+    static var close: String {
+        String(localized: "Close", comment: "Button that closes a document that could not be opened")
     }
 }

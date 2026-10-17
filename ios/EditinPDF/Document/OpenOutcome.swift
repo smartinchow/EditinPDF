@@ -14,10 +14,11 @@ enum OpenOutcome: Sendable {
     /// The file needs a password. The bytes are kept to try again; `wrongPassword` says that a
     /// password was already tried and refused.
     case locked(Data, wrongPassword: Bool)
-    /// The file could not be opened. The text is ready to show.
-    case failed(String)
+    /// The file could not be opened. `detail` is the engine's explanation, tidied into a sentence to
+    /// go under `Strings.fileCouldNotBeOpened`; nil when there is none fit to show.
+    case failed(detail: String?)
 
-    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.editinpdf.ios", category: "open")
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "EditinPDF", category: "open")
 
     /// Opens `bytes` with `password` (none for a first try). Blocks for as long as the engine takes.
     init(bytes: Data, password: String? = nil) {
@@ -28,12 +29,13 @@ enum OpenOutcome: Sendable {
         } catch OpenError.WrongPassword {
             self = .locked(bytes, wrongPassword: true)
         } catch OpenError.Corrupt(let message) {
-            self = .failed(Strings.fileCouldNotBeOpened(detail: message))
+            self = .failed(detail: Strings.fileCouldNotBeOpenedDetail(message))
         } catch {
             // Not one of the bridge's typed errors: the engine panicked, which UniFFI reports as an
-            // error instead of aborting. Nothing in it is fit to show.
-            Self.log.error("opening failed unexpectedly: \(String(describing: error), privacy: .public)")
-            self = .failed(Strings.fileCouldNotBeOpened)
+            // error instead of aborting. Nothing in it is fit to show, and it may quote the file, so it
+            // stays out of the readable log too (`.private`: only a debugger sees it).
+            Self.log.error("opening failed unexpectedly: \(String(describing: error), privacy: .private)")
+            self = .failed(detail: nil)
         }
     }
 }

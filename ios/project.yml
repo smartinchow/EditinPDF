@@ -18,7 +18,15 @@ targets:
   EditinPDF:
     type: application
     platform: iOS
-    sources: [EditinPDF]
+    sources:
+      - EditinPDF
+      # Debug builds only (EXCLUDED_SOURCE_FILE_NAMES below keeps them out of Release): the UI tests'
+      # sample documents. A Debug build launched with `-openFixture <name>` copies one into its
+      # Documents folder for the test to open (App/FixtureStaging.swift). They stay in the UI tests'
+      # folder, where the Rust fixture exporter writes them, so there is one copy of each; it is the
+      # app that carries them, not the UI-test bundle. Check a Release build's .app for *.pdf after
+      # touching this.
+      - { path: EditinPDFUITests/Fixtures, buildPhase: resources }
     dependencies: [{ package: EditinPDFCore }]
     info:
       path: EditinPDF/Info.plist
@@ -42,6 +50,11 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        Release:
+          # Nothing in the UI tests' Fixtures folder ships: not the documents there today, and not one
+          # added later. (The pattern is matched against the file's whole path.)
+          EXCLUDED_SOURCE_FILE_NAMES: "*/EditinPDFUITests/Fixtures/*"
   EditinPDFTests:
     type: bundle.unit-test
     platform: iOS
@@ -54,7 +67,8 @@ targets:
   EditinPDFUITests:
     type: bundle.ui-testing
     platform: iOS
-    sources: [EditinPDFUITests]
+    # The sample documents in Fixtures belong to the app (see its sources); the tests never read them.
+    sources: [{ path: EditinPDFUITests, excludes: [Fixtures] }]
     dependencies: [{ target: EditinPDF }]
     settings:
       base:
