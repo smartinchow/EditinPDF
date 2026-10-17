@@ -94,6 +94,60 @@ final class TileMathTests: XCTestCase {
         XCTAssertEqual(r.rect, TileRect(x: 0, y: 0, width: 31, height: 31))
     }
 
+    // MARK: The engine's range of scales
+
+    /// A page narrower than about 24 points, zoomed in all the way, would want more pixels to the PDF
+    /// point than the engine draws a tile at (400): it is asked for its largest, and the tile is
+    /// enlarged to cover the clip, instead of the engine refusing it.
+    func testANarrowPageZoomedAllTheWayInIsDrawnAtTheEnginesLargestScale() throws {
+        let narrow = CGSize(width: 20, height: 26)            // laid out 402 x 523 at zoom 1
+        let layer = CGSize(width: 402, height: 523)
+        // The 16x level of a 3x screen: 48 pixels per layer point, 964.8 to the PDF point.
+        let contextScale: CGFloat = 48
+        let side = 1024 / contextScale
+        for clip in [CGRect(x: 0, y: 0, width: side, height: side), CGRect(x: 3 * side, y: 7 * side, width: side, height: side)] {
+            let r = try XCTUnwrap(TileMath.request(clip: clip, contextScale: contextScale, layerSize: layer, pointSize: narrow))
+            XCTAssertEqual(r.scale, maxTileScale(), "the engine's largest, not 964.8")
+            XCTAssertTrue(r.isEnlarged)
+            XCTAssertLessThanOrEqual(r.rect.width, 1024)
+            // The engine's pixels cover the whole clip, so the tile has no gap at its edges.
+            XCTAssertTrue(r.destination.insetBy(dx: -1e-9, dy: -1e-9).contains(clip), "\(r.destination) does not cover \(clip)")
+            // And they are its own: 400 to the PDF point is 400 * 20 / 402 to the layer point.
+            XCTAssertEqual(r.destination.width * 400 * 20 / 402, CGFloat(r.rect.width), accuracy: 1e-6)
+        }
+        // Below the largest scale nothing changes.
+        let r = try XCTUnwrap(request(CGRect(x: 0, y: 0, width: 1024.0 / 48, height: 1024.0 / 48), 48))
+        XCTAssertEqual(r.scale, 48 * 402 / 612, accuracy: 1e-12)
+        XCTAssertFalse(r.isEnlarged)
+    }
+
+    /// What the page view asks for at the deepest zoom of a narrow page is what the engine draws.
+    func testTheEngineDrawsACappedRequest() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "hello", withExtension: "pdf"))
+        let document = try PdfDocument.open(bytes: Data(contentsOf: url), password: nil)
+        // The 612-point page laid out as if it were 25 times narrower than it is: 1,224 pixels to its point.
+        let layer = CGSize(width: 612 * 25, height: 792 * 25)
+        let r = try XCTUnwrap(TileMath.request(clip: CGRect(x: 2_000, y: 2_000, width: 1024.0 / 48, height: 1024.0 / 48),
+                                               contextScale: 48, layerSize: layer, pointSize: pointSize))
+        XCTAssertEqual(r.scale, maxTileScale())
+        let tile = try document.renderTile(page: 0, scale: r.scale, rect: r.rect)
+        XCTAssertEqual(tile.width, r.rect.width)
+        XCTAssertEqual(tile.height, r.rect.height)
+    }
+
+    /// A page so wide that even the screen's own resolution is below the smallest scale the engine
+    /// draws a tile at (0.01 pixels to the point, a page over 75,000 points wide: only a hostile file
+    /// has one) asks for nothing; the page view leaves it blank.
+    func testAPageTooWideForTheEnginesSmallestScaleAsksForNothing() {
+        let wide = CGSize(width: 1e6, height: 1e6)
+        XCTAssertNil(TileMath.request(clip: CGRect(x: 0, y: 0, width: 100, height: 100), contextScale: 2,
+                                      layerSize: CGSize(width: 402, height: 402), pointSize: wide))
+        // At the smallest scale exactly, it is drawn.
+        let atTheSmallest = CGSize(width: 402 * 2 / minTileScale(), height: 100)
+        XCTAssertNotNil(TileMath.request(clip: CGRect(x: 0, y: 0, width: 100, height: 100), contextScale: 2,
+                                         layerSize: CGSize(width: 402, height: 402), pointSize: atTheSmallest))
+    }
+
     func testNothingToDrawAsksForNothing() {
         XCTAssertNil(request(CGRect(x: 500, y: 0, width: 10, height: 10), 3))       // right of the page
         XCTAssertNil(request(CGRect(x: -20, y: -20, width: 10, height: 10), 3))     // above and left of it

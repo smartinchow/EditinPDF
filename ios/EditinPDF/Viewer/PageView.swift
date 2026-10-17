@@ -143,8 +143,9 @@ final class PageTiledLayer: CATiledLayer {
         // the destination's maxY: flipping within the destination puts the first row at the top.
         ctx.translateBy(x: 0, y: request.destination.minY + request.destination.maxY)
         ctx.scaleBy(x: 1, y: -1)
-        // One image pixel to one device pixel: nothing to smooth.
-        ctx.interpolationQuality = .none
+        // One image pixel to one device pixel: nothing to smooth. Unless the page wanted more pixels
+        // than the engine draws a tile with, and the image is enlarged: then smoothed, not blocky.
+        ctx.interpolationQuality = request.isEnlarged ? .high : .none
         ctx.draw(image, in: request.destination)
         ctx.restoreGState()
     }
