@@ -1,7 +1,7 @@
 //! Page rendering: the pool of renderers behind `PdfDocument::render_tile` and the page text calls,
 //! and the translation between the bridge's records and the engine's render requests and results.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use pdfcraft_render::{PageRenderer, RenderConfig, RenderRequest, RenderedPage, RequestKind, Tile};
 
@@ -15,11 +15,19 @@ const MAX_RENDERERS: usize = 2;
 /// a picture of another size than was asked for, so a larger one is refused instead.
 const MAX_TILE_SIDE: u32 = 4096;
 
+/// The smallest and the largest scale, in device pixels per point, that the engine draws a tile at.
+/// It clamps another scale into this range, which would draw another part of the page than was
+/// asked for, so another scale is refused instead. (A whole-page drawing has no such range: the
+/// engine fits it within its size limits.)
+pub(crate) const MIN_TILE_SCALE: f32 = 0.01;
+pub(crate) const MAX_TILE_SCALE: f32 = 400.0;
+
 /// The request to draw pixels of the 0-based `page` at `scale` device pixels per point, or of the
 /// part of it in `rect`.
 ///
-/// Refuses what the engine would quietly change instead of doing: a scale it cannot use, and a tile
-/// side it would clamp. (Whether `page` exists is for the document to say; this does not know.)
+/// Refuses what the engine would quietly change instead of doing: a scale it cannot use, a tile
+/// scale it would clamp, and a tile side it would clamp. (Whether `page` exists is for the document
+/// to say; this does not know.)
 pub(crate) fn pixel_request(
     page: u32,
     scale: f64,
@@ -27,9 +35,15 @@ pub(crate) fn pixel_request(
 ) -> Result<RenderRequest, RenderError> {
     // The engine's scale is single precision. A value that does not fit becomes infinite or zero
     // there, and zero would draw the whole page at the largest size the engine allows, so it is the
-    // narrowed value that has to be a positive, finite number.
+    // narrowed value that has to be a positive, finite number, and for a tile one within the range
+    // the engine draws tiles at.
     let scale = scale as f32;
-    if !(scale.is_finite() && scale > 0.0) {
+    let usable = if rect.is_some() {
+        (MIN_TILE_SCALE..=MAX_TILE_SCALE).contains(&scale)
+    } else {
+        scale.is_finite() && scale > 0.0
+    };
+    if !usable {
         return Err(RenderError::Failed {
             message: "invalid scale".to_owned(),
         });
@@ -128,16 +142,61 @@ pub(crate) fn into_text(
 ///
 /// A renderer draws one page at a time (drawing needs exclusive access), so a single one would make
 /// concurrent tile requests queue up. The pool keeps up to [`MAX_RENDERERS`] and hands a caller
-/// whichever is idle.
+/// whichever is idle. When none is, the caller waits for whichever is let go of first, and callers
+/// that wait are served in the order they came, so none waits for ever.
 pub(crate) struct RendererPool {
     revision: u64,
     /// The document as displayed at `revision`: what every renderer here parses.
     bytes: Arc<Vec<u8>>,
     config: RenderConfig,
-    /// A slot starts empty. A caller that finds every earlier slot busy builds its renderer in the
-    /// next empty one, under that slot's own lock, so the pool grows only when it is needed, one
-    /// renderer at a time, and never beyond its slots.
+    /// Which slots are taken, and whose turn it is to take the next one. Its lock is held to look and
+    /// to mark, never while a renderer draws.
+    turns: Mutex<Turns>,
+    /// Woken when a slot is let go of, and when one is taken while others wait, so that the caller
+    /// whose turn it is looks again.
+    changed: Condvar,
+    /// A slot starts empty, and the caller that takes an empty one builds its renderer in it. The
+    /// lowest free slot is the one taken, so the pool grows only when every renderer it has is busy,
+    /// one renderer at a time, and never beyond its slots. Only the caller that has taken a slot
+    /// (see `turns`) locks it, so that lock is never waited for.
     slots: [Mutex<Option<PageRenderer>>; MAX_RENDERERS],
+}
+
+/// Who has which slot, and the line for them.
+struct Turns {
+    /// Whether each slot is taken.
+    busy: [bool; MAX_RENDERERS],
+    /// The number the next caller to come is given.
+    next: u64,
+    /// The number of the caller that takes the next free slot. Callers take slots in the order of
+    /// their numbers, so one that arrives later cannot take a slot from under one that waits.
+    serving: u64,
+}
+
+impl Turns {
+    /// Whether a caller is waiting for a slot.
+    fn has_waiters(&self) -> bool {
+        self.serving != self.next
+    }
+}
+
+/// A slot taken from a pool: its renderer is the holder's until this is dropped, which gives the
+/// slot back and wakes the caller whose turn is next.
+pub(crate) struct Claim<'pool> {
+    pool: &'pool RendererPool,
+    index: usize,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        let mut turns = self.pool.turns();
+        turns.busy[self.index] = false;
+        let wake = turns.has_waiters();
+        drop(turns);
+        if wake {
+            self.pool.changed.notify_all();
+        }
+    }
 }
 
 impl RendererPool {
@@ -154,6 +213,12 @@ impl RendererPool {
                 password: password.map(Arc::from),
                 ..RenderConfig::default()
             },
+            turns: Mutex::new(Turns {
+                busy: [false; MAX_RENDERERS],
+                next: 0,
+                serving: 0,
+            }),
+            changed: Condvar::new(),
             slots: std::array::from_fn(|_| Mutex::new(None)),
         }
     }
@@ -164,34 +229,69 @@ impl RendererPool {
     }
 
     /// Draws `request` with an idle renderer, building one first when every renderer is busy and
-    /// the pool has room; otherwise waits for the first one to be free.
+    /// the pool has room; otherwise waits for whichever renderer is free first.
     pub(crate) fn render(&self, request: RenderRequest) -> RenderedPage {
-        let mut slot = self.claim();
-        slot.get_or_insert_with(|| PageRenderer::new(self.bytes.clone(), self.config.clone()))
-            .render(request)
+        let claim = self.claim();
+        // A caller panicked while drawing and the panic was already reported. The renderer itself
+        // never panics on a bad page, so what it holds is still sound.
+        let mut slot = self.slots[claim.index]
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let drawn = slot
+            .get_or_insert_with(|| PageRenderer::new(self.bytes.clone(), self.config.clone()))
+            .render(request);
+        // The renderer before the slot, so the next caller never finds the renderer still locked.
+        drop(slot);
+        drop(claim);
+        drawn
     }
 
-    /// The first slot that nobody is using; when all are in use, waits for the first one.
-    fn claim(&self) -> MutexGuard<'_, Option<PageRenderer>> {
-        for slot in &self.slots {
-            match slot.try_lock() {
-                Ok(guard) => return guard,
-                // A caller panicked while drawing and the panic was already reported. The renderer
-                // itself never panics on a bad page, so what it holds is still sound.
-                Err(TryLockError::Poisoned(poisoned)) => return poisoned.into_inner(),
-                Err(TryLockError::WouldBlock) => {}
+    /// Takes the lowest free slot. When every slot is taken, or callers that came earlier are still
+    /// waiting, waits in line: for whichever slot is let go of first, once the callers ahead have
+    /// been served.
+    fn claim(&self) -> Claim<'_> {
+        let mut turns = self.turns();
+        let ticket = turns.next;
+        turns.next = turns.next.wrapping_add(1);
+        loop {
+            if turns.serving == ticket
+                && let Some(index) = turns.busy.iter().position(|busy| !busy)
+            {
+                turns.busy[index] = true;
+                turns.serving = turns.serving.wrapping_add(1);
+                // The caller next in line may find another slot free.
+                let wake = turns.has_waiters();
+                drop(turns);
+                if wake {
+                    self.changed.notify_all();
+                }
+                return Claim { pool: self, index };
             }
+            turns = self
+                .changed
+                .wait(turns)
+                .unwrap_or_else(PoisonError::into_inner);
         }
-        self.slots[0].lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Holds every slot, as long-running draws would, so tests can see what waits on the pool.
+    /// The line for the slots. Its lock is only held to read and set a few numbers, so it is never
+    /// poisoned in practice; if it were, the numbers are still whole.
+    fn turns(&self) -> MutexGuard<'_, Turns> {
+        self.turns.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Holds every slot, as long-running draws would, so tests can see what waits on the pool. The
+    /// claims come in the order of their slots.
     #[cfg(test)]
-    pub(crate) fn hold_all(&self) -> Vec<MutexGuard<'_, Option<PageRenderer>>> {
-        self.slots
-            .iter()
-            .map(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner))
-            .collect()
+    pub(crate) fn hold_all(&self) -> Vec<Claim<'_>> {
+        (0..MAX_RENDERERS).map(|_| self.claim()).collect()
+    }
+
+    /// How many callers are waiting for a slot.
+    #[cfg(test)]
+    fn waiting(&self) -> u64 {
+        let turns = self.turns();
+        turns.next.wrapping_sub(turns.serving)
     }
 
     /// How many renderers have been built.
@@ -304,6 +404,37 @@ mod tests {
         }
         assert!(pixel_request(0, f64::from(f32::MIN_POSITIVE), None).is_ok());
         assert!(pixel_request(0, f64::from(f32::MAX), None).is_ok());
+    }
+
+    #[test]
+    fn a_tile_scale_must_be_within_the_range_the_engine_draws_tiles_at() {
+        let low = f64::from(MIN_TILE_SCALE);
+        let high = f64::from(MAX_TILE_SCALE);
+        for scale in [
+            low / 2.0,
+            0.009,
+            high + 0.5,
+            f64::from(f32::MAX),
+            f64::NAN,
+            0.0,
+        ] {
+            let err = pixel_request(0, scale, rect(16, 16)).unwrap_err();
+            assert!(
+                matches!(&err, RenderError::Failed { message } if message == "invalid scale"),
+                "{scale}: {err:?}"
+            );
+        }
+        for scale in [low, 0.01, 1.0, high] {
+            let request = pixel_request(0, scale, rect(16, 16)).unwrap();
+            // What the engine is handed is a scale it does not change.
+            assert_eq!(
+                request.scale,
+                request.scale.clamp(MIN_TILE_SCALE, MAX_TILE_SCALE)
+            );
+        }
+        // A whole page may be drawn at a scale outside the range: the engine fits it to its limits.
+        assert!(pixel_request(0, low / 2.0, None).is_ok());
+        assert!(pixel_request(0, high * 2.0, None).is_ok());
     }
 
     #[test]
@@ -555,5 +686,147 @@ mod tests {
         waiter.join().unwrap();
         drop(second);
         assert_eq!(pool.built(), 0, "nothing was drawn, so nothing was built");
+    }
+
+    /// Starts a thread that takes a slot of `pool`, sends which one it got, and keeps it until it is
+    /// sent something (or the sender is dropped).
+    fn take_a_slot(pool: &Arc<RendererPool>) -> (mpsc::Receiver<usize>, mpsc::Sender<()>) {
+        let (took, taken) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let pool = pool.clone();
+        thread::spawn(move || {
+            let claim = pool.claim();
+            let _ = took.send(claim.index);
+            let _ = released.recv();
+        });
+        (taken, release)
+    }
+
+    /// Waits until `pool` has `count` callers in line, for at most ten seconds.
+    fn wait_for_waiting(pool: &RendererPool, count: u64) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while pool.waiting() != count {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{} callers waiting, not {count}",
+                pool.waiting()
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn with_the_first_renderer_busy_a_caller_takes_the_second_at_once() {
+        let pool = Arc::new(RendererPool::new(0, one_page(), None));
+        let first = pool.claim();
+        assert_eq!(first.index, 0, "the lowest free slot is taken");
+        let (taken, release) = take_a_slot(&pool);
+        assert_eq!(
+            taken
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the caller should not wait while the second slot is free"),
+            1
+        );
+        drop(release);
+        drop(first);
+    }
+
+    #[test]
+    fn a_caller_waiting_for_a_renderer_takes_whichever_is_let_go_of_first() {
+        let pool = Arc::new(RendererPool::new(0, one_page(), None));
+        let mut held = pool.hold_all();
+        assert_eq!(held.iter().map(|c| c.index).collect::<Vec<_>>(), [0, 1]);
+        let (taken, release) = take_a_slot(&pool);
+        assert!(
+            taken.recv_timeout(Duration::from_millis(200)).is_err(),
+            "with both renderers busy the caller has to wait"
+        );
+        // The second renderer is let go of; the first stays busy for the rest of the test.
+        drop(held.pop());
+        assert_eq!(
+            taken
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the caller should take the second renderer as soon as it is free"),
+            1
+        );
+        drop(release);
+        drop(held);
+    }
+
+    #[test]
+    fn callers_waiting_for_a_renderer_are_served_in_the_order_they_came() {
+        let pool = Arc::new(RendererPool::new(0, one_page(), None));
+        let mut held = pool.hold_all();
+        let (first_taken, first_release) = take_a_slot(&pool);
+        wait_for_waiting(&pool, 1);
+        let (second_taken, second_release) = take_a_slot(&pool);
+        wait_for_waiting(&pool, 2);
+
+        // One slot comes free: it is the first caller's, though both are woken.
+        drop(held.pop());
+        assert_eq!(
+            first_taken.recv_timeout(Duration::from_secs(10)).unwrap(),
+            1
+        );
+        assert!(
+            second_taken
+                .recv_timeout(Duration::from_millis(200))
+                .is_err(),
+            "the second caller waits for the next slot to come free"
+        );
+        // A caller that comes now gets in line behind the one that is waiting.
+        let (third_taken, third_release) = take_a_slot(&pool);
+        wait_for_waiting(&pool, 2);
+
+        drop(held.pop());
+        assert_eq!(
+            second_taken.recv_timeout(Duration::from_secs(10)).unwrap(),
+            0
+        );
+        assert!(
+            third_taken
+                .recv_timeout(Duration::from_millis(200))
+                .is_err()
+        );
+        drop(first_release);
+        assert_eq!(
+            third_taken.recv_timeout(Duration::from_secs(10)).unwrap(),
+            1
+        );
+        drop((second_release, third_release));
+        wait_for_waiting(&pool, 0);
+    }
+
+    #[test]
+    fn many_callers_at_once_are_all_answered_by_at_most_two_renderers() {
+        // Draws and text reads from several threads at once, as the tiles, the thumbnails and a
+        // search make them: every one is answered, the pool never builds more than two renderers,
+        // and every slot is given back.
+        let pool = Arc::new(RendererPool::new(0, several_lines(), None));
+        let threads: Vec<_> = (0..6)
+            .map(|n| {
+                let pool = pool.clone();
+                thread::spawn(move || {
+                    for round in 0..4 {
+                        let request = if (n + round) % 2 == 0 {
+                            draw_page_zero()
+                        } else {
+                            text_request(1).unwrap()
+                        };
+                        assert_eq!(
+                            pool.render(request).error,
+                            None,
+                            "thread {n}, round {round}"
+                        );
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(pool.waiting(), 0);
+        assert_eq!(pool.turns().busy, [false; MAX_RENDERERS]);
+        assert!((1..=MAX_RENDERERS).contains(&pool.built()));
     }
 }

@@ -1,7 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod fixtures;
-use editinpdf_core::{PdfDocument, RenderError, RenderedTile, TileRect};
+use editinpdf_core::{
+    PdfDocument, RenderError, RenderedTile, TileRect, max_tile_scale, min_tile_scale,
+};
 use pdfcraft_engine::Algorithm;
 
 /// Pixels that are fully opaque and visibly dark: what black text on a white page leaves.
@@ -337,6 +339,40 @@ fn a_scale_that_is_not_a_positive_number_is_rejected() {
                 "scale {scale} rect {rect:?}: {err:?}"
             );
         }
+    }
+}
+
+#[test]
+fn a_tile_scale_outside_the_engines_range_is_rejected_not_clamped() {
+    let doc = PdfDocument::open(fixtures::text_doc(&["x"]), None).unwrap();
+    let tile = Some(TileRect {
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+    });
+    // The engine draws a tile at 0.01 to 400 device pixels per point. Asked for another scale, it would
+    // draw at the nearest of those instead: a picture of another part of the page than the one asked
+    // for, at another size. So the call fails instead.
+    for scale in [0.009, 0.001, 1e-30, 400.5, 1_000.0, f64::from(f32::MAX)] {
+        let err = doc.render_tile(0, scale, tile).unwrap_err();
+        assert!(
+            matches!(&err, RenderError::Failed { message } if message == "invalid scale"),
+            "scale {scale}: {err:?}"
+        );
+    }
+    // The range itself is fine, ends included, and it is the one the apps are told.
+    assert_eq!(
+        (min_tile_scale(), max_tile_scale()),
+        (f64::from(0.01_f32), 400.0)
+    );
+    for scale in [min_tile_scale(), 0.01, 1.0, 399.9, max_tile_scale()] {
+        let drawn = doc.render_tile(0, scale, tile).unwrap();
+        assert_eq!((drawn.width, drawn.height), (16, 16), "scale {scale}");
+    }
+    // A whole-page drawing has no such range: the engine fits it within its size limits instead.
+    for scale in [0.001, 1_000.0] {
+        assert!(doc.render_tile(0, scale, None).is_ok(), "scale {scale}");
     }
 }
 

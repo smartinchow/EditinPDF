@@ -209,18 +209,20 @@ impl PdfDocument {
     /// where it is white.
     ///
     /// Tiles are the way to zoom in: one never costs more than 4096 x 4096 pixels, whatever the page
-    /// and the scale. A whole-page drawing is limited by the engine to 8192 pixels on a side and 64
-    /// million pixels in all; beyond that it comes back reduced to fit (its width and height say by
-    /// how much) instead of failing. For a tile, a scale outside 0.01 through 400 is clamped to it.
+    /// and the scale. A tile is drawn at a scale from 0.01 through 400 (`min_tile_scale` and
+    /// `max_tile_scale`). A whole-page drawing has no such range, but is limited by the engine to 8192
+    /// pixels on a side and 64 million pixels in all; beyond that it comes back reduced to fit (its
+    /// width and height say by how much) instead of failing.
     ///
     /// Safe to call from several threads at once: up to two pages of one document are drawn at the
     /// same time (reading a page's text takes one of the two places while it lasts), further calls
-    /// wait their turn, and the document's other methods, such as `page_count` and `page_info`,
-    /// never wait for a drawing.
+    /// wait their turn, in the order they came, for whichever place is free first, and the
+    /// document's other methods, such as `page_count` and `page_info`, never wait for a drawing.
     ///
     /// Fails with `PageOutOfRange` for a page the document does not have, with `TileTooLarge` when
     /// `rect` is wider or taller than 4096 pixels or has no area (a zero width or height), and with
-    /// `Failed` for a scale that is not a positive, finite number or a page the engine cannot draw.
+    /// `Failed` for a scale that is not a positive, finite number, a tile's scale outside 0.01
+    /// through 400, or a page the engine cannot draw.
     pub fn render_tile(
         &self,
         page: u32,
