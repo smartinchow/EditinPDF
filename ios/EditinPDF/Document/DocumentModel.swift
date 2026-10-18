@@ -3,7 +3,11 @@ import Foundation
 import Observation
 
 /// What SwiftUI shows for one document: whether it is open, locked behind a password or could not
-/// be read; its pages; which page the reader is on; its search; and the text selected in it.
+/// be read; its pages; which page the reader is on; its search; and the text selected in it. And
+/// the changes made to it: every edit, undo and redo goes through one serial queue (`EditQueue`),
+/// off the main actor, and is registered with the scene's `UndoManager`; after each one the
+/// document's state (pages, annotations, form fields, what may be edited) is read again, off the
+/// main actor too, and published here with the revision it belongs to.
 /// Everything lives on the main actor, since views read it directly.
 @MainActor
 @Observable
@@ -35,6 +39,35 @@ final class DocumentModel {
     /// How many pages the document has; 0 unless it is open.
     var pageCount: Int { pages.count }
 
+    // MARK: Editing state
+
+    /// The engine's revision of the document that everything here was read from. Every change,
+    /// undo and redo moves it on; caches of what the pages look like key off it.
+    private(set) var revision: UInt64 = 0
+    /// What may be changed in the document; nil unless it is open (and until its state is first
+    /// read, a moment after it opens).
+    private(set) var capabilities: EditCapabilities?
+    /// The document's annotations, by the page (counting from 0) they are on, in the engine's order.
+    private(set) var annotationsByPage: [Int: [AnnotationInfo]] = [:]
+    /// The document's form fields.
+    private(set) var formFields: [FormField] = []
+    /// What the last change, undo or redo did: its revision, the pages it touched (nil: any of them
+    /// may have moved), and whether the number of pages, or a page's size or rotation, changed.
+    private(set) var lastChange: PageChange?
+    /// A change that was not made, for the screen to show as an alert; the screen clears it.
+    var failure: EditFailure?
+    /// The annotation the reader has picked. Every change clears it: its index may name another
+    /// annotation afterwards.
+    var selectedAnnotation: AnnotationRef?
+    /// The scene's undo manager, which the screen hands over (`@Environment(\.undoManager)`). With
+    /// none, changes are still made, and cannot be undone.
+    @ObservationIgnored weak var undoManager: UndoManager?
+    /// Whether a change, undo or redo is waiting or running.
+    var isApplying: Bool { queue.isBusy }
+
+    /// Where every change, undo, redo and reading of the document's state runs, one at a time.
+    private let queue = EditQueue()
+
     /// Opens `bytes` with no password. Blocks for as long as the engine takes, so the document
     /// scene does not use it: that opens the file off the main actor and calls `init(outcome:)`.
     convenience init(bytes: Data) {
@@ -52,6 +85,7 @@ final class DocumentModel {
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
         if let document = document() { engine.adopt(document) }
+        loadState()
     }
 
     /// Tries `password` on a locked document, and says whether the document is open afterwards. A
@@ -77,6 +111,7 @@ final class DocumentModel {
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
         if let document = document() { engine.adopt(document) }
+        loadState()
     }
 
     /// The open document, to draw and search; nil unless it is open.
@@ -94,5 +129,204 @@ final class DocumentModel {
         case .failed(let detail):
             return (.failed(detail: detail), [])
         }
+    }
+
+    // MARK: Changing the document
+
+    /// Hands `edits` to the engine, after every change already handed over, as one change named
+    /// `actionName` that touches `pages` (nil: it may move any page). One edit is applied as it is;
+    /// several are applied together, all or nothing, as one step of the engine's history.
+    ///
+    /// The undo manager's entry is registered here, at once, before the engine is asked, so the
+    /// undo manager and the engine's history stay in the same order however fast the reader taps
+    /// (see `registerStep`). The edit is checked against the revision the model has now, the one
+    /// the reader was looking at: if the document has changed by the time the edit runs, the engine
+    /// refuses it (`Stale`) instead of changing the wrong page. The task says whether the change
+    /// was made; when it was not, `failure` says why.
+    @discardableResult
+    func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?) -> Task<Bool, Never> {
+        guard !edits.isEmpty else { return Task { false } }
+        let token = EditToken()
+        registerStep(.undo, token: token, named: actionName, touching: pages)
+        let base = revision
+        return queue.submit { [weak self] in
+            await self?.apply(edits, label: actionName, base: base, token: token, touching: pages) ?? false
+        }
+    }
+
+    /// Makes `edit` (see `enqueue`) and says whether it was made.
+    @discardableResult
+    func perform(_ edit: Edit, named actionName: String, touching pages: Set<Int>?) async -> Bool {
+        await enqueue([edit], named: actionName, touching: pages).value
+    }
+
+    /// Makes `edits` as one change (see `enqueue`) and says whether it was made.
+    @discardableResult
+    func performAll(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?) async -> Bool {
+        await enqueue(edits, named: actionName, touching: pages).value
+    }
+
+    /// Takes back the last change: the toolbar's Undo. Through the undo manager, so its stack and
+    /// the engine's history move together.
+    func undo() {
+        undoManager?.undo()
+    }
+
+    /// Makes again the change last taken back: the toolbar's Redo.
+    func redo() {
+        undoManager?.redo()
+    }
+
+    /// Returns once every change, undo and redo handed over so far has run and been published. For
+    /// tests.
+    func settle() async {
+        await queue.settle()
+    }
+
+    /// Which way an undo manager entry moves the engine's history.
+    private enum Step: Sendable {
+        case undo, redo
+
+        var opposite: Step { self == .undo ? .redo : .undo }
+    }
+
+    /// Registers the undo manager entry that moves the change of `token` one `step`. Running the
+    /// entry registers the opposite one at once (so an undo can be redone, and that redo undone),
+    /// then hands the engine's undo or redo to the queue, behind everything handed over before it:
+    /// an undo tapped while its edit is still waiting or running undoes that edit once it is made.
+    /// Whether the change is in the engine's history is only known then, so the queued step looks
+    /// at `token.applied` when it runs, and does nothing for a change the engine refused.
+    private func registerStep(_ step: Step, token: EditToken, named actionName: String, touching pages: Set<Int>?) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { model in
+            model.registerStep(step.opposite, token: token, named: actionName, touching: pages)
+            model.queue.submit { [weak model] in
+                await model?.move(step, token: token, touching: pages)
+            }
+        }
+        undoManager.setActionName(actionName)
+    }
+
+    /// A queued edit: asks the engine for it off the main actor and, once made, publishes the
+    /// document's new state.
+    private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken, touching pages: Set<Int>?) async -> Bool {
+        guard let document = document() else { return false }
+        let result = await EditQueue.offMain { () throws -> EngineState in
+            if edits.count == 1, let edit = edits.first {
+                _ = try document.apply(edit: edit, baseRevision: base)
+            } else {
+                _ = try document.applyAll(label: label, edits: edits, baseRevision: base)
+            }
+            return EngineState.read(document)
+        }
+        switch result {
+        case .success(let state):
+            token.applied = true
+            refresh(state, touching: pages)
+            return true
+        case .failure(let error):
+            failure = EditFailure(error)
+            await refreshIfMoved(document)
+            return false
+        }
+    }
+
+    /// A queued undo or redo of the change of `token`: nothing for a change the engine refused.
+    /// One the engine cannot make means its history and the undo manager's stack no longer match,
+    /// so the stack is emptied, and the reader told.
+    private func move(_ step: Step, token: EditToken, touching pages: Set<Int>?) async {
+        guard token.applied, let document = document() else { return }
+        let result = await EditQueue.offMain { () throws -> EngineState in
+            switch step {
+            case .undo: _ = try document.undo()
+            case .redo: _ = try document.redo()
+            }
+            return EngineState.read(document)
+        }
+        switch result {
+        case .success(let state):
+            refresh(state, touching: pages)
+        case .failure(let error):
+            failure = EditFailure(error)
+            undoManager?.removeAllActions(withTarget: self)
+            await refreshIfMoved(document)
+        }
+    }
+
+    /// After a refused change: an undo, a redo or a change that failed half way can still have moved
+    /// the revision on, and then the document is read again.
+    private func refreshIfMoved(_ document: PdfDocument) async {
+        guard case .success(let state) = await EditQueue.offMain({ EngineState.read(document) }),
+              state.revision != revision else { return }
+        refresh(state, touching: nil)
+    }
+
+    /// Publishes the document as it is after a change, undo or redo: its pages, with the current
+    /// page kept on one of them; nothing selected (an index into the old pages or annotations may
+    /// name something else now); its annotations, fields and capabilities; the search run again;
+    /// and what changed.
+    private func refresh(_ state: EngineState, touching pagesTouched: Set<Int>?) {
+        let geometryChanged = state.pages.count != pages.count
+            || zip(state.pages, pages).contains { new, old in
+                new.widthPt != old.widthPt || new.heightPt != old.heightPt || new.rotationDegrees != old.rotationDegrees
+            }
+        pages = state.pages
+        currentPage = min(max(currentPage, 0), max(pages.count - 1, 0))
+        selection?.clear()
+        selectedAnnotation = nil
+        adopt(state)
+        search?.documentDidChange()
+        lastChange = PageChange(revision: state.revision, pages: pagesTouched, geometryChanged: geometryChanged)
+    }
+
+    /// Takes the revision, annotations, fields and capabilities of `state`.
+    private func adopt(_ state: EngineState) {
+        revision = state.revision
+        annotationsByPage = Dictionary(grouping: state.annotations) { Int($0.page) }
+        formFields = state.formFields
+        capabilities = state.capabilities
+    }
+
+    /// Reads the state of a document that has just opened, off the main actor, through the queue,
+    /// so a change handed over meanwhile comes after it.
+    private func loadState() {
+        guard let document = document() else { return }
+        queue.submit { [weak self] in
+            guard case .success(let state) = await EditQueue.offMain({ EngineState.read(document) }) else { return }
+            self?.adopt(state)
+        }
+    }
+}
+
+/// What one change, undo or redo did, for the views that redraw pages: its revision, the pages it
+/// touched (nil when any page may have moved), and whether the number of pages, or a page's size or
+/// rotation, changed.
+struct PageChange: Equatable {
+    let revision: UInt64
+    let pages: Set<Int>?
+    let geometryChanged: Bool
+}
+
+/// One annotation of the document: its page, counting from 0, and its index among that page's.
+struct AnnotationRef: Hashable {
+    let page: Int
+    let index: UInt32
+}
+
+/// Everything the model shows that the engine has to be asked for, read in one go off the main
+/// actor after each change.
+private struct EngineState: Sendable {
+    let revision: UInt64
+    let pages: [PageInfo]
+    let annotations: [AnnotationInfo]
+    let formFields: [FormField]
+    let capabilities: EditCapabilities
+
+    static func read(_ document: PdfDocument) -> EngineState {
+        EngineState(revision: document.revision(),
+                    pages: (0..<document.pageCount()).compactMap { document.pageInfo(page: $0) },
+                    annotations: document.annotations(),
+                    formFields: document.formFields(),
+                    capabilities: document.capabilities())
     }
 }

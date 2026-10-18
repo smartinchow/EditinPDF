@@ -1,5 +1,7 @@
+import EditinPDFCore
 import Foundation
 import XCTest
+@testable import EditinPDF
 
 /// Helpers shared by the editing tests.
 
@@ -11,3 +13,24 @@ func fixtureData(_ name: String) throws -> Data {
 
 /// Names the test bundle for `Bundle(for:)`.
 private final class FixtureBundleMarker {}
+
+/// A model of `<fixture>.pdf`, opened, with a fresh `UndoManager` of its own wired in, as the
+/// document scene's would be. The caller keeps the undo manager: the model only holds it weakly.
+@MainActor
+func makeModel(fixture: String = "sample") throws -> (DocumentModel, UndoManager) {
+    let model = DocumentModel(bytes: try fixtureData(fixture))
+    guard case .open = model.state else { throw FixtureError.notOpen(fixture) }
+    let undoManager = UndoManager()
+    model.undoManager = undoManager
+    return (model, undoManager)
+}
+
+/// The middle of the first glyph on page 0 of the model's document, in view space.
+@MainActor
+func firstGlyphCenter(_ m: DocumentModel) throws -> CGPoint {
+    let document = try XCTUnwrap(m.document())
+    let glyph = try XCTUnwrap(document.pageText(page: 0).glyphs.first, "page 0 has no text")
+    return CGPoint(x: glyph.rect.x + glyph.rect.width / 2, y: glyph.rect.y + glyph.rect.height / 2)
+}
+
+enum FixtureError: Error { case notOpen(String) }

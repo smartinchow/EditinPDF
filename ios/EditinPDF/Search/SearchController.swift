@@ -147,6 +147,23 @@ final class SearchController {
 
     // MARK: Searching
 
+    /// The document has changed: the hits may name pages and places that have moved, so they go at
+    /// once, and the words typed are looked for again straight away (no debounce: the reader did
+    /// not type). A search of the old document still in the engine is dropped when it returns.
+    func documentDidChange() {
+        let words = requested
+        generation += 1
+        pending?.cancel()
+        pending = nil
+        apply([])
+        guard !words.isEmpty else { return }
+        isSearching = true
+        let generation = generation
+        pending = Task { [weak self] in
+            await self?.find(words, generation: generation)
+        }
+    }
+
     private func queryDidChange() {
         let words = query.trimmingCharacters(in: .whitespacesAndNewlines)
         // Only the blanks at the ends changed: the same words, so the same hits, and the reader keeps

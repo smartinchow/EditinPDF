@@ -180,4 +180,101 @@ enum Strings {
     static var saveFailed: String {
         String(localized: "The changes could not be saved.", comment: "Reason shown when the edits to a PDF could not be written to its file")
     }
+
+    // MARK: Editing
+
+    /// The toolbar button that takes back the last change.
+    static var undo: String {
+        String(localized: "Undo", comment: "Toolbar button that takes back the last change to the PDF")
+    }
+
+    /// The toolbar button that makes again the change last taken back.
+    static var redo: String {
+        String(localized: "Redo", comment: "Toolbar button that makes again the change last taken back")
+    }
+
+    /// The title of the alert about a change that was not made.
+    static var editFailed: String {
+        String(localized: "That change could not be made.", comment: "Title of the alert shown when a change to the PDF was refused or failed")
+    }
+
+    /// Why a change was not made: the document's settings do not allow it.
+    static var editNotAllowed: String {
+        String(localized: "This document doesn't allow that change.", comment: "Shown when the PDF's security settings or format do not allow the change")
+    }
+
+    /// Why a delete was not made: it would have removed every page.
+    static var cannotDeleteAllPages: String {
+        String(localized: "A document needs at least one page.", comment: "Shown when deleting the chosen pages would leave the PDF without a page")
+    }
+
+    /// Why a change was not made: it was meant for the document as it was before another change.
+    static var documentChangedTryAgain: String {
+        String(localized: "The document changed. Try again.", comment: "Shown when a change was made for an older state of the PDF and was refused")
+    }
+
+    /// Why an insert was not made: the PDF to take pages from needs a password.
+    static var insertSourceLocked: String {
+        String(localized: "That PDF is password-protected. Remove its password and try again.", comment: "Shown when the PDF to take pages from needs a password")
+    }
+
+    /// Why an insert was not made: the file to take pages from is not a readable PDF.
+    static var insertSourceUnreadable: String {
+        String(localized: "That file could not be read as a PDF.", comment: "Shown when the file to take pages from is not a readable PDF")
+    }
+
+    /// Why an insert was not made: the PDF to take pages from does not allow its pages to be copied.
+    static var insertSourceNotPermitted: String {
+        String(localized: "That PDF doesn't allow its pages to be copied.", comment: "Shown when the PDF to take pages from does not allow copying its pages")
+    }
+
+    /// The name Undo and Redo give a rotation.
+    static var actionRotate: String {
+        String(localized: "Rotate Pages", comment: "Name of the change in Undo and Redo: pages were turned")
+    }
+
+    /// The name Undo and Redo give a page delete.
+    static var actionDelete: String {
+        String(localized: "Delete Pages", comment: "Name of the change in Undo and Redo: pages were removed")
+    }
+
+    /// The name Undo and Redo give a page move.
+    static var actionMove: String {
+        String(localized: "Move Pages", comment: "Name of the change in Undo and Redo: pages were reordered")
+    }
+
+    /// The name Undo and Redo give an inserted blank page.
+    static var actionInsertBlank: String {
+        String(localized: "Insert Blank Page", comment: "Name of the change in Undo and Redo: an empty page was added")
+    }
+
+    /// The name Undo and Redo give pages inserted from another file.
+    static var actionInsertFile: String {
+        String(localized: "Insert Pages", comment: "Name of the change in Undo and Redo: pages from another PDF were added")
+    }
+
+    /// The name Undo and Redo give added markup.
+    static var actionAddAnnotation: String {
+        String(localized: "Add Markup", comment: "Name of the change in Undo and Redo: a highlight, drawing, note or shape was added")
+    }
+
+    /// The name Undo and Redo give deleted markup.
+    static var actionDeleteAnnotation: String {
+        String(localized: "Delete Markup", comment: "Name of the change in Undo and Redo: markup was removed")
+    }
+
+    /// The name Undo and Redo give moved markup.
+    static var actionMoveAnnotation: String {
+        String(localized: "Move Markup", comment: "Name of the change in Undo and Redo: markup was moved")
+    }
+
+    /// The name Undo and Redo give edited markup.
+    static var actionEditAnnotation: String {
+        String(localized: "Edit Markup", comment: "Name of the change in Undo and Redo: markup's text or color was changed")
+    }
+
+    /// The name Undo and Redo give a filled-in form field.
+    static var actionFillField: String {
+        String(localized: "Fill Form", comment: "Name of the change in Undo and Redo: a form field was filled in")
+    }
 }

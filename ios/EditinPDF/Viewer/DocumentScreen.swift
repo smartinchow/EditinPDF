@@ -96,6 +96,14 @@ struct DocumentScreen: View {
         )
     }
 
+    /// Whether the alert about a change that was not made is up: while the model has one to show.
+    private var showsEditFailure: Binding<Bool> {
+        Binding(
+            get: { model.failure != nil },
+            set: { isShown in if !isShown { model.failure = nil } }
+        )
+    }
+
     /// The engine's explanation of why the document could not be opened, if it gave one.
     private var failureDetail: String? {
         if case .failed(let detail) = model.state { detail } else { nil }
@@ -130,6 +138,14 @@ struct DocumentScreen: View {
                 }
                 .sheet(item: $thumbnailsSheet) { presentation in
                     ThumbnailsSheet(model: model, store: presentation.store, scrollTarget: $scrollTarget)
+                }
+                // A change to the document makes every picture the store has drawn out of date (and its
+                // pages, too): the next thumbnails are drawn afresh from the new revision.
+                .onChange(of: model.revision) { thumbnails = nil }
+                // A change that was not made says why. No actions: the system gives the alert its OK.
+                .alert(model.failure?.title ?? "", isPresented: showsEditFailure, presenting: model.failure) { _ in
+                } message: { failure in
+                    if !failure.message.isEmpty { Text(failure.message) }
                 }
                 .sheet(isPresented: $showsSearch) {
                     if let search = model.search {

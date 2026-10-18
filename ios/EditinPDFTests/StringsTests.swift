@@ -97,4 +97,26 @@ final class StringsTests: XCTestCase {
     func testTheSaveFailureIsOurSentence() {
         XCTAssertEqual(Strings.saveFailed, "The changes could not be saved.")
     }
+
+    func testTheEditingSentencesAndActionNames() {
+        XCTAssertEqual(Strings.undo, "Undo")
+        XCTAssertEqual(Strings.redo, "Redo")
+        XCTAssertEqual(Strings.editFailed, "That change could not be made.")
+        XCTAssertEqual(Strings.editNotAllowed, "This document doesn't allow that change.")
+        XCTAssertEqual(Strings.cannotDeleteAllPages, "A document needs at least one page.")
+        XCTAssertEqual(Strings.documentChangedTryAgain, "The document changed. Try again.")
+        XCTAssertEqual(Strings.insertSourceLocked, "That PDF is password-protected. Remove its password and try again.")
+        XCTAssertEqual(Strings.insertSourceUnreadable, "That file could not be read as a PDF.")
+        XCTAssertEqual(Strings.insertSourceNotPermitted, "That PDF doesn't allow its pages to be copied.")
+        XCTAssertEqual(Strings.actionRotate, "Rotate Pages")
+        XCTAssertEqual(Strings.actionDelete, "Delete Pages")
+        XCTAssertEqual(Strings.actionMove, "Move Pages")
+        XCTAssertEqual(Strings.actionInsertBlank, "Insert Blank Page")
+        XCTAssertEqual(Strings.actionInsertFile, "Insert Pages")
+        XCTAssertEqual(Strings.actionAddAnnotation, "Add Markup")
+        XCTAssertEqual(Strings.actionDeleteAnnotation, "Delete Markup")
+        XCTAssertEqual(Strings.actionMoveAnnotation, "Move Markup")
+        XCTAssertEqual(Strings.actionEditAnnotation, "Edit Markup")
+        XCTAssertEqual(Strings.actionFillField, "Fill Form")
+    }
 }

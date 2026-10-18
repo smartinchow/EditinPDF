@@ -161,6 +161,31 @@ final class SearchControllerTests: XCTestCase {
         XCTAssertEqual(probe.queries, ["hel"])
     }
 
+    /// After an edit the hits may point at pages that moved: they are dropped at once and the same
+    /// words are looked for again, with no debounce.
+    func testADocumentChangeSearchesAgainForTheSameWords() async {
+        let probe = SearchProbe(counts: ["hel": 3])
+        let controller = makeController(probe)
+        controller.query = "hel"
+        let found = await eventually { controller.hits.count == 3 }
+        XCTAssertTrue(found)
+        controller.documentDidChange()
+        XCTAssertTrue(controller.hits.isEmpty, "hits of the old revision are dropped at once")
+        XCTAssertTrue(controller.isSearching)
+        let again = await eventually { controller.hits.count == 3 }
+        XCTAssertTrue(again)
+        XCTAssertEqual(probe.queries, ["hel", "hel"])
+    }
+
+    func testADocumentChangeWithNoQueryAsksNothing() async {
+        let probe = SearchProbe()
+        let controller = makeController(probe)
+        controller.documentDidChange()
+        await letTheMainActorCatchUp()
+        XCTAssertEqual(probe.queries, [])
+        XCTAssertFalse(controller.isSearching)
+    }
+
     /// A pause as long as the debounce is the reader stopping: what is typed before it is searched for.
     func testAPauseAsLongAsTheDebounceStartsASearch() async {
         let probe = SearchProbe(counts: ["he": 1, "hel": 2])
