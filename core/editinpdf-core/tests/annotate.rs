@@ -8,18 +8,20 @@ use editinpdf_core::{
 };
 use support::{RED, YELLOW, assert_rect_close, reopen};
 
-/// The plain page, the page turned a quarter, and the cropped page turned three quarters.
-fn every_orientation() -> [Vec<u8>; 3] {
+/// The plain page, the page turned a quarter, the page turned upside down, and the cropped page
+/// turned three quarters.
+fn every_orientation() -> [Vec<u8>; 4] {
     [
         fixtures::text_doc(&["hello world"]),
         fixtures::rotated_doc("hello world"),
+        fixtures::upside_down_doc("hello world"),
         fixtures::cropped_rotated_doc("hello world"),
     ]
 }
 
 #[test]
 fn highlight_on_rotated_page_comes_back_where_drawn() {
-    for (bytes, rotation) in every_orientation().into_iter().zip([0, 90, 270]) {
+    for (bytes, rotation) in every_orientation().into_iter().zip([0, 90, 180, 270]) {
         let doc = PdfDocument::open(bytes, None).unwrap();
         assert_eq!(doc.page_info(0).unwrap().rotation_degrees, rotation);
         let sel = doc.select_range(0, 0, 5).unwrap(); // "hello"
@@ -300,4 +302,59 @@ fn a_step_cannot_both_change_pages_and_place_an_annotation() {
     );
     assert!(mixed.is_ok(), "{mixed:?}");
     assert!(doc.annotations().is_empty());
+}
+
+#[test]
+fn a_step_cannot_both_renumber_pages_and_address_a_comment() {
+    let doc = PdfDocument::open(fixtures::text_doc(&["one", "two"]), None).unwrap();
+    for page in [0, 1] {
+        doc.apply(
+            Edit::AddNote {
+                page,
+                at: Point { x: 50.0, y: 50.0 },
+                contents: String::new(),
+                color: YELLOW,
+            },
+            u64::from(page),
+        )
+        .unwrap();
+    }
+    let renumbering = [
+        Edit::DeletePages { pages: vec![0] },
+        Edit::MovePages {
+            pages: vec![1],
+            to: 0,
+        },
+        Edit::InsertBlankPage {
+            at: 0,
+            width_pt: 100.0,
+            height_pt: 100.0,
+        },
+        Edit::InsertPagesFrom {
+            name: "x.pdf".into(),
+            bytes: fixtures::text_doc(&["x"]),
+            pages: None,
+            at: 0,
+        },
+    ];
+    let addressing = [
+        Edit::DeleteAnnotation { page: 0, index: 0 },
+        Edit::SetAnnotationContents {
+            page: 0,
+            index: 0,
+            contents: "x".into(),
+        },
+    ];
+    for pages in &renumbering {
+        for comment in &addressing {
+            let result = doc.apply_all("x".into(), vec![pages.clone(), comment.clone()], 2);
+            assert!(
+                matches!(result, Err(EditError::Invalid { .. })),
+                "{pages:?} + {comment:?}: {result:?}"
+            );
+        }
+    }
+    assert_eq!(doc.revision(), 2, "nothing changed");
+    assert_eq!(doc.page_count(), 2);
+    assert_eq!(doc.annotations().len(), 2);
 }

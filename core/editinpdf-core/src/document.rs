@@ -480,7 +480,10 @@ impl PdfDocument {
     ///
     /// Positions on a page are read against the pages as they are before the step, so a step that
     /// changes the pages (turns, deletes, moves or inserts) cannot also carry a change with a
-    /// position: that is refused as `Invalid`. Otherwise the errors are those of `apply`.
+    /// position: that is refused as `Invalid`. Likewise a step that deletes, moves or inserts pages
+    /// cannot also delete a comment or change its text, which address the comment by its page as it
+    /// is before the step (turning pages keeps their numbers, so that mix is allowed). Otherwise the
+    /// errors are those of `apply`.
     pub fn apply_all(
         &self,
         label: String,
@@ -490,6 +493,13 @@ impl PdfDocument {
         if edits.iter().any(Edit::is_page_structure) && edits.iter().any(Edit::has_geometry) {
             return Err(EditError::Invalid {
                 message: "page changes and annotation changes can't be combined in one step"
+                    .to_owned(),
+            });
+        }
+        if edits.iter().any(Edit::renumbers_pages) && edits.iter().any(Edit::addresses_annotation) {
+            return Err(EditError::Invalid {
+                message: "deleting, moving or inserting pages and changing comments can't be \
+                          combined in one step"
                     .to_owned(),
             });
         }

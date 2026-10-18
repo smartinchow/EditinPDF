@@ -133,7 +133,12 @@ pub enum Edit {
         color: RgbColor,
     },
     /// Deletes the comment at `index` in the page's list (`AnnotationInfo.index`), with its
-    /// replies.
+    /// replies and pop-up.
+    ///
+    /// Deleting a comment moves the ones after it on the page down the list, and the engine also
+    /// takes out its pop-up and replies, which have places of their own. So when one `apply_all`
+    /// deletes several comments on a page, put the deletes in order of highest `index` first, so
+    /// that each still addresses the comment it was meant for.
     DeleteAnnotation { page: u32, index: u32 },
     /// Changes the text of the comment at `index` in the page's list (`AnnotationInfo.index`).
     SetAnnotationContents {
@@ -293,6 +298,39 @@ impl Edit {
             | Self::AddNote { .. }
             | Self::DeleteAnnotation { .. }
             | Self::SetAnnotationContents { .. } => false,
+        }
+    }
+
+    /// Whether the edit changes which page an index stands for (deleting, moving or inserting
+    /// pages; turning one leaves the numbering as it was).
+    pub(crate) fn renumbers_pages(&self) -> bool {
+        match self {
+            Self::DeletePages { .. }
+            | Self::MovePages { .. }
+            | Self::InsertBlankPage { .. }
+            | Self::InsertPagesFrom { .. } => true,
+            Self::RotatePages { .. }
+            | Self::SetInfo { .. }
+            | Self::AddTextMarkup { .. }
+            | Self::AddNote { .. }
+            | Self::DeleteAnnotation { .. }
+            | Self::SetAnnotationContents { .. } => false,
+        }
+    }
+
+    /// Whether the edit addresses a comment already on a page by its page and its place in that
+    /// page's list, which are read as they are before the step.
+    pub(crate) fn addresses_annotation(&self) -> bool {
+        match self {
+            Self::DeleteAnnotation { .. } | Self::SetAnnotationContents { .. } => true,
+            Self::RotatePages { .. }
+            | Self::DeletePages { .. }
+            | Self::MovePages { .. }
+            | Self::InsertBlankPage { .. }
+            | Self::SetInfo { .. }
+            | Self::InsertPagesFrom { .. }
+            | Self::AddTextMarkup { .. }
+            | Self::AddNote { .. } => false,
         }
     }
 

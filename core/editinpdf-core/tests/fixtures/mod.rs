@@ -118,6 +118,17 @@ pub fn rotated_doc(text: &str) -> Vec<u8> {
     )
 }
 
+/// A one-page document whose page has `/Rotate 180`, so it is shown upside down.
+pub fn upside_down_doc(text: &str) -> Vec<u8> {
+    edited(
+        text_doc(&[text]),
+        Edit::RotatePages {
+            pages: vec![0],
+            degrees: 180,
+        },
+    )
+}
+
 /// A one-page document whose page has a crop box that does not start at the origin
 /// (`[36 36 576 756]`) and `/Rotate 270`, so a view-space position is both shifted and turned.
 pub fn cropped_rotated_doc(text: &str) -> Vec<u8> {
