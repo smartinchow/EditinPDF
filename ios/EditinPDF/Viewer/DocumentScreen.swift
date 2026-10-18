@@ -116,6 +116,11 @@ struct DocumentScreen: View {
                         pageIndicator
                     }
                 }
+                // Each button is a Label, title and icon: the bar shows the icon, and when the bar has no
+                // room for them all (a long file name beside the title menu, a narrow phone, large text)
+                // iOS moves them into its "More" menu, which shows the titles. With icons alone (Image
+                // and an accessibility label) the items in that menu were blank, so the menu looked
+                // empty (reported on an iPhone, reproduced on the iOS 26.5 simulator).
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         copyButton
@@ -195,9 +200,8 @@ struct DocumentScreen: View {
             Button {
                 selection.copySelection()
             } label: {
-                Image(systemName: "doc.on.doc")
+                Label(Strings.copy, systemImage: "doc.on.doc")
             }
-            .accessibilityLabel(Strings.copy)
             .accessibilityIdentifier("copyButton")
         }
     }
@@ -206,19 +210,17 @@ struct DocumentScreen: View {
         Button {
             showsSearch = true
         } label: {
-            Image(systemName: "magnifyingglass")
+            Label(Strings.search, systemImage: "magnifyingglass")
         }
         .disabled(model.pageCount == 0)
-        .accessibilityLabel(Strings.search)
         .accessibilityIdentifier("searchButton")
     }
 
     private var thumbnailsButton: some View {
         Button(action: showThumbnails) {
-            Image(systemName: "square.grid.2x2")
+            Label(Strings.thumbnails, systemImage: "square.grid.2x2")
         }
         .disabled(model.pageCount == 0)
-        .accessibilityLabel(Strings.thumbnails)
         .accessibilityIdentifier("thumbnailsButton")
     }
 

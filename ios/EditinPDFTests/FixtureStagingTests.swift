@@ -81,6 +81,21 @@ final class FixtureStagingTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["garbage.pdf"])
     }
 
+    func testTheAppStagesUnderTheNameItIsGiven() throws {
+        let folder = try makeFolder()
+        let name = "A rather long report name for the title bar.pdf"
+        FixtureStaging.stageRequestedFixture(arguments: ["EditinPDF", "-openFixture", "sample.pdf", "-fixtureName", name], into: folder)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [name])
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent(name)), try bundled("sample.pdf"))
+    }
+
+    func testAStagedNameWithAPathIsRefused() throws {
+        let folder = try makeFolder()
+        XCTAssertThrowsError(try FixtureStaging.stage("sample.pdf", as: "../outside.pdf", into: folder))
+        XCTAssertThrowsError(try FixtureStaging.stage("sample.pdf", as: "", into: folder))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [])
+    }
+
     func testTheAppStagesNothingWithoutTheArgument() throws {
         let folder = try makeFolder()
         FixtureStaging.stageRequestedFixture(arguments: ["EditinPDF"], into: folder)

@@ -14,6 +14,9 @@ import os
 enum FixtureStaging {
     /// The launch argument, followed by the name of the document: `-openFixture sample.pdf`.
     static let launchArgument = "-openFixture"
+    /// Optional, after `-openFixture`: the name the document is staged under instead of its own, such
+    /// as a long one, for a test that needs the title to take up the navigation bar.
+    static let nameArgument = "-fixtureName"
 
     enum StagingError: Error {
         /// The name is empty or has a path in it: only the name of a bundled file is accepted.
@@ -26,22 +29,37 @@ enum FixtureStaging {
 
     /// The name of the document that `arguments` ask for; nil if they do not ask for one.
     static func requestedFixture(in arguments: [String]) -> String? {
-        guard let flag = arguments.firstIndex(of: launchArgument) else { return nil }
-        return arguments.indices.contains(flag + 1) ? arguments[flag + 1] : nil
+        value(of: launchArgument, in: arguments)
     }
 
-    /// Copies the bundled document `name` into `folder`, replacing a file of that name already
-    /// there, and returns where it is now. Other files in `folder` are left alone.
+    /// The name `arguments` ask the document to be staged under; nil to keep its own.
+    static func requestedName(in arguments: [String]) -> String? {
+        value(of: nameArgument, in: arguments)
+    }
+
+    private static func value(of flag: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: flag) else { return nil }
+        return arguments.indices.contains(index + 1) ? arguments[index + 1] : nil
+    }
+
+    /// Whether `name` is a plain file name: nothing that could reach outside a folder.
+    private static func isFileName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." && URL(fileURLWithPath: name).lastPathComponent == name
+    }
+
+    /// Copies the bundled document `name` into `folder`, as `stagedName` if one is given, replacing a
+    /// file of that name already there, and returns where it is now. Other files in `folder` are left
+    /// alone.
     @discardableResult
-    static func stage(_ name: String, from bundle: Bundle = .main, into folder: URL) throws -> URL {
-        // A plain file name: nothing that could reach outside the bundle's files or the folder.
-        guard !name.isEmpty, name != ".", name != "..", URL(fileURLWithPath: name).lastPathComponent == name else {
-            throw StagingError.notAFileName(name)
-        }
+    static func stage(_ name: String, as stagedName: String? = nil, from bundle: Bundle = .main, into folder: URL) throws -> URL {
+        // Plain file names: nothing that could reach outside the bundle's files or the folder.
+        guard isFileName(name) else { throw StagingError.notAFileName(name) }
+        let target = stagedName ?? name
+        guard isFileName(target) else { throw StagingError.notAFileName(target) }
         guard let source = bundle.url(forResource: name, withExtension: nil) else {
             throw StagingError.notBundled(name)
         }
-        let destination = folder.appendingPathComponent(name)
+        let destination = folder.appendingPathComponent(target)
         let files = FileManager.default
         if files.fileExists(atPath: destination.path) {
             try files.removeItem(at: destination)
@@ -60,7 +78,7 @@ enum FixtureStaging {
             return
         }
         do {
-            try stage(name, into: folder)
+            try stage(name, as: requestedName(in: arguments), into: folder)
         } catch {
             log.error("could not stage \(name, privacy: .public): \(String(describing: error), privacy: .public)")
         }

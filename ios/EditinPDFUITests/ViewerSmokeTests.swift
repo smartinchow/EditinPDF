@@ -87,6 +87,32 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertEqual(field.value as? String, "Page")
     }
 
+    // MARK: The toolbar when the bar is short of room
+
+    /// A long file name takes up the navigation bar, and iOS moves the toolbar's buttons into its More
+    /// ("...") menu. There they must have their titles: with icons alone the menu came up empty
+    /// (reported on an iPhone). Where the bar has room for them (a wide display) they are in it as icons.
+    func testTheToolbarsButtonsHaveTheirTitlesInTheMoreMenu() {
+        let app = launchAndOpen("sample.pdf", as: "Quarterly financial report for the board 2026 final.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        let bar = app.navigationBars.firstMatch
+        let more = bar.buttons["OverflowBarButtonItem"]
+        guard more.waitForExistence(timeout: 2) else {
+            XCTAssertTrue(bar.buttons["searchButton"].exists, "no More menu, and no Search button in the bar either")
+            XCTAssertTrue(bar.buttons["thumbnailsButton"].exists)
+            return
+        }
+        more.tap()
+        // The menu's items are SwiftUI's own copies of the buttons, without their identifiers: found by title.
+        let search = app.buttons.matching(NSPredicate(format: "label == %@", "Search")).firstMatch
+        let thumbnails = app.buttons.matching(NSPredicate(format: "label == %@", "Thumbnails")).firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "the More menu has no Search")
+        XCTAssertTrue(thumbnails.exists, "the More menu has no Thumbnails")
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label == %@", "Copy")).firstMatch.exists, "nothing is selected to copy")
+        search.tap()
+        XCTAssertTrue(app.textFields["searchField"].waitForExistence(timeout: 5), "Search in the More menu did not open the search")
+    }
+
     // MARK: A password
 
     /// `locked.pdf`: one page, opened by the password "hunter2".
@@ -182,13 +208,15 @@ final class ViewerSmokeTests: XCTestCase {
 
     /// Launches the app with `fixture` staged in its Documents folder, and opens it from the document
     /// browser. Returns the running app.
-    private func launchAndOpen(_ fixture: String) -> XCUIApplication {
+    /// The document is staged under `name` when one is given.
+    private func launchAndOpen(_ fixture: String, as name: String? = nil) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         // The second pair keeps a document scene from an earlier test from coming back: each test starts at the browser.
         app.launchArguments = ["-openFixture", fixture, "-ApplePersistenceIgnoreState", "YES"]
+        if let name { app.launchArguments += ["-fixtureName", name] }
         app.launch()
-        openFromBrowser(fixture, in: app)
+        openFromBrowser(name ?? fixture, in: app)
         return app
     }
 
