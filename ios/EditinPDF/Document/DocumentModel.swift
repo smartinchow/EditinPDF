@@ -67,6 +67,17 @@ final class DocumentModel {
 
     /// Where every change, undo, redo and reading of the document's state runs, one at a time.
     private let queue = EditQueue()
+    /// The revision made by the last change that can make a page or annotation index name something
+    /// else: a page deleted, moved or inserted, an annotation deleted or moved, any undo or redo.
+    /// An edit worked out before it is refused (see `enqueue`).
+    @ObservationIgnored private var lastIndexShift: UInt64 = 0
+    /// The later of `lastIndexShift` and the revision made by the last rotation: after it, a point
+    /// in view space worked out before it is somewhere else on the page.
+    @ObservationIgnored private var lastGeometryShift: UInt64 = 0
+    /// Every change whose entries the undo manager may still hold (they are the entries' targets),
+    /// so they can all be taken off it when the two histories no longer match. Weak: a change goes
+    /// when the undo manager lets go of its entries.
+    @ObservationIgnored private let liveChanges = NSHashTable<EditToken>.weakObjects()
 
     /// Opens `bytes` with no password. Blocks for as long as the engine takes, so the document
     /// scene does not use it: that opens the file off the main actor and calls `init(outcome:)`.
@@ -139,15 +150,22 @@ final class DocumentModel {
     ///
     /// The undo manager's entry is registered here, at once, before the engine is asked, so the
     /// undo manager and the engine's history stay in the same order however fast the reader taps
-    /// (see `registerStep`). The edit is checked against the revision the model has now, the one
-    /// the reader was looking at: if the document has changed by the time the edit runs, the engine
-    /// refuses it (`Stale`) instead of changing the wrong page. The task says whether the change
-    /// was made; when it was not, `failure` says why.
+    /// (see `registerStep`).
+    ///
+    /// The edit was worked out against the revision the model has now, the one the reader was
+    /// looking at. Changes handed over before it may have run by the time it does. If none of them
+    /// can have made its indexes or points mean something else (see `canRebase`), it is applied to
+    /// the document as it then is, so edits tapped quickly one after the other all happen;
+    /// otherwise it is checked against the revision it was worked out for, and the engine refuses
+    /// it (`Stale`) instead of changing the wrong page or annotation. The task says whether the
+    /// change was made; when it was not, `failure` says why, and the change leaves nothing on the
+    /// undo manager.
     @discardableResult
     func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?) -> Task<Bool, Never> {
         guard !edits.isEmpty else { return Task { false } }
         let token = EditToken()
         registerStep(.undo, token: token, named: actionName, touching: pages)
+        liveChanges.add(token)
         let base = revision
         return queue.submit { [weak self] in
             await self?.apply(edits, label: actionName, base: base, token: token, touching: pages) ?? false
@@ -198,10 +216,13 @@ final class DocumentModel {
     /// at `token.applied` when it runs, and does nothing for a change the engine refused.
     private func registerStep(_ step: Step, token: EditToken, named actionName: String, touching pages: Set<Int>?) {
         guard let undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { model in
-            model.registerStep(step.opposite, token: token, named: actionName, touching: pages)
-            model.queue.submit { [weak model] in
-                await model?.move(step, token: token, touching: pages)
+        // The change is the target, so a refused one's entry can be taken off again on its own; the
+        // handler holds it (the undo manager does not keep its targets).
+        undoManager.registerUndo(withTarget: token) { [weak self, token] _ in
+            guard let self else { return }
+            self.registerStep(step.opposite, token: token, named: actionName, touching: pages)
+            self.queue.submit { [weak self] in
+                await self?.move(step, token: token, touching: pages)
             }
         }
         undoManager.setActionName(actionName)
@@ -210,7 +231,12 @@ final class DocumentModel {
     /// A queued edit: asks the engine for it off the main actor and, once made, publishes the
     /// document's new state.
     private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken, touching pages: Set<Int>?) async -> Bool {
-        guard let document = document() else { return false }
+        guard let document = document() else {
+            undoManager?.removeAllActions(withTarget: token)
+            return false
+        }
+        let base = Self.canRebase(edits, workedOutAt: base, indexShift: lastIndexShift, geometryShift: lastGeometryShift)
+            ? revision : base
         let result = await EditQueue.offMain { () throws -> EngineState in
             if edits.count == 1, let edit = edits.first {
                 _ = try document.apply(edit: edit, baseRevision: base)
@@ -222,10 +248,11 @@ final class DocumentModel {
         switch result {
         case .success(let state):
             token.applied = true
-            refresh(state, touching: pages)
+            refresh(state, touching: pages, shift: Self.shift(of: edits))
             return true
         case .failure(let error):
             failure = EditFailure(error)
+            undoManager?.removeAllActions(withTarget: token)
             await refreshIfMoved(document)
             return false
         }
@@ -245,10 +272,10 @@ final class DocumentModel {
         }
         switch result {
         case .success(let state):
-            refresh(state, touching: pages)
+            refresh(state, touching: pages, shift: .index)
         case .failure(let error):
             failure = EditFailure(error)
-            undoManager?.removeAllActions(withTarget: self)
+            for change in liveChanges.allObjects { undoManager?.removeAllActions(withTarget: change) }
             await refreshIfMoved(document)
         }
     }
@@ -258,14 +285,70 @@ final class DocumentModel {
     private func refreshIfMoved(_ document: PdfDocument) async {
         guard case .success(let state) = await EditQueue.offMain({ EngineState.read(document) }),
               state.revision != revision else { return }
-        refresh(state, touching: nil)
+        refresh(state, touching: nil, shift: .index)
+    }
+
+    /// What a change can do to the indexes and points of edits worked out before it.
+    private enum Shift {
+        /// Nothing: indexes and points still name the same things.
+        case none
+        /// Pages turned: points in view space have moved, indexes have not.
+        case geometry
+        /// Page or annotation indexes may name something else.
+        case index
+    }
+
+    /// What `edits` do to edits worked out before them. Adding an annotation appends it to its
+    /// page's list (`pdfcraft_annot::add_annotation` pushes onto `/Annots`), so the indexes before
+    /// it keep naming the same annotations.
+    private static func shift(of edits: [Edit]) -> Shift {
+        var shift = Shift.none
+        for edit in edits {
+            switch edit {
+            case .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .deleteAnnotation, .moveAnnotation:
+                return .index
+            case .rotatePages:
+                shift = .geometry
+            case .setInfo, .addTextMarkup, .addNote, .setAnnotationContents, .addInk, .addSignature, .addTextBox,
+                 .addShape, .addLine, .setFieldValue:
+                break
+            }
+        }
+        return shift
+    }
+
+    /// Whether `edits` has a point or a box in view space, which a rotation of its page moves.
+    private static func hasViewSpaceGeometry(_ edits: [Edit]) -> Bool {
+        edits.contains { edit in
+            switch edit {
+            case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .setInfo,
+                 .deleteAnnotation, .setAnnotationContents, .setFieldValue:
+                false
+            case .addTextMarkup, .addNote, .addInk, .addSignature, .addTextBox, .addShape, .addLine, .moveAnnotation:
+                true
+            }
+        }
+    }
+
+    /// Whether `edits`, worked out at revision `base`, still mean the same on the document as it is
+    /// now: no change since `base` has shifted an index, and none has turned a page, or the edits
+    /// have no point in view space for a turn to move.
+    private static func canRebase(_ edits: [Edit], workedOutAt base: UInt64, indexShift: UInt64, geometryShift: UInt64) -> Bool {
+        base >= indexShift && (base >= geometryShift || !hasViewSpaceGeometry(edits))
     }
 
     /// Publishes the document as it is after a change, undo or redo: its pages, with the current
     /// page kept on one of them; nothing selected (an index into the old pages or annotations may
     /// name something else now); its annotations, fields and capabilities; the search run again;
     /// and what changed.
-    private func refresh(_ state: EngineState, touching pagesTouched: Set<Int>?) {
+    private func refresh(_ state: EngineState, touching pagesTouched: Set<Int>?, shift: Shift) {
+        switch shift {
+        case .none: break
+        case .geometry: lastGeometryShift = max(lastGeometryShift, state.revision)
+        case .index:
+            lastIndexShift = max(lastIndexShift, state.revision)
+            lastGeometryShift = max(lastGeometryShift, state.revision)
+        }
         let geometryChanged = state.pages.count != pages.count
             || zip(state.pages, pages).contains { new, old in
                 new.widthPt != old.widthPt || new.heightPt != old.heightPt || new.rotationDegrees != old.rotationDegrees

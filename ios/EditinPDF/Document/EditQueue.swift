@@ -62,10 +62,11 @@ final class EditQueue {
     }
 }
 
-/// One change's entries on the undo manager: the edit's undo entry, and the redo and undo entries
-/// that follow from it, all share it. `applied` is set once the engine has made the change; it stays
-/// false for a change the engine refused, whose entries then do nothing (the undo manager cannot
-/// take back an entry it has been given, so a refused change leaves one behind that is a no-op).
+/// One change, the target of its entries on the undo manager: the edit's undo entry, and the redo
+/// and undo entries that follow from it. `applied` is set once the engine has made the change. A
+/// change the engine refuses has its entry taken off the undo manager again
+/// (`removeAllActions(withTarget:)`); until then, and should anything run it all the same, an entry
+/// of a change that is not applied does nothing.
 @MainActor
 final class EditToken {
     var applied = false

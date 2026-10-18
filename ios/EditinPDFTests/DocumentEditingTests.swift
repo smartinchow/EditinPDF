@@ -36,7 +36,58 @@ final class DocumentEditingTests: XCTestCase {
         let (m, u) = try makeModel()
         let ok = await m.perform(.deletePages(pages: [0, 1, 2]), named: Strings.actionDelete, touching: nil)
         XCTAssertFalse(ok); XCTAssertEqual(m.failure?.message, Strings.cannotDeleteAllPages); XCTAssertEqual(m.revision, 0)
-        u.undo(); await m.settle(); XCTAssertEqual(m.pageCount, 3)   // the dead entry is a no-op
+        let shown = try XCTUnwrap(m.failure)
+        XCTAssertFalse(u.canUndo, "a refused change leaves nothing to undo")
+        u.undo(); await m.settle(); XCTAssertEqual(m.pageCount, 3)
+        XCTAssertEqual(m.revision, 0); XCTAssertEqual(m.failure?.id, shown.id, "the undo changed nothing and said nothing new")
+    }
+
+    /// The refused change left no entry behind, so Undo takes back the change before it.
+    func testUndoAfterARefusedEditUndoesTheChangeBeforeIt() async throws {
+        let (m, u) = try makeModel()
+        await m.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        let refused = await m.perform(.deletePages(pages: [0, 1, 2]), named: Strings.actionDelete, touching: nil)
+        XCTAssertFalse(refused)
+        XCTAssertEqual(u.undoActionName, Strings.actionRotate)
+        u.undo(); await m.settle()
+        XCTAssertEqual(m.pages[0].rotationDegrees, 0); XCTAssertEqual(m.pageCount, 3)
+    }
+
+    /// Edits tapped quickly, each worked out at the same revision, all happen when nothing between
+    /// them can change what they mean.
+    func testTwoRotationsQueuedTogetherBothHappen() async throws {
+        let (m, u) = try makeModel()
+        let first = m.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
+        let second = m.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
+        let (firstOK, secondOK) = await (first.value, second.value)
+        XCTAssertTrue(firstOK); XCTAssertTrue(secondOK)
+        XCTAssertEqual(m.pages[0].rotationDegrees, 180); XCTAssertNil(m.failure)
+        u.undo(); await m.settle()
+        XCTAssertEqual(m.pages[0].rotationDegrees, 0, "both were made in the same event: one undo step")
+    }
+
+    /// A point worked out before a turn of its page would land somewhere else: refused.
+    func testAPointQueuedBehindARotationOfItsPageIsRefused() async throws {
+        let (m, _) = try makeModel()
+        let rotate = m.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
+        let note = m.enqueue([.addNote(page: 0, at: Point(x: 100, y: 100), contents: "", color: RgbColor(red: 1, green: 1, blue: 0))],
+                             named: Strings.actionAddAnnotation, touching: [0])
+        let (rotated, added) = await (rotate.value, note.value)
+        XCTAssertTrue(rotated); XCTAssertFalse(added)
+        XCTAssertEqual(m.failure?.message, Strings.documentChangedTryAgain)
+        XCTAssertTrue(m.annotationsByPage[0, default: []].isEmpty)
+    }
+
+    /// A field filled in behind a rotation has no point to move: it happens.
+    func testAFieldFilledBehindARotationHappens() async throws {
+        let (m, _) = try makeModel(fixture: "form")
+        await m.settle()
+        let field = try XCTUnwrap(m.formFields.first { $0.kind == .text && !$0.readOnly })
+        let rotate = m.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
+        let fill = m.enqueue([.setFieldValue(name: field.name, value: .text(text: "Hi"))], named: Strings.actionFillField, touching: nil)
+        let (rotated, filled) = await (rotate.value, fill.value)
+        XCTAssertTrue(rotated); XCTAssertTrue(filled)
+        XCTAssertEqual(m.formFields.first { $0.name == field.name }?.value, ["Hi"])
     }
 
     func testUndoTappedWhileAnEditRunsUndoesThatEdit() async throws {
