@@ -625,6 +625,35 @@ final class PageSelectionTests: XCTestCase {
         XCTAssertFalse(interaction.isDraggingHandle)
     }
 
+    /// The view changed width while a handle was held (an iPhone Duo folded, the device turned): the
+    /// finger's travel no longer means what it did on the page, so the drag ends, scrolling is back, and
+    /// the selection stays, with its handles at its new place.
+    func testANewWidthLetsGoOfAHeldHandleAndKeepsTheSelection() async throws {
+        let (controller, model) = makeController()
+        let interaction = controller.selectionInteraction
+        try await select(glyph: 1, page: 0, controller: controller, model: model)
+        let selected = model.selection?.text
+        interaction.beginDrag(of: .end, touchAt: CGPoint(x: 100, y: 100))
+        XCTAssertFalse(controller.scrollView.isScrollEnabled)
+
+        controller.view.frame = CGRect(x: 0, y: 0, width: 744, height: 1_000)
+        controller.view.layoutIfNeeded()
+        XCTAssertFalse(interaction.isDraggingHandle)
+        XCTAssertTrue(controller.scrollView.isScrollEnabled)
+        XCTAssertEqual(model.selection?.text, selected)
+        XCTAssertFalse(interaction.endHandle.isHidden)
+        let rect = try XCTUnwrap(controller.selection?.rects.last)
+        let wider: CGFloat = 744.0 / 612.0
+        XCTAssertEqual(interaction.endHandle.stemFrame.midX, rect.maxX * wider, accuracy: 0.01, "at the text on the wider page")
+
+        // The rest of the gesture, after the relayout, moves nothing.
+        interaction.updateDrag(touchAt: CGPoint(x: 300, y: 300))
+        await model.selection?.waitUntilSettled()
+        XCTAssertEqual(model.selection?.text, selected)
+        interaction.endDrag()
+        XCTAssertTrue(controller.scrollView.isScrollEnabled)
+    }
+
     func testCopyingFromTheMenuPutsTheTextOnThePasteboard() async throws {
         let (controller, model) = makeController()
         try await select(glyph: 1, page: 0, controller: controller, model: model)

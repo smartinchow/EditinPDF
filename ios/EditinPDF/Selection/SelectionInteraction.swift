@@ -203,6 +203,18 @@ final class SelectionInteraction: NSObject {
         menu.dismissMenu()
     }
 
+    /// The pages are about to be laid out again for a new width (the device turning, an iPhone Duo
+    /// folding or unfolding, Split View): the menu would point at where the text was, so it goes, and a
+    /// handle being dragged is let go of, since the finger's way from where it went down no longer
+    /// means the same distance on the page. The selection stays; the layout puts the handles at its new
+    /// place, and a tap on it brings the menu back.
+    func layoutWillChange() {
+        menu.dismissMenu()
+        guard drag != nil else { return }
+        drag = nil
+        host?.scrollView.isScrollEnabled = true
+    }
+
     /// Puts the handles at the ends of the selection, in the scroll view's coordinates, or hides them
     /// when there is no selection or no layout to find it in. Called whenever something that moves the
     /// selection on screen changes: the zoom, the layout, the selection itself.

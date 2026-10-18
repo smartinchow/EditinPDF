@@ -28,6 +28,7 @@
 		79BFA52DB07FEEA3ABACDCA0 /* OpenOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A321A8794D9F6E3A05F37107 /* OpenOutcome.swift */; };
 		7B0825C102EA2D1C942E302B /* TileMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5890ABDC3D59A1CB8A126264 /* TileMathTests.swift */; };
 		7CBBA7ECDDB055F0291A00ED /* StringsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A4310632D0D90390638FB56 /* StringsTests.swift */; };
+		80169B64E18CC4BB759CAA9C /* ReadingPositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F569EDE026CEAB51368D68 /* ReadingPositionTests.swift */; };
 		811F22A75C3D879FEDF10ADE /* ThumbnailStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADFC7BDAA4D5D56D1821FE8A /* ThumbnailStore.swift */; };
 		81FEACF2C87CE14E4F179712 /* PasswordSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64A29E7BABE7AB023F41655A /* PasswordSheet.swift */; };
 		851BDA976FE7597B8F80BDBF /* EditinPDFApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 984C365033689202DB4131F4 /* EditinPDFApp.swift */; };
@@ -48,6 +49,7 @@
 		CE2196BB96862118185A87D0 /* SearchControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99DB16EDA82D406E4E0BC98F /* SearchControllerTests.swift */; };
 		D04A41D163203CC9BF6B9725 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 44E738701F4B16620DE59671 /* Assets.xcassets */; };
 		D21DA16DEE69FC9F75BC8764 /* SelectionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7AEE25132378BBD7977FCA8 /* SelectionController.swift */; };
+		DF88232DFAC22C3AA133EA5B /* ReadingPosition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4C4E5886908E2D8B5AF9C77 /* ReadingPosition.swift */; };
 		E2C018B702ACDE8FAD3D6153 /* RotatedPageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC5419A246A2C541D4A71869 /* RotatedPageTests.swift */; };
 		E8ED2A5E3B6BF007B0422ACD /* PageScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B586A0723E56ED0039E2CA16 /* PageScrollView.swift */; };
 		EA9E8CBC33084C980E5EFB30 /* DocumentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2F7E345612A857631FB5B0 /* DocumentModel.swift */; };
@@ -92,6 +94,7 @@
 		3DB0B3D43A2587473993B158 /* SelectionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionControllerTests.swift; sourceTree = "<group>"; };
 		411BC18CF1E9EE12989DBBA8 /* SelectionWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionWorker.swift; sourceTree = "<group>"; };
 		4127BE4AD19CFC6F89810E23 /* PDFFileDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFFileDocumentTests.swift; sourceTree = "<group>"; };
+		43F569EDE026CEAB51368D68 /* ReadingPositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingPositionTests.swift; sourceTree = "<group>"; };
 		44E738701F4B16620DE59671 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4596F96C58D2514B2D8F2FE7 /* FixtureStaging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureStaging.swift; sourceTree = "<group>"; };
 		497996481640F2786C0D05C4 /* EditinPDFCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = EditinPDFCore; path = EditinPDFCore; sourceTree = SOURCE_ROOT; };
@@ -130,6 +133,7 @@
 		E214CEFD25FB448BA6DFA4AF /* PageOverlayViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageOverlayViewTests.swift; sourceTree = "<group>"; };
 		EAAEE4C82EB6DB705E009F1A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F1CE82FA672BCE62A0A2970D /* EditinPDFTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = EditinPDFTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F4C4E5886908E2D8B5AF9C77 /* ReadingPosition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingPosition.swift; sourceTree = "<group>"; };
 		F72434B26DC8C06AC6AB44F6 /* TileRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileRenderer.swift; sourceTree = "<group>"; };
 		F8F2C0DBEDBC2D2FA88AFC4A /* EditinPDF.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = EditinPDF.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FC5419A246A2C541D4A71869 /* RotatedPageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RotatedPageTests.swift; sourceTree = "<group>"; };
@@ -169,6 +173,7 @@
 				B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */,
 				33ACD35DD113A4BED1584983 /* PageSelectionTests.swift */,
 				4127BE4AD19CFC6F89810E23 /* PDFFileDocumentTests.swift */,
+				43F569EDE026CEAB51368D68 /* ReadingPositionTests.swift */,
 				FC5419A246A2C541D4A71869 /* RotatedPageTests.swift */,
 				99DB16EDA82D406E4E0BC98F /* SearchControllerTests.swift */,
 				3DB0B3D43A2587473993B158 /* SelectionControllerTests.swift */,
@@ -239,6 +244,7 @@
 				7D2EDFDB1AAB25268DF91544 /* PageOverlayView.swift */,
 				B586A0723E56ED0039E2CA16 /* PageScrollView.swift */,
 				520ABFCBB01B5ACD21E16F11 /* PageView.swift */,
+				F4C4E5886908E2D8B5AF9C77 /* ReadingPosition.swift */,
 				333AE47B2FC7D5C0B9CA66F5 /* TileMath.swift */,
 				F72434B26DC8C06AC6AB44F6 /* TileRenderer.swift */,
 			);
@@ -483,6 +489,7 @@
 				65BA02F725EB13AA04424643 /* PageOverlayViewTests.swift in Sources */,
 				BF1122270EA2EB45C3748482 /* PageScrollViewControllerTests.swift in Sources */,
 				578A0FD5E76B0C161D2EA9FF /* PageSelectionTests.swift in Sources */,
+				80169B64E18CC4BB759CAA9C /* ReadingPositionTests.swift in Sources */,
 				E2C018B702ACDE8FAD3D6153 /* RotatedPageTests.swift in Sources */,
 				CE2196BB96862118185A87D0 /* SearchControllerTests.swift in Sources */,
 				35C451C203BCC3592132D4B4 /* SelectionControllerTests.swift in Sources */,
@@ -519,6 +526,7 @@
 				E8ED2A5E3B6BF007B0422ACD /* PageScrollView.swift in Sources */,
 				ED2429DBC555D071C1A6D240 /* PageView.swift in Sources */,
 				81FEACF2C87CE14E4F179712 /* PasswordSheet.swift in Sources */,
+				DF88232DFAC22C3AA133EA5B /* ReadingPosition.swift in Sources */,
 				35E910945C3C94C645432AB9 /* SearchController.swift in Sources */,
 				673DF4CA32FEA82C3350B82C /* SearchHitBar.swift in Sources */,
 				86C85D952D715A004CBEE9AF /* SearchSheet.swift in Sources */,

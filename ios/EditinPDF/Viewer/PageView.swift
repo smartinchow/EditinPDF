@@ -31,6 +31,8 @@ final class PageView: UIView {
         backgroundColor = .white
         isOpaque = true
         addSubview(overlay)
+        // For UI tests, which find where a page is on screen by it; not shown or spoken.
+        accessibilityIdentifier = "page-\(page)"
         guard let tiledLayer = layer as? PageTiledLayer else { return }
         tiledLayer.attach(PageTiledLayer.Source(document: document, page: UInt32(clamping: page), pointSize: pointSize))
         tiledLayer.tileSize = CGSize(width: TileMath.maxTileSide, height: TileMath.maxTileSide)
@@ -38,6 +40,11 @@ final class PageView: UIView {
         // each drawn when the zoom passes the one below.
         tiledLayer.levelsOfDetail = 5
         tiledLayer.levelsOfDetailBias = 4
+        // The window can move to a screen of another resolution while the page is up (an external
+        // display; a device whose displays differ): the tiles are drawn again at the new one.
+        registerForTraitChanges([UITraitDisplayScale.self]) { (view: PageView, _: UITraitCollection) in
+            view.matchDisplayScale()
+        }
     }
 
     @available(*, unavailable)
@@ -50,9 +57,16 @@ final class PageView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        // Tiles are drawn at the resolution of the screen the page is shown on.
+        matchDisplayScale()
+    }
+
+    /// Tiles are drawn at the resolution of the screen the page is shown on, read from the view's
+    /// traits (the screen it is on), never `UIScreen.main`.
+    private func matchDisplayScale() {
         let scale = traitCollection.displayScale
-        if window != nil, scale > 0 { layer.contentsScale = scale }
+        guard window != nil, scale > 0, layer.contentsScale != scale else { return }
+        layer.contentsScale = scale
+        layer.setNeedsDisplay()
     }
 }
 

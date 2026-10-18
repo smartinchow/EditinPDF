@@ -169,6 +169,69 @@ final class PageScrollViewControllerTests: XCTestCase {
         XCTAssertEqual(model.currentPage, 6)
     }
 
+    // MARK: A new width: the device turning, an iPhone Duo folding or unfolding, Split View
+
+    /// Zoomed in on page 2 and part-way across it, the view is made wider (the Duo opens: its inner display
+    /// has the outer one's shape, larger): the same page, as far down and across it, at the same zoom.
+    func testANewWidthKeepsThePageTheZoomAndThePlaceOnThePage() {
+        let (controller, model) = makeController(size: CGSize(width: 400, height: 800))
+        controller.scroll(to: 2)
+        controller.scrollView.zoomScale = 3
+        // At zoom 3: page 2 starts at 3 * 1060 = 3180; go a third of the way down it and across.
+        let pageTop: CGFloat = 2 * 530
+        controller.scrollView.contentOffset = CGPoint(x: 400, y: (pageTop + 518.0 / 3) * 3)
+        XCTAssertEqual(model.currentPage, 2)
+
+        controller.view.frame = CGRect(x: 0, y: 0, width: 744, height: 1_488)
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.scrollView.zoomScale, 3, accuracy: 0.0001)
+        XCTAssertEqual(model.currentPage, 2)
+        // At 744 wide a page is 963 tall (744 * 792 / 612, rounded) and starts every 975 points.
+        let visible = inView(controller)
+        XCTAssertEqual(visible.minY, 2 * 975 + 963.0 / 3, accuracy: 1, "a third of the way down page 2")
+        XCTAssertEqual(visible.minX / 744, 400.0 / 1_200, accuracy: 0.001, "as far across the column")
+
+        // And closing it again comes back to the same place.
+        controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 800)
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.scrollView.zoomScale, 3, accuracy: 0.0001)
+        XCTAssertEqual(model.currentPage, 2)
+        XCTAssertEqual(controller.scrollView.contentOffset.x, 400, accuracy: 1)
+        XCTAssertEqual(controller.scrollView.contentOffset.y, (pageTop + 518.0 / 3) * 3, accuracy: 3)
+    }
+
+    /// Zoomed in at the right edge of the column, the view turns wider. The scroll view pulls its offset
+    /// back into its range for the new size before the pages are laid out again (it lays itself out
+    /// first), so the place across the page has to be the one from before the size changed.
+    func testANewWidthKeepsThePlaceAcrossThoughTheScrollViewClampsItFirst() {
+        let (controller, model) = makeController(size: CGSize(width: 400, height: 800))
+        controller.scroll(to: 1)
+        controller.scrollView.zoomScale = 2
+        // At zoom 2 the column is 800 wide: the right half is in view.
+        controller.scrollView.contentOffset = CGPoint(x: 400, y: 530 * 2)
+        controller.view.frame = CGRect(x: 0, y: 0, width: 600, height: 800)
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(model.currentPage, 1)
+        XCTAssertEqual(controller.scrollView.zoomScale, 2, accuracy: 0.0001)
+        // At 600 wide and zoom 2 the column is 1,200 wide: halfway across is 600, still the right edge.
+        XCTAssertEqual(controller.scrollView.contentOffset.x, 600, accuracy: 0.5)
+    }
+
+    /// Insets that differ from side to side (a vertical bar at one edge, the camera's side, Split View):
+    /// the pages fit between them, and start at the left one.
+    func testAsymmetricInsetsFitThePagesBetweenThem() throws {
+        let (controller, _) = makeController(size: CGSize(width: 400, height: 800))
+        controller.scrollView.contentInset = UIEdgeInsets(top: 20, left: 60, bottom: 0, right: 0)
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        // 340 wide: a page is 440 tall (340 * 792 / 612, rounded) and starts every 452 points.
+        XCTAssertEqual(try XCTUnwrap(controller.pageView(for: 0)).frame.width, 340)
+        controller.scroll(to: 3)
+        XCTAssertEqual(controller.scrollView.contentOffset, CGPoint(x: -60, y: 3 * 452 - 20))
+        XCTAssertEqual(inView(controller).minX, 0, accuracy: 0.001, "the page's left edge is at the inset, not under it")
+        XCTAssertEqual(inView(controller).width, 340, accuracy: 0.001)
+    }
+
     // MARK: Revealing a box (a search hit): the page's top is not always where the hit is
 
     /// `count` pages of `size` PDF points, each with some text near its top.

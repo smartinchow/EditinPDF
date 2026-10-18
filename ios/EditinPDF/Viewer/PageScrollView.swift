@@ -112,6 +112,11 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     private var pendingTarget: Int?
     /// A box asked for before there was a layout to find its page in.
     private var pendingReveal: PageRect?
+    /// Where the reader was the last time the view was at the layout's width: what a new layout keeps.
+    /// It is recorded as the reader scrolls and zooms, not read when the width changes, because by then
+    /// the scroll view has already pulled its offset into the range for its new size (it lays itself
+    /// out before its controller does), losing the place across a zoomed page.
+    private var lastPosition: ReadingPosition?
 
     init(model: DocumentModel) {
         self.model = model
@@ -144,10 +149,15 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let insets = scrollView.adjustedContentInset
-        let fitWidth = scrollView.bounds.width - insets.left - insets.right
+        let fitWidth = currentFitWidth()
         guard fitWidth > 0, fitWidth != layout?.fitWidth else { return }
         relayout(fitWidth: fitWidth)
+    }
+
+    /// The width the pages fit: the view's, less the insets on either side, which need not be the same
+    /// (a bar standing at one side, the camera's side, Split View).
+    private func currentFitWidth() -> CGFloat {
+        scrollView.bounds.inset(by: scrollView.adjustedContentInset).width
     }
 
     /// Brings `page` to the top of the view, or as near as the end of the document allows. Waits
@@ -268,11 +278,16 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
     // MARK: Layout
 
-    /// Lays the pages out for a new width at zoom 1, keeping the page that was at the top of the
-    /// view there (or going to a page asked for before the first layout). The page views are made
-    /// again: a page view's size never changes, so its tiles never mix two sizes.
+    /// Lays the pages out for a new width, keeping the reader where they were: the same page, as far
+    /// down it, as far across the column and at the same zoom (`ReadingPosition`), or going to a page
+    /// asked for before the first layout. The page views are made again, at zoom 1: a page view's size
+    /// never changes, so its tiles never mix two sizes. The zoom is put back afterwards.
+    ///
+    /// A finger on a selection handle lets go and the edit menu goes away, since both are about where
+    /// the text was on screen; the handles themselves are put at the selection's new place.
     private func relayout(fitWidth: CGFloat) {
-        let anchor = layout.flatMap { readingPosition(in: $0) }
+        selectionInteraction.layoutWillChange()
+        let position = lastPosition
         let target = pendingTarget
         pendingTarget = nil
         let newLayout = PageLayout(pages: model.pages, fitWidth: fitWidth)
@@ -286,9 +301,9 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
         if let target, (0..<newLayout.pageCount).contains(target) {
             show(newLayout.frame(of: target).minY)
-        } else if let anchor {
-            let frame = newLayout.frame(of: anchor.page)
-            show(frame.minY + anchor.fraction * frame.height)
+        } else if let position, (0..<newLayout.pageCount).contains(position.page) {
+            scrollView.zoomScale = min(max(position.zoom, scrollView.minimumZoomScale), scrollView.maximumZoomScale)
+            show(position.topLeft(in: newLayout))
         } else {
             show(newLayout.frame(of: model.currentPage).minY)
         }
@@ -299,26 +314,28 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         }
     }
 
-    /// The page at the top of the visible area and how far down it that is (0 to 1); a point in a
-    /// gap counts as the top of the page below it.
-    private func readingPosition(in layout: PageLayout) -> (page: Int, fraction: CGFloat)? {
-        guard layout.pageCount > 0 else { return nil }
-        let top = visibleArea().minY
-        let page = min(layout.visiblePages(in: CGRect(x: 0, y: top, width: layout.fitWidth, height: 0)).lowerBound,
-                       layout.pageCount - 1)
-        let frame = layout.frame(of: page)
-        return (page, min(max((top - frame.minY) / frame.height, 0), 1))
-    }
-
     /// Scrolls so that layout point `y` (at zoom 1) is at the top of the visible area, as near as
     /// the ends of the document allow, at the left edge; then brings the page views and the current
     /// page up to date, even when the offset was already there.
     private func show(_ y: CGFloat) {
+        show(CGPoint(x: 0, y: y))
+    }
+
+    /// Scrolls so that layout point `point` (at zoom 1) is at the top-left of the visible area, as near
+    /// as the ends of the scroll range allow, at the zoom the view is at; then brings the page views and
+    /// the current page up to date, even when the offset was already there. The insets need not be the
+    /// same on both sides (the bars, the camera's side, a Split View divider): each end of the range
+    /// keeps clear of its own.
+    private func show(_ point: CGPoint) {
         let insets = scrollView.adjustedContentInset
-        let lowest = -insets.top
-        let highest = max(lowest, scrollView.contentSize.height + insets.bottom - scrollView.bounds.height)
-        let offsetY = min(max(y * scrollView.zoomScale - insets.top, lowest), highest)
-        scrollView.setContentOffset(CGPoint(x: -insets.left, y: offsetY), animated: false)
+        let zoom = scrollView.zoomScale
+        let size = scrollView.bounds.size
+        let lowest = CGPoint(x: -insets.left, y: -insets.top)
+        let highest = CGPoint(x: max(lowest.x, scrollView.contentSize.width + insets.right - size.width),
+                              y: max(lowest.y, scrollView.contentSize.height + insets.bottom - size.height))
+        let offset = CGPoint(x: min(max(point.x * zoom - insets.left, lowest.x), highest.x),
+                             y: min(max(point.y * zoom - insets.top, lowest.y), highest.y))
+        scrollView.setContentOffset(offset, animated: false)
         update()
     }
 
@@ -347,6 +364,9 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         }
         if let page = readerPage(in: layout), page != model.currentPage {
             model.currentPage = page
+        }
+        if currentFitWidth() == layout.fitWidth {
+            lastPosition = ReadingPosition(visibleArea: visibleArea(), zoom: scrollView.zoomScale, in: layout)
         }
         // The zoom and the layout move the selection on screen, and its handles with it.
         selectionInteraction.layoutHandles()

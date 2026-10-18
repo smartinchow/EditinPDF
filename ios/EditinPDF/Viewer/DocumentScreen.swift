@@ -227,7 +227,10 @@ struct DocumentScreen: View {
     private func showThumbnails() {
         // Not while the sheet is already on its way up (a second tap), or a second one would replace it.
         guard thumbnailsSheet == nil, let document = model.document() else { return }
-        let store = thumbnails ?? ThumbnailStore(document: document, pages: model.pages, displayScale: displayScale)
+        // A store drawn for another screen resolution (the window moved to another display) is
+        // replaced, so the pictures are sharp on this one.
+        let kept = thumbnails.flatMap { $0.displayScale == displayScale ? $0 : nil }
+        let store = kept ?? ThumbnailStore(document: document, pages: model.pages, displayScale: displayScale)
         thumbnails = store
         // The pictures the sheet opens on are drawn while it slides up, so its first rows are not
         // blank; the cells ask for the rest as they come into view.
