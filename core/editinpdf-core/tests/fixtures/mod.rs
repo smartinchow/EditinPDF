@@ -12,7 +12,8 @@
 use std::sync::Arc;
 
 use pdfcraft_engine::{
-    Algorithm, BoxSpec, Changes, Edit, ImageResolution, PageBox, Protection, Session,
+    Algorithm, BoxSpec, Changes, Edit, FieldProps, ImageResolution, Markup, NewAnnotation,
+    NewField, NoteIcon, PageBox, Protection, Session, Shape, Style,
 };
 
 /// The fixtures' session clock. Fixed, so the plain fixtures' bytes (their `/ModDate`) are the same
@@ -39,11 +40,19 @@ fn session() -> Session {
 
 /// Opens `bytes` in a fresh session, applies `edit`, and returns the saved (fully rewritten) result.
 fn edited(bytes: Vec<u8>, edit: Edit) -> Vec<u8> {
+    edited_all(bytes, vec![edit])
+}
+
+/// Opens `bytes` in a fresh session, applies `edits` in order, and returns the saved (fully
+/// rewritten) result.
+fn edited_all(bytes: Vec<u8>, edits: Vec<Edit>) -> Vec<u8> {
     let mut session = session();
     let id = session
         .open("fixture.pdf", None, Arc::new(bytes), None)
         .expect("the fixture opens");
-    session.apply(id, edit).expect("the edit applies");
+    for edit in edits {
+        session.apply(id, edit).expect("the edit applies");
+    }
     session
         .save_full_bytes(id)
         .expect("the result saves")
@@ -146,6 +155,96 @@ pub fn cropped_rotated_doc(text: &str) -> Vec<u8> {
             pages: vec![0],
             degrees: 270,
         },
+    )
+}
+
+/// A one-page form (US Letter, unturned) reading "Name:", "Agree:" and "Size:", with five fields on
+/// page 0, their boxes in user space:
+///
+/// - `name`: a one-line text field, `[150 700 400 720]`;
+/// - `agree`: a check box, `[150 660 170 680]`;
+/// - `size`: a radio group of two buttons, exports `S` at `[150 630 170 650]` and `L` at
+///   `[200 630 220 650]`;
+/// - `color`: a combo box (not editable) offering `Red`, `Green` and `Blue`, `[150 600 300 620]`;
+/// - `read_only_note`: a read-only text field, `[150 560 400 580]`.
+///
+/// Every field starts empty (unchecked, nothing chosen).
+pub fn form_doc() -> Vec<u8> {
+    let field = |rect: [f64; 4], kind: NewField, name: &str| Edit::AddField {
+        page: 0,
+        rect,
+        kind,
+        name: Some(name.to_owned()),
+    };
+    let radio = |rect: [f64; 4], export: &str| {
+        field(
+            rect,
+            NewField::Radio {
+                group: Some("size".to_owned()),
+                export: export.to_owned(),
+            },
+            "size",
+        )
+    };
+    edited_all(
+        text_doc(&["Name:\n\nAgree:\n\nSize:"]),
+        vec![
+            field(
+                [150.0, 700.0, 400.0, 720.0],
+                NewField::Text { multiline: false },
+                "name",
+            ),
+            field([150.0, 660.0, 170.0, 680.0], NewField::CheckBox, "agree"),
+            radio([150.0, 630.0, 170.0, 650.0], "S"),
+            radio([200.0, 630.0, 220.0, 650.0], "L"),
+            field(
+                [150.0, 600.0, 300.0, 620.0],
+                NewField::Combo {
+                    options: vec!["Red".to_owned(), "Green".to_owned(), "Blue".to_owned()],
+                    editable: false,
+                },
+                "color",
+            ),
+            field(
+                [150.0, 560.0, 400.0, 580.0],
+                NewField::Text { multiline: false },
+                "read_only_note",
+            ),
+            Edit::SetFieldProps {
+                name: "read_only_note".to_owned(),
+                props: Box::new(FieldProps {
+                    read_only: Some(true),
+                    ..FieldProps::default()
+                }),
+            },
+        ],
+    )
+}
+
+/// A one-page document (US Letter, unturned) reading "Marked page", with two comments: a highlight
+/// over that line (user space `[72 706.8 136.2 717.8]`) and a sticky note whose icon's top-left
+/// corner is at user `(72, 650)`, reading "Check this".
+pub fn annotated_doc() -> Vec<u8> {
+    let highlight = Shape::TextMarkup {
+        kind: Markup::Highlight,
+        quads: vec![[72.0, 717.8, 136.2, 717.8, 72.0, 706.8, 136.2, 706.8]],
+    };
+    let note = Shape::Note {
+        at: [72.0, 650.0],
+        icon: NoteIcon::default(),
+    };
+    let add = |shape: Shape, contents: &str| {
+        Edit::AddAnnotation(NewAnnotation {
+            page: 0,
+            style: Style::default_for(&shape),
+            shape,
+            contents: contents.to_owned(),
+            author: String::new(),
+        })
+    };
+    edited_all(
+        text_doc(&["Marked page"]),
+        vec![add(highlight, ""), add(note, "Check this")],
     )
 }
 

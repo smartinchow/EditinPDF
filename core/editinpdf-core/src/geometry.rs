@@ -46,7 +46,12 @@ pub(crate) fn rect_to_user(page: &PageInfo, r: &Rect) -> [f64; 4] {
 
 /// The view-space rectangle a user-space one `[x0, y0, x1, y1]` covers.
 pub(crate) fn rect_to_view(page: &PageInfo, r: [f32; 4]) -> Rect {
-    let [x0, y0, x1, y1] = r.map(f64::from);
+    user_rect_to_view(page, r.map(f64::from))
+}
+
+/// The view-space rectangle a user-space one `[x0, y0, x1, y1]`, in double precision, covers.
+pub(crate) fn user_rect_to_view(page: &PageInfo, r: [f64; 4]) -> Rect {
+    let [x0, y0, x1, y1] = r;
     let a = to_view(page, [x0, y0]);
     let b = to_view(page, [x1, y1]);
     let (left, top) = (a.x.min(b.x), a.y.min(b.y));

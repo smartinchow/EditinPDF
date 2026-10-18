@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::{EditError, Rect, geometry};
+use crate::{EditError, Rect, forms, geometry};
 
 /// The largest page side a blank page may have, in points: 200 inches, the most a PDF page can
 /// measure (ISO 32000-1, Annex C).
@@ -224,6 +224,13 @@ pub enum Edit {
         dx: f64,
         dy: f64,
     },
+    /// Fills in the form field named `name` (`FormField.name`, matched exactly): a text field
+    /// with `Text`, a check box with `Checked`, a radio group with `Radio` (a button's
+    /// `FormWidget.on_state`, or none to turn them all off), a combo or list box with `Choice`
+    /// (export values from `FormField.options`; a combo box that takes typed text also takes other
+    /// text). A field is addressed by its name, not its page, so this goes in a step with any
+    /// page change.
+    SetFieldValue { name: String, value: FieldValue },
 }
 
 impl Edit {
@@ -470,6 +477,10 @@ impl Edit {
                     dy,
                 }
             }
+            Self::SetFieldValue { name, value } => Engine::SetFieldValue {
+                name: name.clone(),
+                value: forms::value_to_engine(value),
+            },
         })
     }
 
@@ -492,7 +503,8 @@ impl Edit {
             | Self::AddTextBox { .. }
             | Self::AddShape { .. }
             | Self::AddLine { .. }
-            | Self::MoveAnnotation { .. } => false,
+            | Self::MoveAnnotation { .. }
+            | Self::SetFieldValue { .. } => false,
         }
     }
 
@@ -515,7 +527,9 @@ impl Edit {
             | Self::AddTextBox { .. }
             | Self::AddShape { .. }
             | Self::AddLine { .. }
-            | Self::MoveAnnotation { .. } => false,
+            | Self::MoveAnnotation { .. }
+            // A field is addressed by its name, which no page change alters.
+            | Self::SetFieldValue { .. } => false,
         }
     }
 
@@ -538,7 +552,31 @@ impl Edit {
             | Self::AddSignature { .. }
             | Self::AddTextBox { .. }
             | Self::AddShape { .. }
-            | Self::AddLine { .. } => false,
+            | Self::AddLine { .. }
+            | Self::SetFieldValue { .. } => false,
+        }
+    }
+
+    /// The name of the form field the edit fills in, when it fills one in.
+    pub(crate) fn field_name(&self) -> Option<&str> {
+        match self {
+            Self::SetFieldValue { name, .. } => Some(name),
+            Self::RotatePages { .. }
+            | Self::DeletePages { .. }
+            | Self::MovePages { .. }
+            | Self::InsertBlankPage { .. }
+            | Self::SetInfo { .. }
+            | Self::InsertPagesFrom { .. }
+            | Self::AddTextMarkup { .. }
+            | Self::AddNote { .. }
+            | Self::DeleteAnnotation { .. }
+            | Self::SetAnnotationContents { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. }
+            | Self::MoveAnnotation { .. } => None,
         }
     }
 
@@ -559,7 +597,8 @@ impl Edit {
             | Self::SetInfo { .. }
             | Self::InsertPagesFrom { .. }
             | Self::DeleteAnnotation { .. }
-            | Self::SetAnnotationContents { .. } => false,
+            | Self::SetAnnotationContents { .. }
+            | Self::SetFieldValue { .. } => false,
             // A move's distance as shown is turned with the page into the file's space.
             Self::AddTextMarkup { .. }
             | Self::AddNote { .. }

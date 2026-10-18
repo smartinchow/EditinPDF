@@ -7,6 +7,7 @@ use pdfcraft_engine::{DocId, Session};
 
 use crate::annotations::{self, AnnotationInfo};
 use crate::edit::{Edit, EditCapabilities, EditOutcome, SaveMode};
+use crate::forms::{self, FormField};
 use crate::render::{self, RendererPool};
 use crate::text::{self, EnginePageText, MAX_SEARCH_HITS};
 use crate::text_cache::TextCache;
@@ -259,6 +260,33 @@ fn destination_check(session: &Session, id: DocId) -> Result<(), EditError> {
     Ok(())
 }
 
+/// Whether every form field `edits` fill in is one the document has, refused as `Invalid` when one
+/// is not: the bridge does not rely on the engine to turn an unknown name away. Names are read
+/// against the fields as they are before the step, so a field that pages taken from another PDF
+/// bring in can be filled in from the next step on, not in the step that inserts them.
+///
+/// A document that does not let its fields be filled in at all (one that cannot be edited, or
+/// whose security settings forbid it) is left to the engine, so the reason given is the
+/// document's own, as for pages taken from another PDF.
+fn field_check(session: &Session, id: DocId, edits: &[Edit]) -> Result<(), EditError> {
+    let doc = session.get(id).ok_or_else(|| EditError::Failed {
+        message: "the document is no longer open".to_owned(),
+    })?;
+    if !doc.allows_form_filling() {
+        return Ok(());
+    }
+    match edits
+        .iter()
+        .filter_map(Edit::field_name)
+        .find(|name| !doc.form.iter().any(|field| field.name == *name))
+    {
+        Some(name) => Err(EditError::Invalid {
+            message: format!("there is no form field named {name:?}"),
+        }),
+        None => Ok(()),
+    }
+}
+
 /// For `apply`: the engine makes an edit on a copy and puts the old state back when it cannot
 /// show the result, so only an error the bridge reports as `Failed` (writing, reopening, a panic
 /// the engine caught) may leave something changed. A refused or invalid edit changes nothing.
@@ -453,9 +481,10 @@ impl PdfDocument {
     ///
     /// Fails with `ReadOnly` for a document that cannot be edited, `NotPermitted` when its security
     /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
-    /// for a change that does not fit the document (a page or comment it does not have, a turn that
-    /// is not a multiple of 90 degrees, a size that is not a positive, finite number of at most
-    /// 14,400 points, text markup without a box, a position or colour that is not a number), `SourceNeedsPassword`, `SourceNotPermitted` or `SourceUnreadable` for pages taken
+    /// for a change that does not fit the document (a page, comment or form field it does not have,
+    /// a turn that is not a multiple of 90 degrees, a size that is not a positive, finite number of
+    /// at most 14,400 points, text markup without a box, a position or colour that is not a number,
+    /// a value its field does not take or a field that is read-only), `SourceNeedsPassword`, `SourceNotPermitted` or `SourceUnreadable` for pages taken
     /// from a PDF that needs a password, does not allow its pages to be copied, or cannot be read
     /// (the document's own refusal comes first: the source is not read then), and `Failed` when the engine cannot make it. After any error but `Failed` the document is as it
     /// was; after `Failed` it may not be, and the revision has gone up by one all the same, so the
@@ -466,6 +495,7 @@ impl PdfDocument {
                 if edit.takes_source() {
                     destination_check(session, id)?;
                 }
+                field_check(session, id, std::slice::from_ref(&edit))?;
                 let edit = edit.to_engine(pages)?;
                 session.apply(id, edit)?;
                 Ok(undo_label(session, id))
@@ -482,8 +512,9 @@ impl PdfDocument {
     /// changes the pages (turns, deletes, moves or inserts) cannot also carry a change with a
     /// position: that is refused as `Invalid`. Likewise a step that deletes, moves or inserts pages
     /// cannot also delete a comment or change its text, which address the comment by its page as it
-    /// is before the step (turning pages keeps their numbers, so that mix is allowed). Otherwise the
-    /// errors are those of `apply`.
+    /// is before the step (turning pages keeps their numbers, so that mix is allowed). Filling in a
+    /// form field addresses it by its name, so it goes with any page change. Otherwise the errors
+    /// are those of `apply`.
     pub fn apply_all(
         &self,
         label: String,
@@ -508,6 +539,7 @@ impl PdfDocument {
                 if edits.iter().any(Edit::takes_source) {
                     destination_check(session, id)?;
                 }
+                field_check(session, id, &edits)?;
                 let edits = edits
                     .iter()
                     .map(|edit| edit.to_engine(pages))
@@ -663,6 +695,15 @@ impl PdfDocument {
         // Only reads what the engine read when it opened or last changed the document, and turns
         // the boxes with the page's plain arithmetic: nothing here can panic.
         self.read(Vec::new(), |doc| annotations::list(&doc.info))
+    }
+
+    /// The document's form fields, in the document's order, with their widgets in view space.
+    /// A hidden widget, or one on no page, is left out, and so is a field with no other widget.
+    /// Read the list again after every change, undo and redo.
+    pub fn form_fields(&self) -> Vec<FormField> {
+        // Only reads what the engine read when it opened or last changed the document, and turns
+        // the boxes with the page's plain arithmetic: nothing here can panic.
+        self.read(Vec::new(), |doc| forms::list(&doc.info.pages, &doc.form))
     }
 }
 
