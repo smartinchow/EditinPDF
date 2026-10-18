@@ -75,7 +75,11 @@ final class PageView: UIView {
                 cover?.removeFromSuperview()
             }
         }
-        layer.setNeedsDisplay()
+        if let tiledLayer = layer as? PageTiledLayer {
+            tiledLayer.invalidateContent()
+        } else {
+            layer.setNeedsDisplay()
+        }
         redrawCount += 1
     }
 
@@ -105,18 +109,35 @@ final class PageView: UIView {
 /// Swift 6 that is why the drawing is here and not in the view: `UIView` is main-actor isolated,
 /// `CALayer` is not. The drawing reads nothing of the view: only its context, the layer's own
 /// bounds (Core Animation allows any thread to read a layer's properties), and `Source`, immutable
-/// values that are `Sendable`.
+/// values that are `Sendable`, and a generation count behind a lock.
 ///
 /// UIKit makes a view's layer itself, with `init()`, so the source cannot be an initializer
 /// argument: the view attaches it straight after, before the layer is ever shown, and it never
 /// changes. It is kept behind a lock so the tile threads read it safely; every stored property is
 /// a `let`.
 final class PageTiledLayer: CATiledLayer {
-    /// What to draw: page `page` of `document`, whose size is `pointSize` PDF points.
+    /// Draws part of page `page` (counting from 0) at `scale` device pixels to the PDF point: the
+    /// engine's `renderTile`; tests stand in for it.
+    typealias Render = @Sendable (_ page: UInt32, _ scale: Double, _ rect: TileRect) throws -> RenderedTile
+
+    /// What to draw: page `page`, whose size is `pointSize` PDF points, drawn by `render`.
     struct Source: Sendable {
-        let document: PdfDocument
         let page: UInt32
         let pointSize: CGSize
+        let render: Render
+
+        /// Page `page` of `document`.
+        init(document: PdfDocument, page: UInt32, pointSize: CGSize) {
+            self.init(page: page, pointSize: pointSize) { page, scale, rect in
+                try document.renderTile(page: page, scale: scale, rect: rect)
+            }
+        }
+
+        init(page: UInt32, pointSize: CGSize, render: @escaping Render) {
+            self.page = page
+            self.pointSize = pointSize
+            self.render = render
+        }
     }
 
     private static let log = Logger(subsystem: Diagnostics.subsystem, category: "tiles")
@@ -127,6 +148,20 @@ final class PageTiledLayer: CATiledLayer {
     private static let signposter = OSSignposter(subsystem: Diagnostics.subsystem, category: .pointsOfInterest)
 
     private let sourceLock = OSAllocatedUnfairLock<Source?>(initialState: nil)
+    /// Moved on by `invalidateContent()` each time the page changes. A tile reads it before asking the
+    /// engine and again with the pixels in hand: if it moved meanwhile, the engine may have drawn the
+    /// page as it was before the change, and the tile is not kept.
+    private let generationLock = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+
+    /// How many times the page has changed under the layer (`invalidateContent()`).
+    var generation: UInt64 { generationLock.withLock { $0 } }
+
+    /// The page has changed: tiles being drawn now are dropped when they are done, and every tile is
+    /// drawn again.
+    func invalidateContent() {
+        generationLock.withLock { $0 &+= 1 }
+        setNeedsDisplay()
+    }
 
     override init() {
         super.init()
@@ -165,6 +200,7 @@ final class PageTiledLayer: CATiledLayer {
             // size (the engine reported an empty page box).
             return fail(ctx, clip, page: source.page, reason: "no pixels to ask for: page \(source.pointSize), layer \(bounds.size)")
         }
+        let generation = self.generation
         let image: CGImage
         do {
             let rect = request.rect
@@ -172,7 +208,7 @@ final class PageTiledLayer: CATiledLayer {
                 "renderTile", id: Self.signposter.makeSignpostID(),
                 "page \(source.page) scale \(request.scale) x \(rect.x) y \(rect.y) w \(rect.width) h \(rect.height)"
             ) {
-                try source.document.renderTile(page: source.page, scale: request.scale, rect: rect)
+                try source.render(source.page, request.scale, rect)
             }
             guard let made = TileRenderer.image(for: tile) else {
                 return fail(ctx, clip, page: source.page, reason: "the pixels do not fill \(tile.width) x \(tile.height)")
@@ -180,6 +216,17 @@ final class PageTiledLayer: CATiledLayer {
             image = made
         } catch {
             return fail(ctx, clip, page: source.page, reason: String(describing: error))
+        }
+        // The page changed while the engine drew: these pixels may be of the page as it was. Paper
+        // instead, and the tile is asked for again (`setNeedsDisplay` already did that for the whole
+        // layer; asking again for this rect, on the main thread, covers a request Core Animation had
+        // already counted as done).
+        guard generation == self.generation else {
+            ctx.setFillColor(gray: 1, alpha: 1)
+            ctx.fill(clip)
+            nonisolated(unsafe) let layer = self
+            DispatchQueue.main.async { layer.setNeedsDisplay(clip) }
+            return
         }
         ctx.saveGState()
         // Core Animation gives a layer a y-down context, and an image is drawn with its first row at
