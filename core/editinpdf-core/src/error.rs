@@ -74,9 +74,14 @@ pub enum EditError {
     /// The document to take pages from is encrypted and no password was given for it.
     #[error("the other document needs a password")]
     SourceNeedsPassword,
-    /// The document to take pages from could not be read. `message` says why.
+    /// The document to take pages from could not be read as a PDF: damaged, not a PDF at all, or
+    /// using something the engine does not support. `message` says why.
     #[error("{message}")]
     SourceUnreadable { message: String },
+    /// The document to take pages from is readable, but its security settings do not allow its
+    /// pages to be copied.
+    #[error("the other PDF doesn't allow its pages to be copied")]
+    SourceNotPermitted,
     /// There is no change to undo.
     #[error("nothing to undo")]
     NothingToUndo,

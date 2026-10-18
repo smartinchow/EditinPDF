@@ -192,6 +192,12 @@ impl Edit {
         }
     }
 
+    /// Whether the edit takes pages from another PDF, which is read only once the document is
+    /// known to accept them.
+    pub(crate) fn takes_source(&self) -> bool {
+        matches!(self, Self::InsertPagesFrom { .. })
+    }
+
     /// Whether the edit carries a position on a page, which is converted against the pages as they
     /// are before it.
     pub(crate) fn has_geometry(&self) -> bool {
@@ -220,17 +226,26 @@ fn indices(pages: &[u32]) -> Result<Vec<usize>, EditError> {
 }
 
 /// Whether the engine can take pages from `bytes`, as a typed error when it cannot: a source that
-/// needs a password, or one it cannot read or whose security settings forbid copying its pages.
+/// needs a password, one whose security settings forbid copying its pages, or one it cannot read.
 fn source_check(bytes: &Arc<Vec<u8>>) -> Result<(), EditError> {
+    pdfcraft_engine::combine_source_check(bytes, None).map_err(map_source_problem)
+}
+
+/// The bridge's error for why the engine cannot take pages from a source.
+fn map_source_problem(problem: pdfcraft_engine::SourceProblem) -> EditError {
     use pdfcraft_engine::SourceProblem;
-    pdfcraft_engine::combine_source_check(bytes, None).map_err(|problem| match problem {
+    // Every variant is named so that one added upstream stops the build here and gets classified.
+    match problem {
         SourceProblem::Password => EditError::SourceNeedsPassword,
-        SourceProblem::WrongPassword
-        | SourceProblem::NotPermitted
-        | SourceProblem::Unreadable(_) => EditError::SourceUnreadable {
-            message: problem.to_string(),
-        },
-    })
+        SourceProblem::NotPermitted => EditError::SourceNotPermitted,
+        // No password is given, so a wrong one cannot happen; were it to, the source still
+        // cannot be read.
+        SourceProblem::WrongPassword | SourceProblem::Unreadable(_) => {
+            EditError::SourceUnreadable {
+                message: problem.to_string(),
+            }
+        }
+    }
 }
 
 /// A blank page's side, once it is known to be a size a page can have.
@@ -248,6 +263,26 @@ pub(crate) fn page_side(points: f64) -> Result<f64, EditError> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_source_problem_becomes_the_matching_error() {
+        assert_eq!(
+            map_source_problem(pdfcraft_engine::SourceProblem::Password),
+            EditError::SourceNeedsPassword
+        );
+        assert_eq!(
+            map_source_problem(pdfcraft_engine::SourceProblem::NotPermitted),
+            EditError::SourceNotPermitted
+        );
+        assert!(matches!(
+            map_source_problem(pdfcraft_engine::SourceProblem::Unreadable("bad".to_owned())),
+            EditError::SourceUnreadable { .. }
+        ));
+        assert!(matches!(
+            map_source_problem(pdfcraft_engine::SourceProblem::WrongPassword),
+            EditError::SourceUnreadable { .. }
+        ));
+    }
 
     #[test]
     fn turns_and_sizes_are_checked() {

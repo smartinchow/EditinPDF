@@ -138,3 +138,45 @@ fn extracted_pages_of_an_encrypted_document_open_without_its_password() {
     assert_eq!(out.page_count(), 1);
     assert!(text_of(&out, 0).contains("other"));
 }
+
+#[test]
+fn a_source_that_forbids_copying_its_pages_is_not_permitted() {
+    let doc = PdfDocument::open(fixtures::text_doc(&["one"]), None).unwrap();
+    let source = fixtures::restricted_doc(&["kept"], "owner");
+    assert!(matches!(
+        doc.apply(
+            Edit::InsertPagesFrom {
+                name: "r.pdf".into(),
+                bytes: source,
+                pages: None,
+                at: 0
+            },
+            0
+        ),
+        Err(EditError::SourceNotPermitted)
+    ));
+    assert_eq!(doc.revision(), 0);
+    assert_eq!(doc.page_count(), 1);
+}
+
+#[test]
+fn a_document_that_forbids_page_changes_refuses_before_reading_the_source() {
+    let doc = PdfDocument::open(fixtures::restricted_doc(&["one"], "owner"), None).unwrap();
+    assert!(!doc.capabilities().can_organize);
+    // An unreadable source: the document's own refusal is the one reported.
+    let insert = Edit::InsertPagesFrom {
+        name: "g.pdf".into(),
+        bytes: b"nope".to_vec(),
+        pages: None,
+        at: 0,
+    };
+    assert!(matches!(
+        doc.apply(insert.clone(), 0),
+        Err(EditError::NotPermitted { .. })
+    ));
+    assert!(matches!(
+        doc.apply_all("Insert".into(), vec![insert], 0),
+        Err(EditError::NotPermitted { .. })
+    ));
+    assert_eq!(doc.revision(), 0);
+}

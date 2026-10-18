@@ -238,6 +238,26 @@ impl PdfDocument {
     }
 }
 
+/// Whether the document accepts pages taken from another PDF, as the engine would refuse them:
+/// `ReadOnly` when it cannot be edited, `NotPermitted` when its security settings forbid page
+/// changes. Checked before the source is read, so a document that would refuse the pages anyway
+/// never parses the source, and the reason given is the document's own.
+fn destination_check(session: &Session, id: DocId) -> Result<(), EditError> {
+    let doc = session.get(id).ok_or_else(|| EditError::Failed {
+        message: "the document is no longer open".to_owned(),
+    })?;
+    if !doc.editable() {
+        return Err(pdfcraft_engine::EditError::ReadOnly(
+            doc.read_only_reason.clone().unwrap_or_default(),
+        )
+        .into());
+    }
+    if !doc.allows_assembly() {
+        return Err(pdfcraft_engine::EditError::NotPermitted("page changes").into());
+    }
+    Ok(())
+}
+
 /// For `apply`: the engine makes an edit on a copy and puts the old state back when it cannot
 /// show the result, so only an error the bridge reports as `Failed` (writing, reopening, a panic
 /// the engine caught) may leave something changed. A refused or invalid edit changes nothing.
@@ -434,14 +454,17 @@ impl PdfDocument {
     /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
     /// for a change that does not fit the document (a page it does not have, a turn that is not a
     /// multiple of 90 degrees, a size that is not a positive, finite number of at most 14,400
-    /// points), `SourceNeedsPassword` or `SourceUnreadable` for pages taken from a PDF that needs a
-    /// password or cannot be read (or whose security settings forbid copying its pages), and
-    /// `Failed` when the engine cannot make it. After any error but `Failed` the document is as it
+    /// points), `SourceNeedsPassword`, `SourceNotPermitted` or `SourceUnreadable` for pages taken
+    /// from a PDF that needs a password, does not allow its pages to be copied, or cannot be read
+    /// (the document's own refusal comes first: the source is not read then), and `Failed` when the engine cannot make it. After any error but `Failed` the document is as it
     /// was; after `Failed` it may not be, and the revision has gone up by one all the same, so the
     /// apps should read the document again.
     pub fn apply(&self, edit: Edit, base_revision: u64) -> Result<EditOutcome, EditError> {
         self.mutate(
             |session, id, pages| {
+                if edit.takes_source() {
+                    destination_check(session, id)?;
+                }
                 let edit = edit.to_engine(pages)?;
                 session.apply(id, edit)?;
                 Ok(undo_label(session, id))
@@ -471,6 +494,9 @@ impl PdfDocument {
         }
         self.mutate(
             |session, id, pages| {
+                if edits.iter().any(Edit::takes_source) {
+                    destination_check(session, id)?;
+                }
                 let edits = edits
                     .iter()
                     .map(|edit| edit.to_engine(pages))
