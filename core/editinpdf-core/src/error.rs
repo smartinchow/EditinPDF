@@ -47,12 +47,16 @@ pub enum RenderError {
     Failed { message: String },
 }
 
-/// Why an edit, an undo or a redo did not happen. Whatever the reason, the document is as it was.
+/// Why an edit, an undo or a redo did not happen.
+///
+/// The document is as it was, except possibly after `Failed`: undo and redo can fail after the
+/// engine has already changed the document, and so can a change that panics. Then the revision has
+/// moved on all the same, and the apps should read the document again.
 #[derive(Clone, Debug, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum EditError {
     /// The document cannot be edited at all (for example, it is encrypted in a way the engine can
-    /// read but not write). `message` says why.
-    #[error("this document can't be edited: {message}")]
+    /// read but not write). `message` says why, and may be empty when the engine gave no reason.
+    #[error("{}", read_only(.message))]
     ReadOnly { message: String },
     /// The document's security settings do not allow this change. `message` says which.
     #[error("{message}")]
@@ -137,8 +141,9 @@ pub enum SaveError {
     /// an incremental save keeps them.
     #[error("this document is signed: rewriting it would invalidate its signatures")]
     Signed,
-    /// The document cannot be edited, so it cannot be rewritten. `message` says why.
-    #[error("this document can't be edited: {message}")]
+    /// The document cannot be edited, so it cannot be rewritten. `message` says why, and may be
+    /// empty when the engine gave no reason.
+    #[error("{}", read_only(.message))]
     ReadOnly { message: String },
     /// The engine could not write the document, or failed while writing it. `message` says what
     /// was wrong.
@@ -156,5 +161,43 @@ impl From<pdfcraft_engine::EditError> for SaveError {
                 message: err.to_string(),
             },
         }
+    }
+}
+
+/// The sentence for a document that cannot be edited, with the engine's reason when it gave one.
+fn read_only(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        "this document can't be edited".to_owned()
+    } else {
+        format!("this document can't be edited: {reason}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_read_only_document_without_a_reason_reads_as_a_plain_sentence() {
+        let none = String::new();
+        assert_eq!(
+            EditError::ReadOnly {
+                message: none.clone()
+            }
+            .to_string(),
+            "this document can't be edited"
+        );
+        assert_eq!(
+            SaveError::ReadOnly { message: none }.to_string(),
+            "this document can't be edited"
+        );
+        assert_eq!(
+            EditError::ReadOnly {
+                message: "it is encrypted".to_owned()
+            }
+            .to_string(),
+            "this document can't be edited: it is encrypted"
+        );
     }
 }

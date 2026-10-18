@@ -209,7 +209,8 @@ fn saves_racing_edits_always_reopen_whole() {
             }
         })
     };
-    let mut saves = Vec::new();
+    // At least one save, even when the editor finishes first, so the test never checks nothing.
+    let mut saves = vec![doc.save(SaveMode::Incremental).unwrap()];
     while !editor.is_finished() {
         saves.push(doc.save(SaveMode::Incremental).unwrap());
     }

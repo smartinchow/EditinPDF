@@ -163,12 +163,20 @@ impl PdfDocument {
     /// `f` is given the session, the document's id and its pages as they are before the change,
     /// and returns the change's label. With `base_revision`, the change is refused as `Stale` unless
     /// the document is still at that revision.
+    ///
+    /// A failure can come after the engine has already changed the document: undo and redo swap the
+    /// state in before they refresh the view data, and do not swap it back when that fails, and a
+    /// panic can strike anywhere. So the revision is bumped and the caches retired after a panic,
+    /// and after an error that `may_have_changed` says can follow a change, just as after a success.
+    /// The caller still gets the error; a bump the document did not need only makes the apps read it
+    /// again.
     fn mutate(
         &self,
         f: impl FnOnce(&mut Session, DocId, &[pdfcraft_render::PageInfo]) -> Result<String, EditError>,
         base_revision: Option<u64>,
+        may_have_changed: fn(&EditError) -> bool,
     ) -> Result<EditOutcome, EditError> {
-        let (outcome, old_pool, retired) = {
+        let (result, old_pool, retired) = {
             let mut inner = self.lock();
             if let Some(base) = base_revision
                 && base != inner.revision
@@ -185,24 +193,42 @@ impl PdfDocument {
                 .ok_or_else(|| EditError::Failed {
                     message: "the document is no longer open".to_owned(),
                 })?;
-            let label = panic::catch_unwind(AssertUnwindSafe(|| f(&mut inner.session, id, &pages)))
-                .unwrap_or_else(|_| {
-                    Err(EditError::Failed {
-                        message: "the engine failed while changing the document".to_owned(),
-                    })
-                })?;
+            let (result, changed) =
+                match panic::catch_unwind(AssertUnwindSafe(|| f(&mut inner.session, id, &pages))) {
+                    Ok(Ok(label)) => (Ok(label), true),
+                    Ok(Err(err)) => {
+                        let changed = may_have_changed(&err);
+                        (Err(err), changed)
+                    }
+                    Err(_) => (
+                        Err(EditError::Failed {
+                            message: "the engine failed while changing the document".to_owned(),
+                        }),
+                        true,
+                    ),
+                };
+            if !changed {
+                return result.map(|label| EditOutcome {
+                    revision: inner.revision,
+                    label,
+                });
+            }
             inner.revision += 1;
             let revision = inner.revision;
             let old_pool = inner.renderers.take();
             inner.text_cache.advance(revision);
             let retired = inner.text_cache.take_retired();
-            (EditOutcome { revision, label }, old_pool, retired)
+            (
+                result.map(|label| EditOutcome { revision, label }),
+                old_pool,
+                retired,
+            )
         };
         // Freeing the old revision's renderers and text is slow enough to keep out of the lock. A
         // render still under way holds its own reference to the pool, and frees it when it ends.
         drop(old_pool);
         drop(retired);
-        Ok(outcome)
+        result
     }
 
     /// Reads the document under the lock; `default` when it is no longer open.
@@ -210,6 +236,19 @@ impl PdfDocument {
         let inner = self.lock();
         inner.session.get(inner.id).map_or(default, f)
     }
+}
+
+/// For `apply`: the engine makes an edit on a copy and puts the old state back when it cannot
+/// show the result, so only an error the bridge reports as `Failed` (writing, reopening, a panic
+/// the engine caught) may leave something changed. A refused or invalid edit changes nothing.
+fn apply_may_have_changed(err: &EditError) -> bool {
+    matches!(err, EditError::Failed { .. })
+}
+
+/// For `undo` and `redo`: the engine swaps the state in before it refreshes the view data, and
+/// does not swap it back when that fails. Only finding nothing to undo or redo changes nothing.
+fn step_may_have_changed(err: &EditError) -> bool {
+    !matches!(err, EditError::NothingToUndo | EditError::NothingToRedo)
 }
 
 /// The label of the change on top of the undo stack: the one just made or redone.
@@ -395,8 +434,9 @@ impl PdfDocument {
     /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
     /// for a change that does not fit the document (a page it does not have, a turn that is not a
     /// multiple of 90 degrees, a size that is not a positive, finite number of at most 14,400
-    /// points), and `Failed` when the engine cannot make it. Whatever the error, the document is as
-    /// it was.
+    /// points), and `Failed` when the engine cannot make it. After any error but `Failed` the
+    /// document is as it was; after `Failed` it may not be, and the revision has gone up by one all
+    /// the same, so the apps should read the document again.
     pub fn apply(&self, edit: Edit, base_revision: u64) -> Result<EditOutcome, EditError> {
         self.mutate(
             |session, id, pages| {
@@ -405,6 +445,7 @@ impl PdfDocument {
                 Ok(undo_label(session, id))
             },
             Some(base_revision),
+            apply_may_have_changed,
         )
     }
 
@@ -436,26 +477,33 @@ impl PdfDocument {
                 Ok(undo_label(session, id))
             },
             Some(base_revision),
+            apply_may_have_changed,
         )
     }
 
     /// Takes back the last change made or redone. The revision goes up by one, as for an edit.
     ///
     /// Fails with `NothingToUndo` when there is none, and `Failed` when the engine cannot undo it.
+    /// The engine can fail after it has already taken the change back, so after `Failed` the
+    /// revision has gone up by one all the same, and the apps should read the document again.
     pub fn undo(&self) -> Result<EditOutcome, EditError> {
         self.mutate(
             |session, id, _| Ok(session.undo(id)?.as_str().to_owned()),
             None,
+            step_may_have_changed,
         )
     }
 
     /// Makes again the last change undone. The revision goes up by one, as for an edit.
     ///
     /// Fails with `NothingToRedo` when there is none, and `Failed` when the engine cannot redo it.
+    /// The engine can fail after it has already made the change again, so after `Failed` the
+    /// revision has gone up by one all the same, and the apps should read the document again.
     pub fn redo(&self) -> Result<EditOutcome, EditError> {
         self.mutate(
             |session, id, _| Ok(session.redo(id)?.as_str().to_owned()),
             None,
+            step_may_have_changed,
         )
     }
 
@@ -601,21 +649,80 @@ mod tests {
     fn a_change_that_panics_is_a_failure_and_leaves_the_document_usable() {
         let doc = open_pages(&["one", "two"]);
         let err = doc
-            .mutate(|_, _, _| panic!("an engine bug"), Some(0))
+            .mutate(|_, _, _| panic!("an engine bug"), Some(0), |_| false)
             .unwrap_err();
         assert!(matches!(err, EditError::Failed { .. }));
         assert!(!doc.inner.is_poisoned(), "the lock is not poisoned");
-        assert_eq!(doc.revision(), 0, "nothing changed");
+        // The panic may have left the engine half changed, so the revision moves on all the same.
+        assert_eq!(doc.revision(), 1);
         let out = doc
             .apply(
                 Edit::RotatePages {
                     pages: vec![0],
                     degrees: 90,
                 },
-                0,
+                1,
             )
             .unwrap();
-        assert_eq!((out.revision, out.label.as_str()), (1, "Rotate page"));
+        assert_eq!((out.revision, out.label.as_str()), (2, "Rotate page"));
+    }
+
+    /// The renderers built for the current revision, as a draw would get them.
+    fn current_pool(doc: &PdfDocument) -> Arc<RendererPool> {
+        doc.lock().render_pool(0).unwrap()
+    }
+
+    #[test]
+    fn a_failure_after_the_engine_changed_the_document_moves_the_revision_on() {
+        let rotate = || pdfcraft_engine::Edit::RotatePages {
+            pages: vec![0],
+            degrees: 90,
+        };
+        // An error after the change, as undo or redo can give when refreshing fails.
+        let doc = open_one_page();
+        let pool = current_pool(&doc);
+        let err = doc
+            .mutate(
+                |session, id, _| {
+                    session.apply(id, rotate())?;
+                    Err(EditError::Failed {
+                        message: "refresh failed".to_owned(),
+                    })
+                },
+                Some(0),
+                step_may_have_changed,
+            )
+            .unwrap_err();
+        assert!(matches!(err, EditError::Failed { .. }));
+        assert_eq!(doc.revision(), 1);
+        assert!(doc.lock().renderers.is_none(), "the old pool is retired");
+        assert!(!Arc::ptr_eq(&pool, &current_pool(&doc)));
+        assert_eq!(doc.page_info(0).unwrap().rotation_degrees, 90);
+
+        // A panic after the change, whatever the call.
+        let doc = open_one_page();
+        let pool = current_pool(&doc);
+        let err = doc
+            .mutate(
+                |session, id, _| {
+                    session.apply(id, rotate())?;
+                    panic!("an engine bug after the change");
+                },
+                Some(0),
+                |_| false,
+            )
+            .unwrap_err();
+        assert!(matches!(err, EditError::Failed { .. }));
+        assert_eq!(doc.revision(), 1);
+        assert!(!Arc::ptr_eq(&pool, &current_pool(&doc)));
+
+        // Nothing to undo changes nothing, and keeps the revision and the pool.
+        let doc = open_one_page();
+        let pool = current_pool(&doc);
+        assert!(matches!(doc.undo(), Err(EditError::NothingToUndo)));
+        assert!(matches!(doc.redo(), Err(EditError::NothingToRedo)));
+        assert_eq!(doc.revision(), 0);
+        assert!(Arc::ptr_eq(&pool, &current_pool(&doc)));
     }
 
     #[test]
