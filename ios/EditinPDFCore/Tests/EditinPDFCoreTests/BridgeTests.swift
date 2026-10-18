@@ -20,4 +20,16 @@ final class BridgeTests: XCTestCase {
             guard case OpenError.Corrupt = error else { return XCTFail("expected Corrupt, got \(error)") }
         }
     }
+    func testEditSaveReopenFromSwift() throws {
+        let doc = try PdfDocument.open(bytes: fixture(), password: nil)
+        let outcome = try doc.apply(edit: .insertBlankPage(at: 1, widthPt: 200, heightPt: 300), baseRevision: 0)
+        XCTAssertEqual(outcome.revision, 1)
+        XCTAssertThrowsError(try doc.apply(edit: .deletePages(pages: [0]), baseRevision: 0)) { error in
+            guard case EditError.Stale(let current) = error else { return XCTFail("\(error)") }
+            XCTAssertEqual(current, 1)
+        }
+        let back = try PdfDocument.open(bytes: doc.save(mode: .incremental), password: nil)
+        XCTAssertEqual(back.pageCount(), 2)
+        XCTAssertEqual(try PdfDocument.open(bytes: blankDocument(widthPt: 595, heightPt: 842), password: nil).pageCount(), 1)
+    }
 }

@@ -568,6 +568,23 @@ final class SelectionProbe: PdfDocumentProtocol, @unchecked Sendable {
         note(.range(page: page, start: start, end: end))
         return try document.selectRange(page: page, start: start, end: end)
     }
+
+    // Editing API: plain forwards, the selection tests never edit.
+    func apply(edit: Edit, baseRevision: UInt64) throws -> EditOutcome { try document.apply(edit: edit, baseRevision: baseRevision) }
+    func applyAll(label: String, edits: [Edit], baseRevision: UInt64) throws -> EditOutcome {
+        try document.applyAll(label: label, edits: edits, baseRevision: baseRevision)
+    }
+    func undo() throws -> EditOutcome { try document.undo() }
+    func redo() throws -> EditOutcome { try document.redo() }
+    func canUndo() -> Bool { document.canUndo() }
+    func canRedo() -> Bool { document.canRedo() }
+    func isDirty() -> Bool { document.isDirty() }
+    func save(mode: SaveMode) throws -> Data { try document.save(mode: mode) }
+    func extractPages(pages: [UInt32]) throws -> Data { try document.extractPages(pages: pages) }
+    func annotations() -> [AnnotationInfo] { document.annotations() }
+    func formFields() -> [FormField] { document.formFields() }
+    func formFieldsTruncated() -> Bool { document.formFieldsTruncated() }
+    func capabilities() -> EditCapabilities { document.capabilities() }
 }
 
 extension Array where Element == SelectionProbe.Call {
