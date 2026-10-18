@@ -185,3 +185,14 @@ XCTest unit tests for `DocumentModel` (fixture PDFs in the test bundle): open, p
 | Renderer not thread-safe | Thread-local renderer fallback (4.4) |
 | Large/hostile PDFs | Engine is fuzzed upstream; UniFFI turns panics into errors; tiles capped; open runs off the main thread |
 | Upstream ships its own mobile app | Irrelevant for a free app; our value is the native UX |
+
+## M2–M3 scope update (2026-10-18)
+
+Decided while planning M2–M3 (`docs/superpowers/plans/2026-10-18-m2-m3-editor.md`); these amend §4.2–4.3 and §5.
+
+- **Document scene:** `DocumentGroup(newDocument:editor:)` + `ReferenceFileDocument` stay. Both are deprecated in the iOS 27 SDK, but their replacements require iOS 27 and the app targets iOS 17; the warnings are accepted. "New" creates a one-page blank PDF (Letter in the US measurement system, else A4).
+- **Save:** the snapshot is the engine document itself; `fileWrapper` writes `save(.incremental)` off the main thread, so every save is the original bytes plus one appended update. `markSaved` is not exposed or called (a failed write can never leave the engine believing it saved). The original bytes are no longer kept beside the engine's copy.
+- **Bridge API changes:** `apply(edit, baseRevision)` refuses an edit computed for an older revision (`EditError.Stale`); `batch` is a separate `applyAll(label, edits, baseRevision)` (no recursive enum across FFI), and a batch may not mix page-structure edits with geometry-bearing annotation edits; `undo`/`redo` return `EditOutcome { revision, label }` and fail with `NothingToUndo/NothingToRedo`; `pageAnnotations(i)` is `annotations()` for the whole document (each record carries its page); annotations are addressed by their **position in the page's `/Annots`** (`index`), which shifts when an earlier one is deleted — the app re-reads them every revision. Added: `capabilities()`, `blankDocument(widthPt, heightPt)`, `Edit.addLine(arrow:)`, `Edit.addSignature`, `FieldValue.radio(state:)`; `FormField` lists all its widgets (radio groups have several). Colours are `RgbColor` (not `Color`, which clashes with SwiftUI).
+- **Tool palettes adapt to width:** compact width = bottom tool bar with sheets; regular width = leading side palette with popovers; re-evaluated on width changes (iPhone Duo, iPad split view). All toolbar items are title + icon labels.
+- **Added scope:** arrows (engine `Line` with `OpenArrow` ending), eraser (deletes whole annotations), optional "Sign" (a locally stored drawn signature placed as an engine `Signature` ink annotation; not a digital signature).
+- **Known limits:** text boxes are not offered on turned (`/Rotate` ≠ 0) pages until the engine draws FreeText upright there; pages extracted from a password-protected file are written without protection (the UI says so).
