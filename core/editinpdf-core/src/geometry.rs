@@ -77,8 +77,7 @@ pub(crate) fn rect_to_quad(page: &PageInfo, r: &Rect) -> [f64; 8] {
 }
 
 /// A view-space displacement as a user-space one: how far a move by `(dx, dy)` as shown goes in
-/// the file. For moving annotations, which the next editing step adds.
-#[allow(dead_code)]
+/// the file. For moving annotations.
 pub(crate) fn delta_to_user(page: &PageInfo, dx: f64, dy: f64) -> [f64; 2] {
     let [ox, oy] = to_user(page, Point { x: 0.0, y: 0.0 });
     let [x, y] = to_user(page, Point { x: dx, y: dy });

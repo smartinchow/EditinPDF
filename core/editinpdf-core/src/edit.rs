@@ -12,6 +12,17 @@ use crate::{EditError, Rect, geometry};
 /// measure (ISO 32000-1, Annex C).
 const MAX_PAGE_SIDE_PT: f64 = 14_400.0;
 
+/// The most strokes one drawing may have.
+const MAX_STROKES: usize = 500;
+/// The most points one stroke may have.
+const MAX_STROKE_POINTS: usize = 10_000;
+/// The thinnest and thickest a drawn line may be, in points.
+const LINE_WIDTHS: std::ops::RangeInclusive<f64> = 0.1..=50.0;
+/// The smallest and largest a text box's text may be, in points.
+const FONT_SIZES: std::ops::RangeInclusive<f64> = 4.0..=144.0;
+/// The least a drawn box or line measures, in points.
+const MIN_SIDE_PT: f64 = 1.0;
+
 /// A point in view space: points from the page's top-left corner as shown.
 #[derive(uniffi::Record, Clone, Copy, Debug, PartialEq)]
 pub struct Point {
@@ -145,6 +156,64 @@ pub enum Edit {
         page: u32,
         index: u32,
         contents: String,
+    },
+    /// Adds a freehand drawing: `strokes` are the lines drawn, each the points it passed through,
+    /// `width` points wide (0.1 through 50). At most 500 strokes of at most 10 000 points; at least
+    /// one stroke has a point (a stroke of one point is a dot, and empty strokes are left out).
+    AddInk {
+        page: u32,
+        strokes: Vec<Vec<Point>>,
+        color: RgbColor,
+        width: f64,
+    },
+    /// Adds a drawn signature: strokes as for `AddInk`, kept as a signature (a drawing in the file).
+    AddSignature {
+        page: u32,
+        strokes: Vec<Vec<Point>>,
+        color: RgbColor,
+        width: f64,
+    },
+    /// Adds a box showing `text` in `color`, `font_size` points (4 through 144), with no border
+    /// and no background. `rect` is at least 1 point wide and tall.
+    ///
+    /// The engine sets the text upright in the file's own space, so on a page turned by a quarter
+    /// or three quarters (`PageInfo.rotation_degrees` 90 or 270) the box is where it was drawn but
+    /// its text reads sideways as shown (upside down at 180). The apps offer text boxes only on
+    /// pages shown as the file has them (rotation 0).
+    AddTextBox {
+        page: u32,
+        rect: Rect,
+        text: String,
+        font_size: f64,
+        color: RgbColor,
+    },
+    /// Adds a rectangle or an oval in `rect` (at least 1 point wide and tall), outlined in `color`
+    /// `width` points wide (0.1 through 50) and filled with `fill`, if any.
+    AddShape {
+        page: u32,
+        kind: ShapeKind,
+        rect: Rect,
+        color: RgbColor,
+        fill: Option<RgbColor>,
+        width: f64,
+    },
+    /// Adds a line from `from` to `to` (at least 1 point apart), `width` points wide (0.1 through
+    /// 50); with `arrow`, an open arrow head at `to`.
+    AddLine {
+        page: u32,
+        from: Point,
+        to: Point,
+        arrow: bool,
+        color: RgbColor,
+        width: f64,
+    },
+    /// Moves the comment at `index` in the page's list (`AnnotationInfo.index`) by `dx` to the
+    /// right and `dy` down, as shown, in points.
+    MoveAnnotation {
+        page: u32,
+        index: u32,
+        dx: f64,
+        dy: f64,
     },
 }
 
@@ -281,6 +350,118 @@ impl Edit {
                 index: annotation_index(*index)?,
                 text: contents.clone(),
             },
+            Self::AddInk {
+                page,
+                strokes,
+                color,
+                width,
+            } => {
+                let info = page_of(pages, *page)?;
+                let shape = pdfcraft_engine::Shape::Ink {
+                    strokes: strokes_to_user(info, strokes)?,
+                };
+                drawing(*page, shape, *color, None, line_width(*width)?)?
+            }
+            Self::AddSignature {
+                page,
+                strokes,
+                color,
+                width,
+            } => {
+                let info = page_of(pages, *page)?;
+                let shape = pdfcraft_engine::Shape::Signature {
+                    strokes: strokes_to_user(info, strokes)?,
+                };
+                drawing(*page, shape, *color, None, line_width(*width)?)?
+            }
+            Self::AddTextBox {
+                page,
+                rect,
+                text,
+                font_size,
+                color,
+            } => {
+                let info = page_of(pages, *page)?;
+                if !(font_size.is_finite() && FONT_SIZES.contains(font_size)) {
+                    return Err(invalid(format!(
+                        "text is {} through {} points, not {font_size}",
+                        FONT_SIZES.start(),
+                        FONT_SIZES.end()
+                    )));
+                }
+                let shape = pdfcraft_engine::Shape::TextBox {
+                    rect: geometry::rect_to_user(info, drawn_box(rect)?),
+                    font_size: *font_size,
+                };
+                // The text's colour; no border and no background.
+                comment(*page, shape, *color, text)?
+            }
+            Self::AddShape {
+                page,
+                kind,
+                rect,
+                color,
+                fill,
+                width,
+            } => {
+                let info = page_of(pages, *page)?;
+                let rect = geometry::rect_to_user(info, drawn_box(rect)?);
+                let shape = match kind {
+                    ShapeKind::Rectangle => pdfcraft_engine::Shape::Rectangle { rect },
+                    ShapeKind::Oval => pdfcraft_engine::Shape::Oval { rect },
+                };
+                drawing(*page, shape, *color, *fill, line_width(*width)?)?
+            }
+            Self::AddLine {
+                page,
+                from,
+                to,
+                arrow,
+                color,
+                width,
+            } => {
+                let info = page_of(pages, *page)?;
+                let ends = [from.x, from.y, to.x, to.y];
+                if !ends.iter().all(|v| v.is_finite())
+                    || (to.x - from.x).hypot(to.y - from.y) < MIN_SIDE_PT
+                {
+                    return Err(invalid(format!(
+                        "a line joins two points at least {MIN_SIDE_PT} point apart, not {from:?} and {to:?}"
+                    )));
+                }
+                let end = if *arrow {
+                    pdfcraft_engine::LineEnding::OpenArrow
+                } else {
+                    pdfcraft_engine::LineEnding::None
+                };
+                let shape = pdfcraft_engine::Shape::Line {
+                    from: geometry::to_user(info, *from),
+                    to: geometry::to_user(info, *to),
+                    start: pdfcraft_engine::LineEnding::None,
+                    end,
+                };
+                drawing(*page, shape, *color, None, line_width(*width)?)?
+            }
+            Self::MoveAnnotation {
+                page,
+                index: position,
+                dx,
+                dy,
+            } => {
+                let info = page_of(pages, *page)?;
+                if !(dx.is_finite() && dy.is_finite()) {
+                    return Err(invalid(format!(
+                        "a comment moves by a distance, not ({dx}, {dy})"
+                    )));
+                }
+                let [dx, dy] = geometry::delta_to_user(info, *dx, *dy);
+                Engine::MoveAnnotation {
+                    page: index(*page)?,
+                    index: annotation_index(*position)?,
+                    dx,
+                    dy,
+                }
+            }
         })
     }
 
@@ -297,7 +478,13 @@ impl Edit {
             | Self::AddTextMarkup { .. }
             | Self::AddNote { .. }
             | Self::DeleteAnnotation { .. }
-            | Self::SetAnnotationContents { .. } => false,
+            | Self::SetAnnotationContents { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. }
+            | Self::MoveAnnotation { .. } => false,
         }
     }
 
@@ -314,7 +501,13 @@ impl Edit {
             | Self::AddTextMarkup { .. }
             | Self::AddNote { .. }
             | Self::DeleteAnnotation { .. }
-            | Self::SetAnnotationContents { .. } => false,
+            | Self::SetAnnotationContents { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. }
+            | Self::MoveAnnotation { .. } => false,
         }
     }
 
@@ -322,7 +515,9 @@ impl Edit {
     /// page's list, which are read as they are before the step.
     pub(crate) fn addresses_annotation(&self) -> bool {
         match self {
-            Self::DeleteAnnotation { .. } | Self::SetAnnotationContents { .. } => true,
+            Self::DeleteAnnotation { .. }
+            | Self::SetAnnotationContents { .. }
+            | Self::MoveAnnotation { .. } => true,
             Self::RotatePages { .. }
             | Self::DeletePages { .. }
             | Self::MovePages { .. }
@@ -330,7 +525,12 @@ impl Edit {
             | Self::SetInfo { .. }
             | Self::InsertPagesFrom { .. }
             | Self::AddTextMarkup { .. }
-            | Self::AddNote { .. } => false,
+            | Self::AddNote { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. } => false,
         }
     }
 
@@ -352,7 +552,15 @@ impl Edit {
             | Self::InsertPagesFrom { .. }
             | Self::DeleteAnnotation { .. }
             | Self::SetAnnotationContents { .. } => false,
-            Self::AddTextMarkup { .. } | Self::AddNote { .. } => true,
+            // A move's distance as shown is turned with the page into the file's space.
+            Self::AddTextMarkup { .. }
+            | Self::AddNote { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. }
+            | Self::MoveAnnotation { .. } => true,
         }
     }
 }
@@ -404,6 +612,92 @@ fn area(rect: &Rect) -> Result<&Rect, EditError> {
     }
 }
 
+/// `rect`, once it is known to be a box that can be drawn: finite, and at least a point wide and
+/// tall.
+fn drawn_box(rect: &Rect) -> Result<&Rect, EditError> {
+    let finite = [rect.x, rect.y, rect.width, rect.height]
+        .iter()
+        .all(|v| v.is_finite());
+    if finite && rect.width >= MIN_SIDE_PT && rect.height >= MIN_SIDE_PT {
+        Ok(rect)
+    } else {
+        Err(invalid(format!(
+            "{rect:?} is not a box at least {MIN_SIDE_PT} point wide and tall"
+        )))
+    }
+}
+
+/// A drawn line's width, once it is known to be one a line can have.
+fn line_width(width: f64) -> Result<f64, EditError> {
+    if width.is_finite() && LINE_WIDTHS.contains(&width) {
+        Ok(width)
+    } else {
+        Err(invalid(format!(
+            "a line is {} through {} points wide, not {width}",
+            LINE_WIDTHS.start(),
+            LINE_WIDTHS.end()
+        )))
+    }
+}
+
+/// A drawing's strokes in the page's user space, once they are known to be a drawing: at most
+/// `MAX_STROKES` strokes of at most `MAX_STROKE_POINTS` finite points, at least one of them with a
+/// point. Empty strokes are left out.
+fn strokes_to_user(
+    page: &pdfcraft_render::PageInfo,
+    strokes: &[Vec<Point>],
+) -> Result<Vec<Vec<[f64; 2]>>, EditError> {
+    if strokes.len() > MAX_STROKES {
+        return Err(invalid(format!(
+            "a drawing has at most {MAX_STROKES} strokes, not {}",
+            strokes.len()
+        )));
+    }
+    if let Some(long) = strokes.iter().find(|s| s.len() > MAX_STROKE_POINTS) {
+        return Err(invalid(format!(
+            "a stroke has at most {MAX_STROKE_POINTS} points, not {}",
+            long.len()
+        )));
+    }
+    if let Some(p) = strokes
+        .iter()
+        .flatten()
+        .find(|p| !(p.x.is_finite() && p.y.is_finite()))
+    {
+        return Err(invalid(format!(
+            "({}, {}) is not a point on the page",
+            p.x, p.y
+        )));
+    }
+    let user: Vec<Vec<[f64; 2]>> = strokes
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.iter().map(|p| geometry::to_user(page, *p)).collect())
+        .collect();
+    if user.is_empty() {
+        return Err(invalid("the drawing has no points".to_owned()));
+    }
+    Ok(user)
+}
+
+/// The engine's edit adding a drawing of `shape` on `page`: lines in `color`, `width` points wide,
+/// filled with `fill` (rectangles and ovals only), fully opaque, with no text.
+fn drawing(
+    page: u32,
+    shape: pdfcraft_engine::Shape,
+    color: RgbColor,
+    fill: Option<RgbColor>,
+    width: f64,
+) -> Result<pdfcraft_engine::Edit, EditError> {
+    let style = pdfcraft_engine::Style {
+        color: rgb(color)?,
+        opacity: 1.0,
+        width,
+        fill: fill.map(rgb).transpose()?,
+    };
+    added(page, shape, style, "")
+}
+
 /// The engine's colour for `color`, once its components are known to be numbers; each is held
 /// within 0 through 1.
 fn rgb(color: RgbColor) -> Result<pdfcraft_engine::Rgb, EditError> {
@@ -416,7 +710,7 @@ fn rgb(color: RgbColor) -> Result<pdfcraft_engine::Rgb, EditError> {
 }
 
 /// The engine's edit adding a comment of `shape` on `page`, in the tool's usual look but `color`,
-/// fully opaque. The author is left empty: the apps keep no personal data.
+/// fully opaque.
 fn comment(
     page: u32,
     shape: pdfcraft_engine::Shape,
@@ -428,6 +722,17 @@ fn comment(
         opacity: 1.0,
         ..pdfcraft_engine::Style::default_for(&shape)
     };
+    added(page, shape, style, contents)
+}
+
+/// The engine's edit adding an annotation of `shape` on `page`, drawn in `style`. The author is
+/// left empty: the apps keep no personal data.
+fn added(
+    page: u32,
+    shape: pdfcraft_engine::Shape,
+    style: pdfcraft_engine::Style,
+    contents: &str,
+) -> Result<pdfcraft_engine::Edit, EditError> {
     Ok(pdfcraft_engine::Edit::AddAnnotation(
         pdfcraft_engine::NewAnnotation {
             page: index(page)?,
