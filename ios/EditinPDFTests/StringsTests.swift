@@ -93,4 +93,8 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.searchTruncated(limit: 1_000), "Showing the first \(1_000.formatted()) matches")
         XCTAssertEqual(Strings.searchTruncated(limit: 50), "Showing the first 50 matches")
     }
+
+    func testTheSaveFailureIsOurSentence() {
+        XCTAssertEqual(Strings.saveFailed, "The changes could not be saved.")
+    }
 }

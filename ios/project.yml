@@ -40,7 +40,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true
         CFBundleDocumentTypes:
-          - { CFBundleTypeName: PDF, LSHandlerRank: Alternate, LSItemContentTypes: [com.adobe.pdf] }
+          - { CFBundleTypeName: PDF, CFBundleTypeRole: Editor, LSHandlerRank: Alternate, LSItemContentTypes: [com.adobe.pdf] }
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
     settings:

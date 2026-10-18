@@ -41,10 +41,17 @@ final class DocumentModel {
         self.init(outcome: OpenOutcome(bytes: bytes))
     }
 
-    init(outcome: OpenOutcome) {
+    /// The engine document of the file, for saving: the model puts the document there when it is
+    /// open, here and on `unlock`.
+    let engine: EngineHandle
+
+    /// `engine` is the file's handle; a model with no file of its own (a test's) gets a handle of its own.
+    init(outcome: OpenOutcome, engine: EngineHandle = EngineHandle()) {
+        self.engine = engine
         (state, pages) = Self.resolve(outcome)
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
+        if let document = document() { engine.adopt(document) }
     }
 
     /// Tries `password` on a locked document, and says whether the document is open afterwards. A
@@ -69,6 +76,7 @@ final class DocumentModel {
         (state, pages) = Self.resolve(outcome)
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
+        if let document = document() { engine.adopt(document) }
     }
 
     /// The open document, to draw and search; nil unless it is open.

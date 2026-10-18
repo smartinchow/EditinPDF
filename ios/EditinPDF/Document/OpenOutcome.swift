@@ -14,8 +14,9 @@ enum OpenOutcome: Sendable {
     /// The file is a PDF the engine opened, with the geometry of each of its pages (page `n` is
     /// `pages[n]`).
     case open(PdfDocument, pages: [PageInfo])
-    /// The file needs a password. The bytes are kept to try again; `wrongPassword` says that a
-    /// password was already tried and refused.
+    /// The file needs a password. The bytes are kept to try again (the only case that keeps them:
+    /// an open file's bytes are the engine's, and a failed one's are not needed); `wrongPassword` says
+    /// that a password was already tried and refused.
     case locked(Data, wrongPassword: Bool)
     /// The file could not be opened. `detail` is the engine's explanation, tidied into a sentence to
     /// go under `Strings.fileCouldNotBeOpened`; nil when there is none fit to show.

@@ -174,4 +174,10 @@ enum Strings {
     static var close: String {
         String(localized: "Close", comment: "Button that closes a document that could not be opened")
     }
+
+    /// Why a save was refused: the reason the system's own alert shows when the changes could not be
+    /// written. Our words, never the engine's.
+    static var saveFailed: String {
+        String(localized: "The changes could not be saved.", comment: "Reason shown when the edits to a PDF could not be written to its file")
+    }
 }

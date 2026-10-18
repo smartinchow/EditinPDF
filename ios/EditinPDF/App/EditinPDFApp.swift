@@ -10,8 +10,10 @@ struct EditinPDFApp: App {
     }
 
     var body: some Scene {
-        // Viewing, not editing: M1 never writes to the file.
-        DocumentGroup(viewing: PDFFileDocument.self) { configuration in
+        // Edited in place; the system autosaves what the engine writes (see PDFFileDocument). The
+        // iOS 27 replacements of this initializer and of ReferenceFileDocument need iOS 27, so their
+        // deprecation warnings stay.
+        DocumentGroup(newDocument: { PDFFileDocument() }) { configuration in
             DocumentScreen(model: configuration.document.model)
         }
     }

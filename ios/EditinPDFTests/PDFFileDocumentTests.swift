@@ -9,12 +9,6 @@ final class PDFFileDocumentTests: XCTestCase {
         XCTAssertEqual(PDFFileDocument.readableContentTypes, [.pdf])
     }
 
-    func testSnapshotIsTheOriginalFileBytes() throws {
-        let bytes = try fixture()
-        let document = PDFFileDocument(bytes: bytes)
-        XCTAssertEqual(try document.snapshot(contentType: .pdf), bytes)
-    }
-
     @MainActor
     func testModelIsBuiltOnceFromWhatWasReadOffTheMainActor() async throws {
         let bytes = try fixture()
