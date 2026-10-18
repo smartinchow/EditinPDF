@@ -935,7 +935,6 @@ dependencies = [
 name = "editinpdf-core"
 version = "0.1.0"
 dependencies = [
- "log",
  "pdfcraft-engine",
  "pdfcraft-organize",
  "pdfcraft-render",

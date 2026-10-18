@@ -232,11 +232,17 @@ impl RendererPool {
     /// the pool has room; otherwise waits for whichever renderer is free first.
     pub(crate) fn render(&self, request: RenderRequest) -> RenderedPage {
         let claim = self.claim();
-        // A caller panicked while drawing and the panic was already reported. The renderer itself
-        // never panics on a bad page, so what it holds is still sound.
-        let mut slot = self.slots[claim.index]
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut slot = match self.slots[claim.index].lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => {
+                // A caller panicked while holding this slot. A renderer that stopped mid-draw is
+                // not trusted: start again from a fresh one, and make the slot lockable normally.
+                let mut slot = poisoned.into_inner();
+                *slot = None;
+                self.slots[claim.index].clear_poison();
+                slot
+            }
+        };
         let drawn = slot
             .get_or_insert_with(|| PageRenderer::new(self.bytes.clone(), self.config.clone()))
             .render(request);
@@ -326,6 +332,25 @@ mod tests {
             .expect("a text page creates")
             .to_vec();
         Arc::new(bytes)
+    }
+
+    #[test]
+    fn a_poisoned_slot_gets_a_fresh_renderer() {
+        let pool = RendererPool::new(0, one_page(), None);
+        let _ = thread::scope(|s| {
+            s.spawn(|| {
+                let _guard = pool.slots[0].lock().expect("not yet poisoned");
+                panic!("poison")
+            })
+            .join()
+        });
+        assert!(pool.slots[0].is_poisoned());
+        let request = pixel_request(0, 0.1, None).expect("a valid request");
+        assert!(into_tile(pool.render(request)).is_ok());
+        assert!(
+            !pool.slots[0].is_poisoned(),
+            "the slot is cleared and its poison flag reset"
+        );
     }
 
     /// A two-page document with plenty of lines and words on each page, as the engine shows it.

@@ -608,9 +608,9 @@ impl PdfDocument {
                 Ok(Ok(found)) => hits.extend(found),
                 // A page whose text cannot be read has nothing to find.
                 Ok(Err(_)) => {}
-                Err(_) => {
-                    log::warn!("search skipped page {page}: reading or searching it panicked")
-                }
+                // Reading or searching the page panicked. The panic hook has already reported it,
+                // so the page is skipped.
+                Err(_) => {}
             }
         }
         hits
