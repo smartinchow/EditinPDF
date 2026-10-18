@@ -18,6 +18,9 @@ const MAX_PAGE_SIDE_PT: f64 = 14_400.0;
 /// in single precision, where a number such as 1e300 becomes infinite.
 const MAX_VIEW_COORD: f64 = 4.0 * MAX_PAGE_SIDE_PT;
 
+/// The most edits one step (`PdfDocument::apply_all`) may make.
+pub(crate) const MAX_STEP_EDITS: usize = 10_000;
+
 /// The most strokes one drawing may have.
 const MAX_STROKES: usize = 500;
 /// The most points one stroke may have.
@@ -479,7 +482,7 @@ impl Edit {
             }
             Self::SetFieldValue { name, value } => Engine::SetFieldValue {
                 name: name.clone(),
-                value: forms::value_to_engine(value),
+                value: forms::value_to_engine(value)?,
             },
         })
     }

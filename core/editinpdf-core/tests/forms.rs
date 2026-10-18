@@ -462,3 +462,106 @@ fn the_annotated_fixture_has_a_highlight_and_a_note() {
     assert_eq!(list[1].contents.as_deref(), Some("Check this"));
     assert!(doc.form_fields().is_empty());
 }
+
+#[test]
+fn a_huge_form_is_listed_up_to_the_cap_and_says_so() {
+    let doc = PdfDocument::open(fixtures::many_fields_doc(5_001), None).unwrap();
+    let fields = doc.form_fields();
+    assert_eq!(fields.len(), 5_000);
+    assert_eq!(fields[4_999].name, "f4999", "the first ones");
+    assert!(doc.form_fields_truncated());
+    // Exactly the cap is the whole form.
+    let doc = PdfDocument::open(fixtures::many_fields_doc(5_000), None).unwrap();
+    assert_eq!(doc.form_fields().len(), 5_000);
+    assert!(!doc.form_fields_truncated());
+    let doc = PdfDocument::open(fixtures::form_doc(), None).unwrap();
+    assert!(!doc.form_fields_truncated());
+}
+
+#[test]
+fn over_long_values_are_invalid() {
+    let doc = PdfDocument::open(fixtures::form_doc(), None).unwrap();
+    let refused = [
+        ("name", text(&"a".repeat(10_001))),
+        (
+            "color",
+            FieldValue::Choice {
+                values: vec!["Green".into(); 1_001],
+            },
+        ),
+        (
+            "color",
+            FieldValue::Choice {
+                values: vec!["G".repeat(1_001)],
+            },
+        ),
+    ];
+    for (name, value) in refused {
+        let result = doc.apply(
+            Edit::SetFieldValue {
+                name: name.into(),
+                value,
+            },
+            0,
+        );
+        assert!(
+            matches!(result, Err(EditError::Invalid { .. })),
+            "{result:?}"
+        );
+    }
+    assert_eq!(doc.revision(), 0, "nothing changed");
+    // 10,000 characters is a text the field takes.
+    doc.apply(
+        Edit::SetFieldValue {
+            name: "name".into(),
+            value: text(&"a".repeat(10_000)),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(field(&doc, "name").value[0].chars().count(), 10_000);
+}
+
+#[test]
+fn a_step_of_more_than_10_000_edits_is_invalid() {
+    let doc = PdfDocument::open(fixtures::form_doc(), None).unwrap();
+    let fill = Edit::SetFieldValue {
+        name: "name".into(),
+        value: text("x"),
+    };
+    let result = doc.apply_all("x".into(), vec![fill.clone(); 10_001], 0);
+    assert!(
+        matches!(result, Err(EditError::Invalid { .. })),
+        "{result:?}"
+    );
+    assert_eq!(doc.revision(), 0, "nothing changed");
+    doc.apply_all("x".into(), vec![fill; 10_000], 0).unwrap();
+    assert_eq!(field(&doc, "name").value, vec!["x"]);
+}
+
+/// What a check box written by another program reads as today: its widget's on state is the
+/// first of its appearance states that is not `Off`, and it is on only when its appearance state
+/// (`/AS`) is that one. `value` is the field's own value (`/V`) either way.
+#[test]
+fn check_boxes_with_odd_appearances_read_as_they_are_shown() {
+    let doc = PdfDocument::open(
+        fixtures::hand_form_doc(&[
+            // Two "on" looks, showing the second.
+            "/FT /Btn /T (multi) /AP << /N << /A 4 0 R /B 4 0 R /Off 4 0 R >> >> /AS /B /V /B"
+                .to_owned(),
+            // On by its value, but with no appearance state, so it shows off.
+            "/FT /Btn /T (no_as) /AP << /N << /Yes 4 0 R /Off 4 0 R >> >> /V /Yes".to_owned(),
+        ]),
+        None,
+    )
+    .unwrap();
+    let multi = field(&doc, "multi");
+    assert_eq!(multi.kind, FormFieldKind::CheckBox);
+    assert_eq!(multi.value, vec!["B"]);
+    assert_eq!(multi.widgets[0].on_state.as_deref(), Some("A"));
+    assert!(!multi.widgets[0].is_on);
+    let no_as = field(&doc, "no_as");
+    assert_eq!(no_as.value, vec!["Yes"]);
+    assert_eq!(no_as.widgets[0].on_state.as_deref(), Some("Yes"));
+    assert!(!no_as.widgets[0].is_on);
+}

@@ -29,7 +29,7 @@
 //! boundary, and Swift sees an error thrown. A method that returns no `Result` has no way to report
 //! one: the Swift bindings call it with `try!`, and a panic there ends the app. So the methods and
 //! functions without a `Result` (`page_count`, `page_info`, `revision`, `can_undo`, `can_redo`,
-//! `is_dirty`, `capabilities`, `annotations`, `form_fields`, `search`, and the free functions here other than
+//! `is_dirty`, `capabilities`, `annotations`, `form_fields`, `form_fields_truncated`, `search`, and the free functions here other than
 //! `blank_document`) must never panic. They only read the document's state, under a lock that recovers from
 //! poisoning, except `search`, which runs the engine's text code and therefore catches a panic
 //! itself, page by page. Keep it that way when adding one.

@@ -8,9 +8,10 @@
 //! These tests are ignored, so a normal `cargo test` never touches the working tree. Run them
 //! with `cargo test -p editinpdf-core --test fixtures_export -- --ignored`, from anywhere in the
 //! workspace, and commit what changed. The fixtures are built with a fixed clock, so the same
-//! engine writes the same bytes, with one exception: `locked.pdf` is encrypted, and the engine
-//! draws its encryption keys and salts from OS randomness, so every run writes it differently
-//! (`git checkout` it if the run was for another file).
+//! engine writes the same bytes, with two exceptions, which every run writes differently
+//! (`git checkout` them if the run was for another file): `locked.pdf` is encrypted, and the engine
+//! draws its encryption keys and salts from OS randomness; and `annotated.pdf`'s comments carry
+//! ids (`/NM`) that the engine mixes the time of day into, fixed clock or not.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 mod fixtures;

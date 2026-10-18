@@ -1,12 +1,13 @@
 //! `PdfDocument`: one open PDF, as the Swift side sees it.
 
+use std::collections::HashSet;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
 
 use crate::annotations::{self, AnnotationInfo};
-use crate::edit::{Edit, EditCapabilities, EditOutcome, SaveMode};
+use crate::edit::{Edit, EditCapabilities, EditOutcome, MAX_STEP_EDITS, SaveMode};
 use crate::forms::{self, FormField};
 use crate::render::{self, RendererPool};
 use crate::text::{self, EnginePageText, MAX_SEARCH_HITS};
@@ -272,13 +273,15 @@ fn field_check(session: &Session, id: DocId, edits: &[Edit]) -> Result<(), EditE
     let doc = session.get(id).ok_or_else(|| EditError::Failed {
         message: "the document is no longer open".to_owned(),
     })?;
-    if !doc.allows_form_filling() {
+    if !doc.allows_form_filling() || edits.iter().all(|edit| edit.field_name().is_none()) {
         return Ok(());
     }
+    // Built once, so a step of many fills over a form of many fields stays linear.
+    let names: HashSet<&str> = doc.form.iter().map(|field| field.name.as_str()).collect();
     match edits
         .iter()
         .filter_map(Edit::field_name)
-        .find(|name| !doc.form.iter().any(|field| field.name == *name))
+        .find(|name| !names.contains(name))
     {
         Some(name) => Err(EditError::Invalid {
             message: format!("there is no form field named {name:?}"),
@@ -514,13 +517,21 @@ impl PdfDocument {
     /// cannot also delete a comment or change its text, which address the comment by its page as it
     /// is before the step (turning pages keeps their numbers, so that mix is allowed). Filling in a
     /// form field addresses it by its name, so it goes with any page change. Otherwise the errors
-    /// are those of `apply`.
+    /// are those of `apply`, and a step of more than 10,000 changes is refused as `Invalid`.
     pub fn apply_all(
         &self,
         label: String,
         edits: Vec<Edit>,
         base_revision: u64,
     ) -> Result<EditOutcome, EditError> {
+        if edits.len() > MAX_STEP_EDITS {
+            return Err(EditError::Invalid {
+                message: format!(
+                    "one step makes at most {MAX_STEP_EDITS} changes, not {}",
+                    edits.len()
+                ),
+            });
+        }
         if edits.iter().any(Edit::is_page_structure) && edits.iter().any(Edit::has_geometry) {
             return Err(EditError::Invalid {
                 message: "page changes and annotation changes can't be combined in one step"
@@ -700,10 +711,26 @@ impl PdfDocument {
     /// The document's form fields, in the document's order, with their widgets in view space.
     /// A hidden widget, or one on no page, is left out, and so is a field with no other widget.
     /// Read the list again after every change, undo and redo.
+    ///
+    /// The list is capped: at most 5,000 fields (the first ones), and for each at most 1,000
+    /// options, 1,000 chosen values and 100 widgets (the first ones). `form_fields_truncated` says
+    /// whether the caps left anything out, for the apps to say the form is too large to show
+    /// completely.
     pub fn form_fields(&self) -> Vec<FormField> {
         // Only reads what the engine read when it opened or last changed the document, and turns
         // the boxes with the page's plain arithmetic: nothing here can panic.
-        self.read(Vec::new(), |doc| forms::list(&doc.info.pages, &doc.form))
+        self.read(Vec::new(), |doc| {
+            forms::list(&doc.info.pages, &doc.form).fields
+        })
+    }
+
+    /// Whether `form_fields`, at the same `revision`, leaves out fields, options, chosen values or
+    /// widgets for its caps.
+    pub fn form_fields_truncated(&self) -> bool {
+        // As `form_fields`: a plain read that cannot panic.
+        self.read(false, |doc| {
+            forms::list(&doc.info.pages, &doc.form).truncated
+        })
     }
 }
 

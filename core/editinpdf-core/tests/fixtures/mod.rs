@@ -224,6 +224,9 @@ pub fn form_doc() -> Vec<u8> {
 /// A one-page document (US Letter, unturned) reading "Marked page", with two comments: a highlight
 /// over that line (user space `[72 706.8 136.2 717.8]`) and a sticky note whose icon's top-left
 /// corner is at user `(72, 650)`, reading "Check this".
+///
+/// Unlike the other engine-made fixtures, its bytes differ from run to run: the engine mixes the
+/// time of day into each comment's id (`/NM`), whatever the session's clock.
 pub fn annotated_doc() -> Vec<u8> {
     let highlight = Shape::TextMarkup {
         kind: Markup::Highlight,
@@ -290,6 +293,22 @@ pub fn one_line_doc(letters: &str) -> Vec<u8> {
         ),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
     ];
+    let pdf = write_pdf(&objects);
+    // Pin the contract, as `text_doc` does: one page.
+    let mut check = session();
+    let id = check
+        .open("fixture.pdf", None, Arc::new(pdf.clone()), None)
+        .expect("the fixture opens");
+    assert_eq!(
+        check.get(id).expect("the fixture is open").info.pages.len(),
+        1
+    );
+    pdf
+}
+
+/// A PDF written by hand from `objects`, the bodies of objects 1, 2, … in order, with object 1 its
+/// catalog and a classic cross-reference table.
+fn write_pdf(objects: &[String]) -> Vec<u8> {
     let mut pdf = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
     for (number, body) in objects.iter().enumerate() {
@@ -309,14 +328,32 @@ pub fn one_line_doc(letters: &str) -> Vec<u8> {
         )
         .into_bytes(),
     );
-    // Pin the contract, as `text_doc` does: one page.
-    let mut check = session();
-    let id = check
-        .open("fixture.pdf", None, Arc::new(pdf.clone()), None)
-        .expect("the fixture opens");
-    assert_eq!(
-        check.get(id).expect("the fixture is open").info.pages.len(),
-        1
-    );
     pdf
+}
+
+/// A one-page form (US Letter) written by hand, whose fields are `fields`: the bodies of field
+/// dictionaries that are also their widget (`/Subtype /Widget`, `/Rect`, `/P` are added), objects
+/// 5, 6, … in order. Object 4 is an empty appearance stream, for fields' `/AP` to name as `4 0 R`.
+pub fn hand_form_doc(fields: &[String]) -> Vec<u8> {
+    let refs: Vec<String> = (0..fields.len())
+        .map(|i| format!("{} 0 R", i + 5))
+        .collect();
+    let refs = refs.join(" ");
+    let mut objects = vec![
+        format!("<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [{refs}] >> >>"),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [{refs}] >>"),
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"
+            .to_owned(),
+    ];
+    objects.extend(fields.iter().map(|body| {
+        format!("<< /Type /Annot /Subtype /Widget /Rect [100 100 120 120] /P 3 0 R {body} >>")
+    }));
+    write_pdf(&objects)
+}
+
+/// `hand_form_doc` with `count` empty text fields, `f0`, `f1`, … all at the same place.
+pub fn many_fields_doc(count: usize) -> Vec<u8> {
+    let fields: Vec<String> = (0..count).map(|i| format!("/FT /Tx /T (f{i})")).collect();
+    hand_form_doc(&fields)
 }
