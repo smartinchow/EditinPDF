@@ -61,12 +61,14 @@ final class ViewerSmokeTests: XCTestCase {
         let app = launchAndOpen("sample.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
 
-        // The first page is a 612 pt wide Letter page, fitted to the width of the window, and its top is
-        // at the bottom of the navigation bar. In its own points "Page" runs from 72 to 97.7 across and
-        // 74.2 to 85.2 down, so (85, 79.7) is the middle of the word.
-        let scale = app.windows.firstMatch.frame.width / 612
-        let pageTop = app.navigationBars.firstMatch.frame.maxY
-        let word = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 85 * scale, dy: pageTop + 79.7 * scale))
+        // The first page is a 612 pt wide Letter page, fitted to the width the bars leave: the window's
+        // on most phones, less on one whose bar stands at the side (the iPhone Duo on iOS 27.1). Its frame
+        // on screen is read from the page itself. In its own points "Page" runs from 72 to 97.7 across
+        // and 74.2 to 85.2 down, so (85, 79.7) is the middle of the word.
+        let page = app.otherElements["page-0"].frame
+        let scale = page.width / 612
+        let word = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: page.minX + 85 * scale, dy: page.minY + 79.7 * scale))
         word.press(forDuration: 0.8)
         XCTAssertTrue(app.otherElements["selectionHandleStart"].waitForExistence(timeout: 5), "no selection after a long press on the word")
         XCTAssertTrue(app.otherElements["selectionHandleEnd"].exists)
@@ -91,15 +93,17 @@ final class ViewerSmokeTests: XCTestCase {
 
     /// A long file name takes up the navigation bar, and iOS moves the toolbar's buttons into its More
     /// ("...") menu. There they must have their titles: with icons alone the menu came up empty
-    /// (reported on an iPhone). Where the bar has room for them (a wide display) they are in it as icons.
+    /// (reported on an iPhone). Where the bar has room for them (a wide display, or the iPhone Duo's
+    /// bar standing at the side) they are shown as icons.
     func testTheToolbarsButtonsHaveTheirTitlesInTheMoreMenu() {
         let app = launchAndOpen("sample.pdf", as: "Quarterly financial report for the board 2026 final.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
-        let bar = app.navigationBars.firstMatch
-        let more = bar.buttons["OverflowBarButtonItem"]
+        // Looked for in the whole app, not the navigation bar: on the iPhone Duo (iOS 27.1) the bar's
+        // buttons stand in a column at the side of the screen.
+        let more = app.buttons["OverflowBarButtonItem"]
         guard more.waitForExistence(timeout: 2) else {
-            XCTAssertTrue(bar.buttons["searchButton"].exists, "no More menu, and no Search button in the bar either")
-            XCTAssertTrue(bar.buttons["thumbnailsButton"].exists)
+            XCTAssertTrue(app.buttons["searchButton"].exists, "no More menu, and no Search button either")
+            XCTAssertTrue(app.buttons["thumbnailsButton"].exists)
             return
         }
         more.tap()
