@@ -4,7 +4,7 @@
 //! types never cross the FFI boundary; each call maps a small, stable API onto `pdfcraft_engine`.
 //!
 //! - [`PdfDocument`]: one open document (open, page count, page geometry, page pixels, page text,
-//!   selecting text and searching, editing, undo and redo, saving).
+//!   selecting text and searching, editing, undo and redo, saving, extracting pages).
 //! - [`Edit`], [`EditOutcome`], [`EditCapabilities`], [`SaveMode`], [`Point`], [`RgbColor`],
 //!   [`MarkupKind`], [`ShapeKind`], [`FieldValue`], [`EditError`], [`SaveError`]: what editing takes
 //!   and gives.
@@ -15,6 +15,7 @@
 //!   a page's text. They do not bound the time a search takes: reading each page's text is the
 //!   engine's work, which grows with the page and the document. [`search_hit_limit`] hands the first
 //!   to the apps, which cannot read a Rust constant.
+//! - [`blank_document`]: a new one-page PDF, for starting a document from nothing.
 //! - [`min_tile_scale`], [`max_tile_scale`]: the scales a tile is drawn at, for the apps to keep
 //!   their requests within.
 //!
@@ -24,13 +25,14 @@
 //! boundary, and Swift sees an error thrown. A method that returns no `Result` has no way to report
 //! one: the Swift bindings call it with `try!`, and a panic there ends the app. So the methods and
 //! functions without a `Result` (`page_count`, `page_info`, `revision`, `can_undo`, `can_redo`,
-//! `is_dirty`, `capabilities`, `search`, and the free functions here) must never panic. They only
-//! read the document's state, under a lock that recovers from poisoning, except `search`, which runs
-//! the engine's text code and therefore catches a panic itself, page by page. Keep it that way when
-//! adding one.
+//! `is_dirty`, `capabilities`, `search`, and the free functions here other than `blank_document`)
+//! must never panic. They only read the document's state, under a lock that recovers from
+//! poisoning, except `search`, which runs the engine's text code and therefore catches a panic
+//! itself, page by page. Keep it that way when adding one.
 //!
-//! The calls that run engine code under the lock (`apply`, `apply_all`, `undo`, `redo`, `save`)
-//! catch a panic themselves and report it as an error, so the lock is never left poisoned.
+//! The calls that run engine code under the lock (`apply`, `apply_all`, `undo`, `redo`, `save`,
+//! `extract_pages`) catch a panic themselves and report it as an error, so the lock is never left
+//! poisoned.
 
 uniffi::setup_scaffolding!();
 
@@ -56,6 +58,18 @@ pub fn engine_version() -> String {
         env!("CARGO_PKG_VERSION"),
         env!("PDFCRAFT_VERSION")
     )
+}
+
+/// A new PDF of one blank page, `width_pt` by `height_pt` points, for the app to write.
+///
+/// Fails with `Invalid` when a side is not a positive, finite number of at most 14,400 points, and
+/// `Failed` when the engine cannot write the document.
+#[uniffi::export]
+pub fn blank_document(width_pt: f64, height_pt: f64) -> Result<Vec<u8>, EditError> {
+    let width = edit::page_side(width_pt)?;
+    let height = edit::page_side(height_pt)?;
+    let bytes = pdfcraft_engine::Session::new().create_blank(width, height, 1)?;
+    Ok(std::sync::Arc::unwrap_or_clone(bytes))
 }
 
 /// The most hits `search` returns: the first ones, in page order. A search that returns this many

@@ -434,9 +434,11 @@ impl PdfDocument {
     /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
     /// for a change that does not fit the document (a page it does not have, a turn that is not a
     /// multiple of 90 degrees, a size that is not a positive, finite number of at most 14,400
-    /// points), and `Failed` when the engine cannot make it. After any error but `Failed` the
-    /// document is as it was; after `Failed` it may not be, and the revision has gone up by one all
-    /// the same, so the apps should read the document again.
+    /// points), `SourceNeedsPassword` or `SourceUnreadable` for pages taken from a PDF that needs a
+    /// password or cannot be read (or whose security settings forbid copying its pages), and
+    /// `Failed` when the engine cannot make it. After any error but `Failed` the document is as it
+    /// was; after `Failed` it may not be, and the revision has gone up by one all the same, so the
+    /// apps should read the document again.
     pub fn apply(&self, edit: Edit, base_revision: u64) -> Result<EditOutcome, EditError> {
         self.mutate(
             |session, id, pages| {
@@ -547,6 +549,50 @@ impl PdfDocument {
         })?;
         drop(inner);
         Ok(Arc::unwrap_or_clone(saved))
+    }
+
+    /// A new PDF holding copies of `pages` (0-based), in the order given, for the app to write.
+    /// The new document is not encrypted, whether or not this one is. The document itself does not
+    /// change: extracting is not an edit, and the revision stays as it is.
+    ///
+    /// Fails with `Invalid` when `pages` is empty or names a page the document does not have,
+    /// `NotPermitted` when the document's security settings do not allow taking its pages, and
+    /// `Failed` when the engine cannot write the new document.
+    pub fn extract_pages(&self, pages: Vec<u32>) -> Result<Vec<u8>, EditError> {
+        let inner = self.lock();
+        let id = inner.id;
+        let count = inner
+            .session
+            .get(id)
+            .map(|doc| doc.info.pages.len())
+            .ok_or_else(|| EditError::Failed {
+                message: "the document is no longer open".to_owned(),
+            })?;
+        if pages.is_empty() {
+            return Err(EditError::Invalid {
+                message: "choose at least one page to extract".to_owned(),
+            });
+        }
+        let pages = pages
+            .into_iter()
+            .map(|page| {
+                usize::try_from(page)
+                    .ok()
+                    .filter(|&index| index < count)
+                    .ok_or_else(|| EditError::Invalid {
+                        message: format!("page {page} does not exist"),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let session = &inner.session;
+        let extracted = panic::catch_unwind(AssertUnwindSafe(|| session.extract(id, &pages)))
+            .unwrap_or_else(|_| {
+                Err(pdfcraft_engine::EditError::Write(
+                    "the engine failed while extracting the pages".to_owned(),
+                ))
+            })?;
+        drop(inner);
+        Ok(Arc::unwrap_or_clone(extracted))
     }
 
     /// What can be done to the document, given whether the engine can edit it and what its

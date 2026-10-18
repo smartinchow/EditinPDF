@@ -4,6 +4,8 @@
 //! as shown, after its rotation, `y` growing down). Only this module turns them into the engine's
 //! edits.
 
+use std::sync::Arc;
+
 use crate::EditError;
 
 /// The largest page side a blank page may have, in points: 200 inches, the most a PDF page can
@@ -105,6 +107,15 @@ pub enum Edit {
     },
     /// Sets a document information entry (`Title`, `Author`, …).
     SetInfo { key: String, value: String },
+    /// Inserts pages of another PDF, `bytes`, so that the first of them is at index `at`: the
+    /// source's `pages` in the order given, or all of them in order when `pages` is `None`. `name`
+    /// names the source in the change's label ("Insert pages from report.pdf").
+    InsertPagesFrom {
+        name: String,
+        bytes: Vec<u8>,
+        pages: Option<Vec<u32>>,
+        at: u32,
+    },
 }
 
 impl Edit {
@@ -149,6 +160,22 @@ impl Edit {
                 key: key.clone(),
                 value: value.clone(),
             },
+            Self::InsertPagesFrom {
+                name,
+                bytes,
+                pages,
+                at,
+            } => {
+                let bytes = Arc::new(bytes.clone());
+                source_check(&bytes)?;
+                Engine::InsertPagesFrom {
+                    name: name.clone(),
+                    bytes,
+                    pages: pages.as_deref().map(indices).transpose()?,
+                    at: index(*at)?,
+                    field_conflicts: pdfcraft_organize::FieldConflicts::Rename,
+                }
+            }
         })
     }
 
@@ -159,7 +186,8 @@ impl Edit {
             Self::RotatePages { .. }
             | Self::DeletePages { .. }
             | Self::MovePages { .. }
-            | Self::InsertBlankPage { .. } => true,
+            | Self::InsertBlankPage { .. }
+            | Self::InsertPagesFrom { .. } => true,
             Self::SetInfo { .. } => false,
         }
     }
@@ -172,7 +200,8 @@ impl Edit {
             | Self::DeletePages { .. }
             | Self::MovePages { .. }
             | Self::InsertBlankPage { .. }
-            | Self::SetInfo { .. } => false,
+            | Self::SetInfo { .. }
+            | Self::InsertPagesFrom { .. } => false,
         }
     }
 }
@@ -190,8 +219,22 @@ fn indices(pages: &[u32]) -> Result<Vec<usize>, EditError> {
     pages.iter().map(|page| index(*page)).collect()
 }
 
+/// Whether the engine can take pages from `bytes`, as a typed error when it cannot: a source that
+/// needs a password, or one it cannot read or whose security settings forbid copying its pages.
+fn source_check(bytes: &Arc<Vec<u8>>) -> Result<(), EditError> {
+    use pdfcraft_engine::SourceProblem;
+    pdfcraft_engine::combine_source_check(bytes, None).map_err(|problem| match problem {
+        SourceProblem::Password => EditError::SourceNeedsPassword,
+        SourceProblem::WrongPassword
+        | SourceProblem::NotPermitted
+        | SourceProblem::Unreadable(_) => EditError::SourceUnreadable {
+            message: problem.to_string(),
+        },
+    })
+}
+
 /// A blank page's side, once it is known to be a size a page can have.
-fn page_side(points: f64) -> Result<f64, EditError> {
+pub(crate) fn page_side(points: f64) -> Result<f64, EditError> {
     if points.is_finite() && points > 0.0 && points <= MAX_PAGE_SIDE_PT {
         Ok(points)
     } else {
