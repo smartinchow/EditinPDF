@@ -11,7 +11,9 @@
 
 use std::sync::Arc;
 
-use pdfcraft_engine::{Algorithm, Changes, Edit, ImageResolution, Protection, Session};
+use pdfcraft_engine::{
+    Algorithm, BoxSpec, Changes, Edit, ImageResolution, PageBox, Protection, Session,
+};
 
 /// The fixtures' session clock. Fixed, so the plain fixtures' bytes (their `/ModDate`) are the same
 /// on every run and one dumped to disk does not churn. (An encrypted one still differs: the engine
@@ -112,6 +114,26 @@ pub fn rotated_doc(text: &str) -> Vec<u8> {
         Edit::RotatePages {
             pages: vec![0],
             degrees: 90,
+        },
+    )
+}
+
+/// A one-page document whose page has a crop box that does not start at the origin
+/// (`[36 36 576 756]`) and `/Rotate 270`, so a view-space position is both shifted and turned.
+pub fn cropped_rotated_doc(text: &str) -> Vec<u8> {
+    let cropped = edited(
+        text_doc(&[text]),
+        Edit::SetPageBox {
+            pages: vec![0],
+            which: PageBox::Crop,
+            spec: BoxSpec::Rect([36.0, 36.0, 576.0, 756.0]),
+        },
+    );
+    edited(
+        cropped,
+        Edit::RotatePages {
+            pages: vec![0],
+            degrees: 270,
         },
     )
 }

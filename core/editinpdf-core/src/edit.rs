@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::EditError;
+use crate::{EditError, Rect, geometry};
 
 /// The largest page side a blank page may have, in points: 200 inches, the most a PDF page can
 /// measure (ISO 32000-1, Annex C).
@@ -116,6 +116,31 @@ pub enum Edit {
         pages: Option<Vec<u32>>,
         at: u32,
     },
+    /// Marks text: `rects` are the boxes of the marked text, one for each line, as
+    /// `TextSelection.rects` gives them.
+    AddTextMarkup {
+        page: u32,
+        kind: MarkupKind,
+        rects: Vec<Rect>,
+        color: RgbColor,
+        contents: String,
+    },
+    /// Adds a sticky note whose icon's top-left corner, as shown, is at `at`.
+    AddNote {
+        page: u32,
+        at: Point,
+        contents: String,
+        color: RgbColor,
+    },
+    /// Deletes the comment at `index` in the page's list (`AnnotationInfo.index`), with its
+    /// replies.
+    DeleteAnnotation { page: u32, index: u32 },
+    /// Changes the text of the comment at `index` in the page's list (`AnnotationInfo.index`).
+    SetAnnotationContents {
+        page: u32,
+        index: u32,
+        contents: String,
+    },
 }
 
 impl Edit {
@@ -125,7 +150,7 @@ impl Edit {
     /// on a page converts against.
     pub(crate) fn to_engine(
         &self,
-        _pages: &[pdfcraft_render::PageInfo],
+        pages: &[pdfcraft_render::PageInfo],
     ) -> Result<pdfcraft_engine::Edit, EditError> {
         use pdfcraft_engine::Edit as Engine;
         Ok(match self {
@@ -176,6 +201,81 @@ impl Edit {
                     field_conflicts: pdfcraft_organize::FieldConflicts::Rename,
                 }
             }
+            Self::AddTextMarkup {
+                page,
+                kind,
+                rects,
+                color,
+                contents,
+            } => {
+                let info = page_of(pages, *page)?;
+                if rects.is_empty() {
+                    return Err(invalid("there is no text to mark".to_owned()));
+                }
+                let quads = rects
+                    .iter()
+                    .map(|rect| Ok(geometry::rect_to_quad(info, area(rect)?)))
+                    .collect::<Result<Vec<_>, EditError>>()?;
+                let markup = match kind {
+                    MarkupKind::Highlight => pdfcraft_engine::Markup::Highlight,
+                    MarkupKind::Underline => pdfcraft_engine::Markup::Underline,
+                    MarkupKind::StrikeOut => pdfcraft_engine::Markup::StrikeOut,
+                };
+                comment(
+                    *page,
+                    pdfcraft_engine::Shape::TextMarkup {
+                        kind: markup,
+                        quads,
+                    },
+                    *color,
+                    contents,
+                )?
+            }
+            Self::AddNote {
+                page,
+                at,
+                contents,
+                color,
+            } => {
+                let info = page_of(pages, *page)?;
+                if !(at.x.is_finite() && at.y.is_finite()) {
+                    return Err(invalid(format!(
+                        "a note goes at a point on the page, not ({}, {})",
+                        at.x, at.y
+                    )));
+                }
+                // The icon's box as shown, turned into the file's space: its top-left corner there
+                // is where the engine puts the icon, so it covers the tapped box at any rotation.
+                let shown = Rect {
+                    x: at.x,
+                    y: at.y,
+                    width: pdfcraft_engine::NOTE_SIZE,
+                    height: pdfcraft_engine::NOTE_SIZE,
+                };
+                let [x0, _, _, y1] = geometry::rect_to_user(info, &shown);
+                comment(
+                    *page,
+                    pdfcraft_engine::Shape::Note {
+                        at: [x0, y1],
+                        icon: pdfcraft_engine::NoteIcon::default(),
+                    },
+                    *color,
+                    contents,
+                )?
+            }
+            Self::DeleteAnnotation { page, index } => Engine::DeleteAnnotation {
+                page: index_of(pages, *page)?,
+                index: annotation_index(*index)?,
+            },
+            Self::SetAnnotationContents {
+                page,
+                index,
+                contents,
+            } => Engine::SetAnnotationContents {
+                page: index_of(pages, *page)?,
+                index: annotation_index(*index)?,
+                text: contents.clone(),
+            },
         })
     }
 
@@ -188,7 +288,11 @@ impl Edit {
             | Self::MovePages { .. }
             | Self::InsertBlankPage { .. }
             | Self::InsertPagesFrom { .. } => true,
-            Self::SetInfo { .. } => false,
+            Self::SetInfo { .. }
+            | Self::AddTextMarkup { .. }
+            | Self::AddNote { .. }
+            | Self::DeleteAnnotation { .. }
+            | Self::SetAnnotationContents { .. } => false,
         }
     }
 
@@ -207,7 +311,10 @@ impl Edit {
             | Self::MovePages { .. }
             | Self::InsertBlankPage { .. }
             | Self::SetInfo { .. }
-            | Self::InsertPagesFrom { .. } => false,
+            | Self::InsertPagesFrom { .. }
+            | Self::DeleteAnnotation { .. }
+            | Self::SetAnnotationContents { .. } => false,
+            Self::AddTextMarkup { .. } | Self::AddNote { .. } => true,
         }
     }
 }
@@ -223,6 +330,75 @@ fn index(page: u32) -> Result<usize, EditError> {
 
 fn indices(pages: &[u32]) -> Result<Vec<usize>, EditError> {
     pages.iter().map(|page| index(*page)).collect()
+}
+
+/// The page `page` is, as the document has it before the edit; `Invalid` when it has no such page.
+fn page_of(
+    pages: &[pdfcraft_render::PageInfo],
+    page: u32,
+) -> Result<&pdfcraft_render::PageInfo, EditError> {
+    usize::try_from(page)
+        .ok()
+        .and_then(|index| pages.get(index))
+        .ok_or_else(|| invalid(format!("page {page} does not exist")))
+}
+
+/// The engine's index of a page the document has.
+fn index_of(pages: &[pdfcraft_render::PageInfo], page: u32) -> Result<usize, EditError> {
+    page_of(pages, page)?;
+    index(page)
+}
+
+/// A comment's position in its page's list, as the engine takes it.
+fn annotation_index(position: u32) -> Result<usize, EditError> {
+    usize::try_from(position).map_err(|_| invalid(format!("comment {position} does not exist")))
+}
+
+/// `rect`, once it is known to be a box with an area: finite, and wider and taller than nothing.
+fn area(rect: &Rect) -> Result<&Rect, EditError> {
+    let finite = [rect.x, rect.y, rect.width, rect.height]
+        .iter()
+        .all(|v| v.is_finite());
+    if finite && rect.width > 0.0 && rect.height > 0.0 {
+        Ok(rect)
+    } else {
+        Err(invalid(format!("{rect:?} is not an area of the page")))
+    }
+}
+
+/// The engine's colour for `color`, once its components are known to be numbers; each is held
+/// within 0 through 1.
+fn rgb(color: RgbColor) -> Result<pdfcraft_engine::Rgb, EditError> {
+    let components = [color.red, color.green, color.blue];
+    if components.iter().all(|c| c.is_finite()) {
+        Ok(components.map(|c| c.clamp(0.0, 1.0)))
+    } else {
+        Err(invalid(format!("{color:?} is not a colour")))
+    }
+}
+
+/// The engine's edit adding a comment of `shape` on `page`, in the tool's usual look but `color`,
+/// fully opaque. The author is left empty: the apps keep no personal data.
+fn comment(
+    page: u32,
+    shape: pdfcraft_engine::Shape,
+    color: RgbColor,
+    contents: &str,
+) -> Result<pdfcraft_engine::Edit, EditError> {
+    let style = pdfcraft_engine::Style {
+        color: rgb(color)?,
+        opacity: 1.0,
+        ..pdfcraft_engine::Style::default_for(&shape)
+    };
+    Ok(pdfcraft_engine::Edit::AddAnnotation(
+        pdfcraft_engine::NewAnnotation {
+            page: index(page)?,
+            shape,
+            style,
+            contents: contents.to_owned(),
+            author: String::new(),
+        },
+    ))
 }
 
 /// Whether the engine can take pages from `bytes`, as a typed error when it cannot: a source that

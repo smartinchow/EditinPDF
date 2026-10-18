@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
 
+use crate::annotations::{self, AnnotationInfo};
 use crate::edit::{Edit, EditCapabilities, EditOutcome, SaveMode};
 use crate::render::{self, RendererPool};
 use crate::text::{self, EnginePageText, MAX_SEARCH_HITS};
@@ -452,9 +453,9 @@ impl PdfDocument {
     ///
     /// Fails with `ReadOnly` for a document that cannot be edited, `NotPermitted` when its security
     /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
-    /// for a change that does not fit the document (a page it does not have, a turn that is not a
-    /// multiple of 90 degrees, a size that is not a positive, finite number of at most 14,400
-    /// points), `SourceNeedsPassword`, `SourceNotPermitted` or `SourceUnreadable` for pages taken
+    /// for a change that does not fit the document (a page or comment it does not have, a turn that
+    /// is not a multiple of 90 degrees, a size that is not a positive, finite number of at most
+    /// 14,400 points, text markup without a box, a position or colour that is not a number), `SourceNeedsPassword`, `SourceNotPermitted` or `SourceUnreadable` for pages taken
     /// from a PDF that needs a password, does not allow its pages to be copied, or cannot be read
     /// (the document's own refusal comes first: the source is not read then), and `Failed` when the engine cannot make it. After any error but `Failed` the document is as it
     /// was; after `Failed` it may not be, and the revision has gone up by one all the same, so the
@@ -643,6 +644,15 @@ impl PdfDocument {
                 is_signed: doc.is_signed(),
             }
         })
+    }
+
+    /// The document's comments: page by page, and top to bottom within a page, in view space.
+    /// Replies to other comments are left out. Read the list again after every change, undo and
+    /// redo: a comment's `index` is its position on its page, which those can move.
+    pub fn annotations(&self) -> Vec<AnnotationInfo> {
+        // Only reads what the engine read when it opened or last changed the document, and turns
+        // the boxes with the page's plain arithmetic: nothing here can panic.
+        self.read(Vec::new(), |doc| annotations::list(&doc.info))
     }
 }
 
