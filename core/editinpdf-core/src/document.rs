@@ -5,11 +5,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
 
+use crate::edit::{Edit, EditCapabilities, EditOutcome, SaveMode};
 use crate::render::{self, RendererPool};
 use crate::text::{self, EnginePageText, MAX_SEARCH_HITS};
 use crate::text_cache::TextCache;
 use crate::{
-    OpenError, PageInfo, PageText, RenderError, RenderedTile, SearchHit, TextSelection, TileRect,
+    EditError, OpenError, PageInfo, PageText, RenderError, RenderedTile, SaveError, SearchHit,
+    TextSelection, TileRect,
 };
 
 /// An open PDF document. Safe to share between threads. Calls on one document run one at a time,
@@ -153,6 +155,70 @@ impl PdfDocument {
         });
         Ok(layer)
     }
+
+    /// Runs `f` on the session under the lock, catching a panic as `EditError::Failed` so the lock
+    /// is never poisoned; on success bumps the revision and retires the renderer pool and text
+    /// layers of the old revision, which are dropped after the lock is released.
+    ///
+    /// `f` is given the session, the document's id and its pages as they are before the change,
+    /// and returns the change's label. With `base_revision`, the change is refused as `Stale` unless
+    /// the document is still at that revision.
+    fn mutate(
+        &self,
+        f: impl FnOnce(&mut Session, DocId, &[pdfcraft_render::PageInfo]) -> Result<String, EditError>,
+        base_revision: Option<u64>,
+    ) -> Result<EditOutcome, EditError> {
+        let (outcome, old_pool, retired) = {
+            let mut inner = self.lock();
+            if let Some(base) = base_revision
+                && base != inner.revision
+            {
+                return Err(EditError::Stale {
+                    current: inner.revision,
+                });
+            }
+            let id = inner.id;
+            let pages = inner
+                .session
+                .get(id)
+                .map(|doc| doc.info.pages.clone())
+                .ok_or_else(|| EditError::Failed {
+                    message: "the document is no longer open".to_owned(),
+                })?;
+            let label = panic::catch_unwind(AssertUnwindSafe(|| f(&mut inner.session, id, &pages)))
+                .unwrap_or_else(|_| {
+                    Err(EditError::Failed {
+                        message: "the engine failed while changing the document".to_owned(),
+                    })
+                })?;
+            inner.revision += 1;
+            let revision = inner.revision;
+            let old_pool = inner.renderers.take();
+            inner.text_cache.advance(revision);
+            let retired = inner.text_cache.take_retired();
+            (EditOutcome { revision, label }, old_pool, retired)
+        };
+        // Freeing the old revision's renderers and text is slow enough to keep out of the lock. A
+        // render still under way holds its own reference to the pool, and frees it when it ends.
+        drop(old_pool);
+        drop(retired);
+        Ok(outcome)
+    }
+
+    /// Reads the document under the lock; `default` when it is no longer open.
+    fn read<T>(&self, default: T, f: impl FnOnce(&pdfcraft_engine::Document) -> T) -> T {
+        let inner = self.lock();
+        inner.session.get(inner.id).map_or(default, f)
+    }
+}
+
+/// The label of the change on top of the undo stack: the one just made or redone.
+fn undo_label(session: &Session, id: DocId) -> String {
+    session
+        .get(id)
+        .and_then(|doc| doc.can_undo())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 #[uniffi::export]
@@ -196,7 +262,7 @@ impl PdfDocument {
     }
 
     /// Changes whenever the document's content does, so callers can drop what they cached for an
-    /// older state. Always 0 until editing exists.
+    /// older state: 0 when opened, and one more after every edit, undo and redo that succeeds.
     pub fn revision(&self) -> u64 {
         self.lock().revision
     }
@@ -318,6 +384,146 @@ impl PdfDocument {
             text::search_page(page, layer, query, case_sensitive, room)
         })
     }
+
+    /// Makes one change to the document, as one step that `undo` takes back.
+    ///
+    /// `base_revision` is the `revision` the change was made for: when the document has changed
+    /// since, nothing is done and the error is `Stale`, with the current revision. On success the
+    /// revision goes up by one, and what was drawn or read for the old one is out of date.
+    ///
+    /// Fails with `ReadOnly` for a document that cannot be edited, `NotPermitted` when its security
+    /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
+    /// for a change that does not fit the document (a page it does not have, a turn that is not a
+    /// multiple of 90 degrees, a size that is not a positive, finite number of at most 14,400
+    /// points), and `Failed` when the engine cannot make it. Whatever the error, the document is as
+    /// it was.
+    pub fn apply(&self, edit: Edit, base_revision: u64) -> Result<EditOutcome, EditError> {
+        self.mutate(
+            |session, id, pages| {
+                let edit = edit.to_engine(pages)?;
+                session.apply(id, edit)?;
+                Ok(undo_label(session, id))
+            },
+            Some(base_revision),
+        )
+    }
+
+    /// Makes several changes, in order, as one step called `label` that `undo` takes back whole.
+    /// Either all of them are made or none is.
+    ///
+    /// Positions on a page are read against the pages as they are before the step, so a step that
+    /// changes the pages (turns, deletes, moves or inserts) cannot also carry a change with a
+    /// position: that is refused as `Invalid`. Otherwise the errors are those of `apply`.
+    pub fn apply_all(
+        &self,
+        label: String,
+        edits: Vec<Edit>,
+        base_revision: u64,
+    ) -> Result<EditOutcome, EditError> {
+        if edits.iter().any(Edit::is_page_structure) && edits.iter().any(Edit::has_geometry) {
+            return Err(EditError::Invalid {
+                message: "page changes and annotation changes can't be combined in one step"
+                    .to_owned(),
+            });
+        }
+        self.mutate(
+            |session, id, pages| {
+                let edits = edits
+                    .iter()
+                    .map(|edit| edit.to_engine(pages))
+                    .collect::<Result<Vec<_>, _>>()?;
+                session.apply(id, pdfcraft_engine::Edit::Batch { label, edits })?;
+                Ok(undo_label(session, id))
+            },
+            Some(base_revision),
+        )
+    }
+
+    /// Takes back the last change made or redone. The revision goes up by one, as for an edit.
+    ///
+    /// Fails with `NothingToUndo` when there is none, and `Failed` when the engine cannot undo it.
+    pub fn undo(&self) -> Result<EditOutcome, EditError> {
+        self.mutate(
+            |session, id, _| Ok(session.undo(id)?.as_str().to_owned()),
+            None,
+        )
+    }
+
+    /// Makes again the last change undone. The revision goes up by one, as for an edit.
+    ///
+    /// Fails with `NothingToRedo` when there is none, and `Failed` when the engine cannot redo it.
+    pub fn redo(&self) -> Result<EditOutcome, EditError> {
+        self.mutate(
+            |session, id, _| Ok(session.redo(id)?.as_str().to_owned()),
+            None,
+        )
+    }
+
+    /// Whether there is a change to undo.
+    pub fn can_undo(&self) -> bool {
+        self.read(false, |doc| doc.can_undo().is_some())
+    }
+
+    /// Whether there is an undone change to redo.
+    pub fn can_redo(&self) -> bool {
+        self.read(false, |doc| doc.can_redo().is_some())
+    }
+
+    /// Whether the document has changed since it was opened. Saving does not clear it.
+    pub fn is_dirty(&self) -> bool {
+        self.read(false, |doc| doc.dirty)
+    }
+
+    /// The document's bytes as they are now, for the app to write.
+    ///
+    /// `Incremental` appends the changes to the file as it was opened (an unchanged document comes
+    /// back exactly as it was opened); `Full` writes a complete, compact file. An encrypted
+    /// document stays encrypted with the same password either way. Saving waits for an edit under
+    /// way to finish, so it never sees half of one, and does not mark the document as saved.
+    ///
+    /// Fails with `Signed` for a `Full` save of a signed document (it would invalidate the
+    /// signatures), `ReadOnly` for a `Full` save of a document that cannot be edited, and `Failed`
+    /// when the engine cannot write the document.
+    pub fn save(&self, mode: SaveMode) -> Result<Vec<u8>, SaveError> {
+        let inner = self.lock();
+        let id = inner.id;
+        let session = &inner.session;
+        let saved = panic::catch_unwind(AssertUnwindSafe(|| match mode {
+            SaveMode::Incremental => session.save_bytes(id),
+            SaveMode::Full => session.save_full_bytes(id),
+        }))
+        .unwrap_or_else(|_| {
+            Err(pdfcraft_engine::EditError::Write(
+                "the engine failed while writing the document".to_owned(),
+            ))
+        })?;
+        drop(inner);
+        Ok(Arc::unwrap_or_clone(saved))
+    }
+
+    /// What can be done to the document, given whether the engine can edit it and what its
+    /// security settings allow.
+    pub fn capabilities(&self) -> EditCapabilities {
+        let closed = EditCapabilities {
+            can_edit: false,
+            read_only_reason: Some("the document is no longer open".to_owned()),
+            can_organize: false,
+            can_annotate: false,
+            can_fill_forms: false,
+            is_signed: false,
+        };
+        self.read(closed, |doc| {
+            let editable = doc.editable();
+            EditCapabilities {
+                can_edit: editable && doc.allows_modification(),
+                read_only_reason: doc.read_only_reason.clone(),
+                can_organize: editable && doc.allows_assembly(),
+                can_annotate: editable && doc.allows_annotation(),
+                can_fill_forms: editable && doc.allows_form_filling(),
+                is_signed: doc.is_signed(),
+            }
+        })
+    }
 }
 
 impl PdfDocument {
@@ -389,6 +595,48 @@ mod tests {
     /// Gives `doc` a text cache that holds `budget` glyphs.
     fn limit_the_text_cache(doc: &PdfDocument, budget: usize) {
         doc.lock().text_cache = TextCache::with_budget(budget);
+    }
+
+    #[test]
+    fn a_change_that_panics_is_a_failure_and_leaves_the_document_usable() {
+        let doc = open_pages(&["one", "two"]);
+        let err = doc
+            .mutate(|_, _, _| panic!("an engine bug"), Some(0))
+            .unwrap_err();
+        assert!(matches!(err, EditError::Failed { .. }));
+        assert!(!doc.inner.is_poisoned(), "the lock is not poisoned");
+        assert_eq!(doc.revision(), 0, "nothing changed");
+        let out = doc
+            .apply(
+                Edit::RotatePages {
+                    pages: vec![0],
+                    degrees: 90,
+                },
+                0,
+            )
+            .unwrap();
+        assert_eq!((out.revision, out.label.as_str()), (1, "Rotate page"));
+    }
+
+    #[test]
+    fn a_change_retires_the_old_revisions_renderers_and_text_at_once() {
+        let doc = open_one_page();
+        let pool = doc.lock().render_pool(0).unwrap();
+        doc.text_layer(0).unwrap();
+        doc.apply(
+            Edit::RotatePages {
+                pages: vec![0],
+                degrees: 90,
+            },
+            0,
+        )
+        .unwrap();
+        let mut inner = doc.lock();
+        assert!(inner.renderers.is_none(), "the old pool is let go of");
+        assert!(inner.text_cache.get(1, 0).is_none(), "and the old text");
+        assert!(inner.text_cache.take_retired().is_empty(), "and freed");
+        drop(inner);
+        assert_eq!(Arc::strong_count(&pool), 1, "only this test holds it now");
     }
 
     #[test]

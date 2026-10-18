@@ -20,6 +20,8 @@ thiserror = { workspace = true }
 log = { workspace = true }
 pdfcraft-engine = { workspace = true }
 pdfcraft-render = { workspace = true }
+# Only for `OrganizeError`, which the engine's `EditError` carries but does not re-export.
+pdfcraft-organize = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "deny"

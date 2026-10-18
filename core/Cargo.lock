@@ -937,6 +937,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "pdfcraft-engine",
+ "pdfcraft-organize",
  "pdfcraft-render",
  "thiserror",
  "uniffi",

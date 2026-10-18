@@ -4,7 +4,10 @@
 //! types never cross the FFI boundary; each call maps a small, stable API onto `pdfcraft_engine`.
 //!
 //! - [`PdfDocument`]: one open document (open, page count, page geometry, page pixels, page text,
-//!   selecting text and searching).
+//!   selecting text and searching, editing, undo and redo, saving).
+//! - [`Edit`], [`EditOutcome`], [`EditCapabilities`], [`SaveMode`], [`Point`], [`RgbColor`],
+//!   [`MarkupKind`], [`ShapeKind`], [`FieldValue`], [`EditError`], [`SaveError`]: what editing takes
+//!   and gives.
 //! - [`OpenError`], [`RenderError`], [`PageInfo`], [`TileRect`], [`RenderedTile`], [`Rect`],
 //!   [`PageText`], [`TextGlyph`], [`TextSelection`], [`SearchHit`]: its error and record types.
 //! - [`MAX_SEARCH_HITS`], [`MAX_QUERY_CHARS`]: the limits of a search. They bound what one search
@@ -20,14 +23,19 @@
 //! A method that returns a `Result` reports a panic as an error: UniFFI catches it at the FFI
 //! boundary, and Swift sees an error thrown. A method that returns no `Result` has no way to report
 //! one: the Swift bindings call it with `try!`, and a panic there ends the app. So the methods and
-//! functions without a `Result` (`page_count`, `page_info`, `revision`, `search`, and the free
-//! functions here) must never panic. They only read the document's state, under a lock that
-//! recovers from poisoning, except `search`, which runs the engine's text code and therefore catches
-//! a panic itself, page by page. Keep it that way when adding one.
+//! functions without a `Result` (`page_count`, `page_info`, `revision`, `can_undo`, `can_redo`,
+//! `is_dirty`, `capabilities`, `search`, and the free functions here) must never panic. They only
+//! read the document's state, under a lock that recovers from poisoning, except `search`, which runs
+//! the engine's text code and therefore catches a panic itself, page by page. Keep it that way when
+//! adding one.
+//!
+//! The calls that run engine code under the lock (`apply`, `apply_all`, `undo`, `redo`, `save`)
+//! catch a panic themselves and report it as an error, so the lock is never left poisoned.
 
 uniffi::setup_scaffolding!();
 
 mod document;
+mod edit;
 mod error;
 mod render;
 mod text;
@@ -35,6 +43,7 @@ mod text_cache;
 mod types;
 
 pub use document::PdfDocument;
+pub use edit::*;
 pub use error::*;
 pub use text::{MAX_QUERY_CHARS, MAX_SEARCH_HITS};
 pub use types::*;

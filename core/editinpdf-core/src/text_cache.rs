@@ -84,7 +84,7 @@ impl TextCache {
     /// Asking for another revision than the one the cache holds lets go of every layer it holds
     /// first: they describe a document that has since changed.
     pub(crate) fn get(&mut self, revision: u64, page: u32) -> Option<Arc<EnginePageText>> {
-        self.follow(revision);
+        self.advance(revision);
         let entry = self.pages.get_mut(&page)?;
         self.clock += 1;
         self.by_use.remove(&entry.used);
@@ -140,8 +140,10 @@ impl TextCache {
         std::mem::take(&mut self.retired)
     }
 
-    /// Switches the cache to `revision`, letting go of the layers of any other.
-    fn follow(&mut self, revision: u64) {
+    /// Switches the cache to `revision`, letting go of the layers of any other. An edit calls this
+    /// as it bumps the revision, so the old revision's layers are retired at once rather than by the
+    /// next use; like every layer let go of, they wait in the retired list for the caller to free.
+    pub(crate) fn advance(&mut self, revision: u64) {
         if self.revision == revision {
             return;
         }
