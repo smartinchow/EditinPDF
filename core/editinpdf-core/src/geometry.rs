@@ -10,7 +10,9 @@ use pdfcraft_render::PageInfo;
 use crate::{Point, Rect};
 
 /// Narrowed to the engine's precision. Page-sized values lose nothing that matters (a single
-/// precision value is exact to about a thousandth of a point on a page).
+/// precision value is exact to about a thousandth of a point on a page). A huge finite value would
+/// become infinite here, so `edit.rs` refuses every position or distance beyond `MAX_VIEW_COORD`
+/// before converting it.
 #[allow(clippy::cast_possible_truncation)]
 fn narrow(value: f64) -> f32 {
     value as f32

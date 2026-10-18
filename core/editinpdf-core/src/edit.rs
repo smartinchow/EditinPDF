@@ -12,6 +12,12 @@ use crate::{EditError, Rect, geometry};
 /// measure (ISO 32000-1, Annex C).
 const MAX_PAGE_SIDE_PT: f64 = 14_400.0;
 
+/// The farthest from a page's view-space origin, in points, that any position, box edge or move
+/// distance the apps give may be: four times the largest page side, room for anything drawn on, or
+/// dragged across, any page. A finite but larger number is refused, not converted: the engine works
+/// in single precision, where a number such as 1e300 becomes infinite.
+const MAX_VIEW_COORD: f64 = 4.0 * MAX_PAGE_SIDE_PT;
+
 /// The most strokes one drawing may have.
 const MAX_STROKES: usize = 500;
 /// The most points one stroke may have.
@@ -312,7 +318,7 @@ impl Edit {
                 color,
             } => {
                 let info = page_of(pages, *page)?;
-                if !(at.x.is_finite() && at.y.is_finite()) {
+                if !in_reach(*at) {
                     return Err(invalid(format!(
                         "a note goes at a point on the page, not ({}, {})",
                         at.x, at.y
@@ -421,8 +427,7 @@ impl Edit {
                 width,
             } => {
                 let info = page_of(pages, *page)?;
-                let ends = [from.x, from.y, to.x, to.y];
-                if !ends.iter().all(|v| v.is_finite())
+                if !(in_reach(*from) && in_reach(*to))
                     || (to.x - from.x).hypot(to.y - from.y) < MIN_SIDE_PT
                 {
                     return Err(invalid(format!(
@@ -449,9 +454,9 @@ impl Edit {
                 dy,
             } => {
                 let info = page_of(pages, *page)?;
-                if !(dx.is_finite() && dy.is_finite()) {
+                if !(coordinate(*dx) && coordinate(*dy)) {
                     return Err(invalid(format!(
-                        "a comment moves by a distance, not ({dx}, {dy})"
+                        "a comment moves by at most {MAX_VIEW_COORD} points each way, not ({dx}, {dy})"
                     )));
                 }
                 let [dx, dy] = geometry::delta_to_user(info, *dx, *dy);
@@ -600,25 +605,45 @@ fn annotation_index(position: u32) -> Result<usize, EditError> {
     usize::try_from(position).map_err(|_| invalid(format!("comment {position} does not exist")))
 }
 
-/// `rect`, once it is known to be a box with an area: finite, and wider and taller than nothing.
+/// Whether `value` is a view-space coordinate or distance the bridge converts: finite and within
+/// `MAX_VIEW_COORD` of 0.
+fn coordinate(value: f64) -> bool {
+    value.is_finite() && value.abs() <= MAX_VIEW_COORD
+}
+
+/// Whether both of `p`'s coordinates are ones the bridge converts.
+fn in_reach(p: Point) -> bool {
+    coordinate(p.x) && coordinate(p.y)
+}
+
+/// Whether `rect`'s position, size and far edges are all ones the bridge converts.
+fn rect_in_reach(rect: &Rect) -> bool {
+    [
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        rect.x + rect.width,
+        rect.y + rect.height,
+    ]
+    .into_iter()
+    .all(coordinate)
+}
+
+/// `rect`, once it is known to be a box with an area: within reach, and wider and taller than
+/// nothing.
 fn area(rect: &Rect) -> Result<&Rect, EditError> {
-    let finite = [rect.x, rect.y, rect.width, rect.height]
-        .iter()
-        .all(|v| v.is_finite());
-    if finite && rect.width > 0.0 && rect.height > 0.0 {
+    if rect_in_reach(rect) && rect.width > 0.0 && rect.height > 0.0 {
         Ok(rect)
     } else {
         Err(invalid(format!("{rect:?} is not an area of the page")))
     }
 }
 
-/// `rect`, once it is known to be a box that can be drawn: finite, and at least a point wide and
-/// tall.
+/// `rect`, once it is known to be a box that can be drawn: within reach, and at least a point wide
+/// and tall.
 fn drawn_box(rect: &Rect) -> Result<&Rect, EditError> {
-    let finite = [rect.x, rect.y, rect.width, rect.height]
-        .iter()
-        .all(|v| v.is_finite());
-    if finite && rect.width >= MIN_SIDE_PT && rect.height >= MIN_SIDE_PT {
+    if rect_in_reach(rect) && rect.width >= MIN_SIDE_PT && rect.height >= MIN_SIDE_PT {
         Ok(rect)
     } else {
         Err(invalid(format!(
@@ -641,7 +666,7 @@ fn line_width(width: f64) -> Result<f64, EditError> {
 }
 
 /// A drawing's strokes in the page's user space, once they are known to be a drawing: at most
-/// `MAX_STROKES` strokes of at most `MAX_STROKE_POINTS` finite points, at least one of them with a
+/// `MAX_STROKES` strokes of at most `MAX_STROKE_POINTS` points within reach, at least one of them with a
 /// point. Empty strokes are left out.
 fn strokes_to_user(
     page: &pdfcraft_render::PageInfo,
@@ -659,11 +684,7 @@ fn strokes_to_user(
             long.len()
         )));
     }
-    if let Some(p) = strokes
-        .iter()
-        .flatten()
-        .find(|p| !(p.x.is_finite() && p.y.is_finite()))
-    {
+    if let Some(p) = strokes.iter().flatten().find(|p| !in_reach(**p)) {
         return Err(invalid(format!(
             "({}, {}) is not a point on the page",
             p.x, p.y

@@ -878,3 +878,107 @@ fn a_step_cannot_both_change_pages_and_draw_or_move() {
     assert!(ok.is_ok(), "{ok:?}");
     assert_eq!(doc.annotations().len(), 6);
 }
+
+/// A finite number too large for a page (1e300) would become infinite in the engine's single
+/// precision: it is refused like an infinite one, before the document is touched.
+#[test]
+fn huge_coordinates_and_moves_are_invalid() {
+    let doc = PdfDocument::open(fixtures::rotated_doc("hello world"), None).unwrap();
+    let huge = 1e300;
+    let r = Rect {
+        x: 10.0,
+        y: 10.0,
+        width: 50.0,
+        height: 50.0,
+    };
+    doc.apply(
+        Edit::AddShape {
+            page: 0,
+            kind: ShapeKind::Rectangle,
+            rect: r,
+            color: RED,
+            fill: None,
+            width: 2.0,
+        },
+        0,
+    )
+    .unwrap();
+    let p = Point { x: 10.0, y: 10.0 };
+    let far = Point { x: huge, y: 10.0 };
+    let edits = [
+        Edit::AddInk {
+            page: 0,
+            strokes: vec![vec![p, far]],
+            color: RED,
+            width: 2.0,
+        },
+        Edit::AddSignature {
+            page: 0,
+            strokes: vec![vec![Point { x: 10.0, y: -huge }]],
+            color: RED,
+            width: 2.0,
+        },
+        Edit::AddLine {
+            page: 0,
+            from: p,
+            to: far,
+            arrow: true,
+            color: RED,
+            width: 2.0,
+        },
+        Edit::AddNote {
+            page: 0,
+            at: far,
+            contents: String::new(),
+            color: YELLOW,
+        },
+        Edit::AddShape {
+            page: 0,
+            kind: ShapeKind::Oval,
+            rect: Rect { x: huge, ..r },
+            color: RED,
+            fill: None,
+            width: 2.0,
+        },
+        // Each side is within range, but the far edge is not.
+        Edit::AddTextBox {
+            page: 0,
+            rect: Rect {
+                x: 50_000.0,
+                width: 50_000.0,
+                ..r
+            },
+            text: "a".into(),
+            font_size: 12.0,
+            color: RED,
+        },
+        Edit::AddTextMarkup {
+            page: 0,
+            kind: MarkupKind::Highlight,
+            rects: vec![Rect { height: huge, ..r }],
+            color: YELLOW,
+            contents: String::new(),
+        },
+        Edit::MoveAnnotation {
+            page: 0,
+            index: 0,
+            dx: huge,
+            dy: 0.0,
+        },
+        Edit::MoveAnnotation {
+            page: 0,
+            index: 0,
+            dx: 0.0,
+            dy: -huge,
+        },
+    ];
+    for edit in edits {
+        let result = doc.apply(edit.clone(), 1);
+        assert!(
+            matches!(result, Err(EditError::Invalid { .. })),
+            "{edit:?}: {result:?}"
+        );
+    }
+    assert_eq!(doc.revision(), 1, "nothing changed");
+    assert_rect_close(&doc.annotations()[0].rect, &r, 0.5);
+}
