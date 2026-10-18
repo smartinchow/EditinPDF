@@ -1,3 +1,4 @@
+import EditinPDFCore
 import UIKit
 import XCTest
 @testable import EditinPDF
@@ -415,5 +416,92 @@ final class PageScrollViewControllerTests: XCTestCase {
         controller.reveal(PageRect(page: 2, rect: CGRect(x: 100, y: 1_000, width: 80, height: 20)))
         XCTAssertNotNil(controller.pageView(for: 2))
         XCTAssertEqual(model.currentPage, 2)
+    }
+
+    // MARK: Following the document's changes
+
+    func testDeletingAPageRebuildsTheLayout() async throws {
+        let (controller, model) = makeController(pages: 3)
+        await model.perform(.deletePages(pages: [1]), named: Strings.actionDelete, touching: nil)
+        controller.apply(try XCTUnwrap(model.lastChange)); controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.loadedPages, [0, 1])
+        XCTAssertEqual(controller.scrollView.contentSize.height, 2 * 530 - 12, accuracy: 1)
+    }
+
+    /// A page turned on its side is laid out again in its new shape, at the zoom the reader had, with
+    /// the reader on the page they were on.
+    func testRotatingAPageLaysItOutAgainKeepingTheZoom() async throws {
+        let (controller, model) = makeController(pages: 3)
+        controller.scrollView.zoomScale = 2
+        controller.scroll(to: 1)
+        XCTAssertEqual(model.currentPage, 1)
+        let before = try XCTUnwrap(controller.pageView(for: 1))
+
+        await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        controller.apply(try XCTUnwrap(model.lastChange)); controller.view.layoutIfNeeded()
+
+        XCTAssertEqual(controller.scrollView.zoomScale, 2, accuracy: 0.0001)
+        XCTAssertEqual(model.currentPage, 1)
+        // Page 0 is 309 tall now, so page 1 starts at 321.
+        XCTAssertEqual(try XCTUnwrap(controller.pageView(for: 0)).frame.height, 309, accuracy: 1)
+        XCTAssertEqual(try XCTUnwrap(controller.pageView(for: 1)).frame.minY, 321, accuracy: 1)
+        XCTAssertFalse(controller.pageView(for: 1) === before, "the page views are made again for the new layout")
+        XCTAssertEqual(controller.scrollView.contentOffset.y, 321 * 2, accuracy: 1, "page 1 at the top")
+    }
+
+    /// A change that moves no page keeps the page views, and redraws only the pages it touched.
+    func testAChangeToOnePageRedrawsOnlyThatPage() async throws {
+        let (controller, model) = makeController(pages: 3)
+        let views = try [0, 1, 2].map { try XCTUnwrap(controller.pageView(for: $0)) }
+
+        await model.perform(.addNote(page: 1, at: Point(x: 100, y: 100), contents: "", color: RgbColor(red: 1, green: 1, blue: 0)),
+                            named: Strings.actionAddAnnotation, touching: [1])
+        let change = try XCTUnwrap(model.lastChange)
+        XCTAssertFalse(change.geometryChanged)
+        controller.apply(change); controller.view.layoutIfNeeded()
+
+        XCTAssertTrue(controller.pageView(for: 0) === views[0])
+        XCTAssertTrue(controller.pageView(for: 1) === views[1])
+        XCTAssertEqual(views.map(\.redrawCount), [0, 1, 0])
+    }
+
+    /// A change that does not say which pages it touched redraws every page that has a view.
+    func testAChangeToAnyPageRedrawsEveryLoadedPage() async throws {
+        let (controller, model) = makeController(pages: 3)
+        await model.perform(.setInfo(key: "Title", value: "New"), named: Strings.actionEditAnnotation, touching: nil)
+        controller.apply(try XCTUnwrap(model.lastChange))
+        for page in [0, 1, 2] { XCTAssertEqual(try XCTUnwrap(controller.pageView(for: page)).redrawCount, 1, "page \(page)") }
+    }
+
+    /// Two changes can be published before the view hears of the first: the layout is made again
+    /// whenever it no longer matches the pages, whatever the last change says, and a change the view
+    /// has missed makes every page redraw.
+    func testAMissedChangeIsCaughtUpWith() async throws {
+        let (controller, model) = makeController(pages: 3)
+        await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        await model.perform(.addNote(page: 2, at: Point(x: 100, y: 100), contents: "", color: RgbColor(red: 1, green: 1, blue: 0)),
+                            named: Strings.actionAddAnnotation, touching: [2])
+        let last = try XCTUnwrap(model.lastChange)
+        XCTAssertFalse(last.geometryChanged)
+        controller.apply(last); controller.view.layoutIfNeeded()
+        XCTAssertEqual(try XCTUnwrap(controller.pageView(for: 0)).frame.height, 309, accuracy: 1)
+
+        // The view now knows of the last change; the next one after it is followed exactly, and one
+        // that skips a revision redraws every page.
+        let views = try [0, 1, 2].map { try XCTUnwrap(controller.pageView(for: $0)) }
+        controller.apply(PageChange(revision: last.revision + 2, pages: [2], geometryChanged: false))
+        XCTAssertEqual(views.map(\.redrawCount), [1, 1, 1])
+    }
+
+    /// A change the view has already followed (SwiftUI hands the same one over again with every update)
+    /// does nothing more.
+    func testAChangeAlreadyFollowedIsNotFollowedAgain() async throws {
+        let (controller, model) = makeController(pages: 3)
+        await model.perform(.deletePages(pages: [1]), named: Strings.actionDelete, touching: nil)
+        let change = try XCTUnwrap(model.lastChange)
+        controller.apply(change); controller.view.layoutIfNeeded()
+        let view = try XCTUnwrap(controller.pageView(for: 0))
+        controller.apply(change); controller.view.layoutIfNeeded()
+        XCTAssertTrue(controller.pageView(for: 0) === view)
     }
 }

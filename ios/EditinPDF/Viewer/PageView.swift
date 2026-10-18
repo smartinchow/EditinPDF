@@ -50,6 +50,35 @@ final class PageView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// How long the picture of the page as it was stays over it while its tiles are drawn again.
+    static let redrawCoverDuration: Duration = .milliseconds(350)
+
+    /// The picture of the page as it was, over the tiles while they are drawn again.
+    private weak var redrawCover: UIView?
+    /// How many times the page has been drawn again with `redraw()`. For tests: a view outside a window
+    /// never draws, so its layer cannot tell.
+    private(set) var redrawCount = 0
+
+    /// Draws the page again, after a change to the document. Core Animation throws every tile away
+    /// and draws them anew, which would show blank paper meanwhile, so a picture of the page as it
+    /// was covers it (under the overlay) for `redrawCoverDuration`, by when the new tiles are mostly
+    /// there and fading in.
+    func redraw() {
+        redrawCover?.removeFromSuperview()
+        if let cover = snapshotView(afterScreenUpdates: false) {
+            cover.frame = bounds
+            cover.isUserInteractionEnabled = false
+            insertSubview(cover, belowSubview: overlay)
+            redrawCover = cover
+            Task { @MainActor [weak cover] in
+                try? await Task.sleep(for: Self.redrawCoverDuration)
+                cover?.removeFromSuperview()
+            }
+        }
+        layer.setNeedsDisplay()
+        redrawCount += 1
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         overlay.frame = bounds

@@ -12,6 +12,10 @@ import UIKit
 /// read, and a thumbnail must not take both. Each picture is published on the main actor as it is
 /// done, so a SwiftUI view that asked for it with `image(for:)` is redrawn with it.
 ///
+/// The pictures are of one revision of the document (`revision`). When the document changes,
+/// `reload(pages:revision:)` gives the store the new revision and its pages: every picture of an older
+/// one is dropped, and so is one being drawn when it arrives, so a page never shows what it was.
+///
 /// Nothing the work in flight holds refers back to the store: it keeps the engine's document, and
 /// finds the store again through a weak reference only to hand the picture over. Letting go of the
 /// store therefore ends the work (the page being drawn finishes, and its picture is dropped).
@@ -44,33 +48,38 @@ final class ThumbnailStore {
     /// How many device pixels make a point on the screen the pictures are shown on.
     let displayScale: CGFloat
 
-    private let pageInfos: [PageInfo]
+    /// The revision of the document the pictures are of.
+    private(set) var revision: UInt64
+    private var pageInfos: [PageInfo]
     private let render: Render
-    // M2: key by (page, document revision)
-    @ObservationIgnored private let cache = NSCache<NSNumber, UIImage>()
+    @ObservationIgnored private let cache = NSCache<ThumbnailCacheKey, UIImage>()
     /// The pages waiting for their turn, in the order they were asked for.
     @ObservationIgnored private var pending: [Int] = []
     /// Every page in `pending`, and the one being drawn: a page in here is not asked for again.
     @ObservationIgnored private var queued: Set<Int> = []
     @ObservationIgnored private var isDrawing = false
-    /// Counts the pictures published. A cache cannot be observed, so `image(for:)` reads this, which
-    /// is what makes SwiftUI ask again when a picture arrives. (Not the document's revision, which
-    /// M2 adds and the cache will be keyed by.)
+    /// Counts the pictures published, and the reloads that took them away. A cache cannot be
+    /// observed, so `image(for:)` reads this, which is what makes SwiftUI ask again when a picture
+    /// arrives or goes.
     private var publishedCount = 0
 
     /// A store for `document`, whose pages are described by `pages` (page `n` is `pages[n]`). A
     /// picture is `targetWidth` points wide (narrower for a very tall page, see `tallestInWidths`)
     /// and drawn with `displayScale` pixels to the point; pass the screen's own (SwiftUI's
     /// `displayScale` environment value) so they are sharp.
-    convenience init(document: PdfDocument, pages: [PageInfo], targetWidth: CGFloat = 120, displayScale: CGFloat = 2) {
-        self.init(pages: pages, targetWidth: targetWidth, displayScale: displayScale) { page, scale in
+    /// `revision` is the document's revision that `pages` were read at.
+    convenience init(document: PdfDocument, pages: [PageInfo], revision: UInt64 = 0, targetWidth: CGFloat = 120,
+                     displayScale: CGFloat = 2) {
+        self.init(pages: pages, revision: revision, targetWidth: targetWidth, displayScale: displayScale) { page, scale in
             try document.renderTile(page: UInt32(clamping: page), scale: scale, rect: nil)
         }
     }
 
     /// A store whose pictures are drawn by `render`.
-    init(pages: [PageInfo], targetWidth: CGFloat = 120, displayScale: CGFloat = 2, render: @escaping Render) {
+    init(pages: [PageInfo], revision: UInt64 = 0, targetWidth: CGFloat = 120, displayScale: CGFloat = 2,
+         render: @escaping Render) {
         self.pageInfos = pages
+        self.revision = revision
         self.targetWidth = targetWidth
         // A screen without a scale (0) would ask the engine for nothing.
         self.displayScale = displayScale > 0 ? displayScale : 1
@@ -84,7 +93,25 @@ final class ThumbnailStore {
     /// could not draw, or one the cache gave up. A view that finds none is told when one is published.
     func image(for page: Int) -> UIImage? {
         _ = publishedCount
-        return cache.object(forKey: NSNumber(value: page))
+        return cache.object(forKey: key(page))
+    }
+
+    /// Moves the store on to `revision` of the document, whose pages are now `pages`: the pictures
+    /// asked for and not started are dropped, and so is every picture there (all of an older
+    /// revision); one being drawn is dropped when it arrives. Views that read a picture are told, and
+    /// ask again. A revision no newer than the store's changes nothing.
+    func reload(pages: [PageInfo], revision: UInt64) {
+        guard revision > self.revision else { return }
+        self.revision = revision
+        pageInfos = pages
+        pending.removeAll()
+        queued.removeAll()
+        cache.removeAllObjects()
+        publishedCount += 1
+    }
+
+    private func key(_ page: Int) -> ThumbnailCacheKey {
+        ThumbnailCacheKey(ThumbnailKey(page: page, revision: revision))
     }
 
     /// Asks for the pictures of `pages`, to be drawn in turn after those already asked for. Pages the
@@ -124,7 +151,7 @@ final class ThumbnailStore {
     }
 
     private func hasImage(for page: Int) -> Bool {
-        cache.object(forKey: NSNumber(value: page)) != nil
+        cache.object(forKey: key(page)) != nil
     }
 
     /// Starts on the next page waiting, if nothing is being drawn. Pages whose width cannot be turned
@@ -141,23 +168,30 @@ final class ThumbnailStore {
             isDrawing = true
             let render = render
             let displayScale = displayScale
+            let revision = revision
             // Low priority, and one at a time: the next page is only started once this one is done.
             Task.detached(priority: .utility) { [weak self] in
                 let image = Self.thumbnail(page: page, scale: scale, displayScale: displayScale, render: render)
-                await self?.finishDrawing(page, image: image)
+                await self?.finishDrawing(page, of: revision, image: image)
             }
             return
         }
     }
 
-    /// Back on the main actor with the picture (nil when it could not be drawn): keeps it, tells the
-    /// views waiting for it, and goes on to the next page.
-    private func finishDrawing(_ page: Int, image: UIImage?) {
+    /// Back on the main actor with the picture of `page` at `revision` (nil when it could not be
+    /// drawn): keeps it and tells the views waiting for it, unless the document has changed since,
+    /// and goes on to the next page.
+    private func finishDrawing(_ page: Int, of revision: UInt64, image: UIImage?) {
         isDrawing = false
+        // After a reload the page may have been asked for again, for the new revision: that request
+        // stands.
+        guard revision == self.revision else {
+            drawNext()
+            return
+        }
         queued.remove(page)
         if let image {
-            // M2: key by (page, document revision)
-            cache.setObject(image, forKey: NSNumber(value: page), cost: Self.byteCount(of: image))
+            cache.setObject(image, forKey: key(page), cost: Self.byteCount(of: image))
             publishedCount += 1
         }
         drawNext()
@@ -199,5 +233,26 @@ final class ThumbnailStore {
 
     private static func byteCount(of image: UIImage) -> Int {
         image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+    }
+}
+
+/// Which picture: a page (counting from 0) of a revision of the document.
+struct ThumbnailKey: Hashable {
+    let page: Int
+    let revision: UInt64
+}
+
+/// `ThumbnailKey` as `NSCache` needs its keys: an object, equal and hashed by the key it holds.
+final class ThumbnailCacheKey: NSObject {
+    let key: ThumbnailKey
+
+    init(_ key: ThumbnailKey) {
+        self.key = key
+    }
+
+    override var hash: Int { key.hashValue }
+
+    override func isEqual(_ object: Any?) -> Bool {
+        (object as? ThumbnailCacheKey)?.key == key
     }
 }

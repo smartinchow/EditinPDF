@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The screen for one document: its pages, once it is open, with the search and thumbnails buttons
-/// in the toolbar (and, while text is selected, a Copy button before them), and the page indicator
-/// (and, while a search has hits, the bar to move between them) over the pages.
+/// The screen for one document: its pages, once it is open, with Undo and Redo at the leading end of
+/// the toolbar and the search and thumbnails buttons at the trailing end (and, while text is selected,
+/// a Copy button before them), and the page indicator (and, while a search has hits, the bar to move
+/// between them) over the pages. The pages and the thumbnails follow every change, undo and redo.
 ///
 /// A document that is locked has no pages to show yet: the prompt for its password (`PasswordSheet`)
 /// comes up over a screen that says it is locked. Cancel puts the prompt away and leaves that screen,
@@ -27,6 +28,14 @@ struct DocumentScreen: View {
     /// sheet opens with its pictures the next time.
     @State private var thumbnails: ThumbnailStore?
     @Environment(\.displayScale) private var displayScale
+    /// The scene's undo manager, handed to the model, which registers each change with it.
+    @Environment(\.undoManager) private var undoManager
+    /// Whether the undo manager has something to undo, and to redo. It is not observable, so these are
+    /// read again whenever it says its stacks moved.
+    @State private var canUndo = false
+    @State private var canRedo = false
+    /// Whether a change has been in the making long enough to show a spinner by the page indicator.
+    @State private var showsProgress = false
     /// Closes the document, back to the document browser, on the iOS versions where `dismiss` does
     /// that for a document scene (iOS 26 does; 17 and 18 are reported not to). Only the alert about a
     /// file that could not be opened uses it, as a shortcut: the screen behind the alert does not
@@ -51,6 +60,23 @@ struct DocumentScreen: View {
 
     var body: some View {
         content
+            .onAppear { adoptUndoManager() }
+            .onChange(of: undoManager) { adoptUndoManager() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { readUndoState($0) }
+            .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { readUndoState($0) }
+            .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { readUndoState($0) }
+            // A change the engine refused takes its entry off the undo manager, which posts nothing:
+            // read again once each change, undo or redo is done.
+            .onChange(of: model.isApplying) {
+                readUndoState(nil)
+                showsProgress = false
+            }
+            // Only a change that takes a while shows that it is being made, so quick ones do not flash.
+            .task(id: model.isApplying) {
+                guard model.isApplying else { return }
+                try? await Task.sleep(for: .milliseconds(300))
+                if !Task.isCancelled, model.isApplying { showsProgress = true }
+            }
             // Over whatever is behind them, so the prompt and the alert are there as soon as the state
             // is, and the prompt goes when the password opens the document. Nothing else closes the
             // prompt but Cancel (it cannot be swiped away).
@@ -66,6 +92,20 @@ struct DocumentScreen: View {
             } message: {
                 if let detail = failureDetail { Text(detail) }
             }
+    }
+
+    /// Hands the scene's undo manager to the model, and shows what it can undo and redo.
+    private func adoptUndoManager() {
+        model.undoManager = undoManager
+        readUndoState(nil)
+    }
+
+    /// Reads whether there is something to undo and redo, after `notification` from an undo manager:
+    /// only the scene's own matters (other ones, a text field's, post the same notifications).
+    private func readUndoState(_ notification: Notification?) {
+        if let notification, (notification.object as? UndoManager) !== undoManager { return }
+        canUndo = undoManager?.canUndo ?? false
+        canRedo = undoManager?.canRedo ?? false
     }
 
     /// Whether the document is waiting for its password.
@@ -115,7 +155,8 @@ struct DocumentScreen: View {
             PageScrollView(model: model, scrollTarget: $scrollTarget, revealRect: $revealRect,
                            highlights: model.search?.highlightsByPage ?? [:],
                            activeHighlight: model.search?.activeHighlight,
-                           selection: model.selection?.pageRects)
+                           selection: model.selection?.pageRects,
+                           lastChange: model.lastChange)
                 .ignoresSafeArea()
                 // An overlay, not a bar: the scroll view's insets do not change when it appears.
                 .overlay(alignment: .bottom) {
@@ -130,6 +171,10 @@ struct DocumentScreen: View {
                 // and an accessibility label) the items in that menu were blank, so the menu looked
                 // empty (reported on an iPhone, reproduced on the iOS 26.5 simulator).
                 .toolbar {
+                    ToolbarItemGroup(placement: .topBarLeading) {
+                        undoButton
+                        redoButton
+                    }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         copyButton
                         searchButton
@@ -140,8 +185,10 @@ struct DocumentScreen: View {
                     ThumbnailsSheet(model: model, store: presentation.store, scrollTarget: $scrollTarget)
                 }
                 // A change to the document makes every picture the store has drawn out of date (and its
-                // pages, too): the next thumbnails are drawn afresh from the new revision.
-                .onChange(of: model.revision) { thumbnails = nil }
+                // pages, too): the store moves on to the new revision, and an open sheet with it.
+                .onChange(of: model.revision) {
+                    thumbnails?.reload(pages: model.pages, revision: model.revision)
+                }
                 // A change that was not made says why. No actions: the system gives the alert its OK.
                 .alert(model.failure?.title ?? "", isPresented: showsEditFailure, presenting: model.failure) { _ in
                 } message: { failure in
@@ -192,13 +239,22 @@ struct DocumentScreen: View {
     /// for a document with no pages.
     @ViewBuilder private var pageIndicator: some View {
         if model.pageCount > 0 {
-            Text(Strings.pageIndicator(current: model.currentPage + 1, count: model.pageCount))
-                .font(.footnote.monospacedDigit())
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.regularMaterial, in: Capsule())
-                .padding(.bottom, 8)
-                .accessibilityIdentifier("pageIndicator")
+            // While a change is being made a small spinner sits beside the numbers; nothing is held
+            // back meanwhile (the model makes changes in the order they are tapped).
+            HStack(spacing: 6) {
+                if showsProgress {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .accessibilityIdentifier("editProgress")
+                }
+                Text(Strings.pageIndicator(current: model.currentPage + 1, count: model.pageCount))
+                    .accessibilityIdentifier("pageIndicator")
+            }
+            .font(.footnote.monospacedDigit())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.regularMaterial, in: Capsule())
+            .padding(.bottom, 8)
         }
     }
 
@@ -220,6 +276,29 @@ struct DocumentScreen: View {
             }
             .accessibilityIdentifier("copyButton")
         }
+    }
+
+    /// Takes back the last change. Changes stay tappable while one is being made: the model makes
+    /// them in order.
+    private var undoButton: some View {
+        Button {
+            model.undo()
+        } label: {
+            Label(Strings.undo, systemImage: "arrow.uturn.backward")
+        }
+        .disabled(!canUndo)
+        .accessibilityIdentifier("undoButton")
+    }
+
+    /// Makes again the change last taken back.
+    private var redoButton: some View {
+        Button {
+            model.redo()
+        } label: {
+            Label(Strings.redo, systemImage: "arrow.uturn.forward")
+        }
+        .disabled(!canRedo)
+        .accessibilityIdentifier("redoButton")
     }
 
     private var searchButton: some View {
@@ -246,7 +325,8 @@ struct DocumentScreen: View {
         // A store drawn for another screen resolution (the window moved to another display) is
         // replaced, so the pictures are sharp on this one.
         let kept = thumbnails.flatMap { $0.displayScale == displayScale ? $0 : nil }
-        let store = kept ?? ThumbnailStore(document: document, pages: model.pages, displayScale: displayScale)
+        let store = kept ?? ThumbnailStore(document: document, pages: model.pages, revision: model.revision,
+                                             displayScale: displayScale)
         thumbnails = store
         // The pictures the sheet opens on are drawn while it slides up, so its first rows are not
         // blank; the cells ask for the rest as they come into view.

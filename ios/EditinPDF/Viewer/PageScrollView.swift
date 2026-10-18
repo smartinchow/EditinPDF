@@ -31,6 +31,10 @@ struct PageScrollView: UIViewControllerRepresentable {
     var activeHighlight: ActiveHighlight?
     /// The selected text: its page and its boxes there, in PDF points. Nil when nothing is selected.
     var selection: (page: Int, rects: [CGRect])?
+    /// What the last change, undo or redo did to the pages (`DocumentModel.lastChange`), for the
+    /// controller to lay them out again or redraw them. Passed in, not read from `model` here, so that
+    /// the screen's body reads it and SwiftUI updates the controller each time it changes.
+    var lastChange: PageChange?
 
     func makeUIViewController(context: Context) -> PageScrollViewController {
         PageScrollViewController(model: model)
@@ -40,6 +44,9 @@ struct PageScrollView: UIViewControllerRepresentable {
         controller.highlightsByPage = highlights
         controller.activeHighlight = activeHighlight
         controller.selection = selection
+        // A change the controller has followed already is ignored, so handing the same one over with
+        // every update is harmless.
+        if let lastChange { controller.apply(lastChange) }
         guard scrollTarget != nil || revealRect != nil else { return }
         let target = scrollTarget
         let reveal = revealRect
@@ -117,9 +124,16 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// the scroll view has already pulled its offset into the range for its new size (it lays itself
     /// out before its controller does), losing the place across a zoomed page.
     private var lastPosition: ReadingPosition?
+    /// The pages the layout was made for. When the document's no longer match them (in number, size or
+    /// rotation), the layout is out of date.
+    private var laidOutPages: [PageInfo] = []
+    /// The revision of the last change followed (`apply(_:)`): the document's when the controller was
+    /// made, until a change comes.
+    private var followedRevision: UInt64
 
     init(model: DocumentModel) {
         self.model = model
+        followedRevision = model.lastChange?.revision ?? model.revision
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -151,7 +165,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         super.viewDidLayoutSubviews()
         let fitWidth = currentFitWidth()
         guard fitWidth > 0, fitWidth != layout?.fitWidth else { return }
-        relayout(fitWidth: fitWidth)
+        relayout(fitWidth: fitWidth, placing: .readingPosition)
     }
 
     /// The width the pages fit: the view's, less the insets on either side, which need not be the same
@@ -212,6 +226,44 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// longer than the viewport.
     private static func offset(showing low: CGFloat, length: CGFloat, in viewport: CGFloat, inset: CGFloat) -> CGFloat {
         length <= viewport ? low + (length - viewport) / 2 - inset : low - inset
+    }
+
+    // MARK: Following the document's changes
+
+    /// Brings the pages up to date with `change`, a change, undo or redo of the document that the
+    /// model has published. One that changed the number of pages, or a page's size or rotation, has
+    /// the pages laid out again and their views made again, at the zoom the reader had, with the
+    /// current page (`model.currentPage`, which the model keeps on a page the document still has) at
+    /// the top. Any other has its pages redrawn where they are: `change.pages`, or every page that has
+    /// a view when it does not say.
+    ///
+    /// A change already followed, or older, does nothing. Two changes can be published before the
+    /// controller hears of the first: the layout is made again whenever it no longer matches the
+    /// document's pages, whatever the change says, and when a revision has been skipped every page
+    /// with a view is redrawn, since the pages of the change missed are not known.
+    func apply(_ change: PageChange) {
+        guard change.revision > followedRevision else { return }
+        let missedOne = change.revision > followedRevision + 1
+        followedRevision = change.revision
+        // Before the first layout there is nothing drawn: that layout reads the pages as they are.
+        guard let layout else { return }
+        if change.geometryChanged || !Self.sameGeometry(laidOutPages, model.pages) {
+            let zoom = scrollView.zoomScale
+            let across = visibleArea().minX
+            relayout(fitWidth: layout.fitWidth, placing: .currentPage(zoom: zoom, across: across))
+            return
+        }
+        let touched = missedOne ? nil : change.pages
+        for (page, view) in pageViews where touched?.contains(page) ?? true {
+            view.redraw()
+        }
+    }
+
+    /// Whether `a` and `b` are as many pages, each the same size and turned the same way.
+    private static func sameGeometry(_ a: [PageInfo], _ b: [PageInfo]) -> Bool {
+        a.count == b.count && zip(a, b).allSatisfy { old, new in
+            old.widthPt == new.widthPt && old.heightPt == new.heightPt && old.rotationDegrees == new.rotationDegrees
+        }
     }
 
     // MARK: Where things are, for the selection
@@ -283,14 +335,21 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// asked for before the first layout. The page views are made again, at zoom 1: a page view's size
     /// never changes, so its tiles never mix two sizes. The zoom is put back afterwards.
     ///
+    /// After a change to the document's pages (`apply(_:)`), the place on the page means nothing any
+    /// more (the page may be another one, or turned): the current page goes to the top instead, at the
+    /// zoom and as far across the column as before.
+    ///
     /// A finger on a selection handle lets go and the edit menu goes away, since both are about where
     /// the text was on screen; the handles themselves are put at the selection's new place.
-    private func relayout(fitWidth: CGFloat) {
+    private func relayout(fitWidth: CGFloat, placing placement: Placement) {
         selectionInteraction.layoutWillChange()
         let position = lastPosition
+        // Read before the zoom changes, which moves the current page.
+        let currentPage = model.currentPage
         let target = pendingTarget
         pendingTarget = nil
         let newLayout = PageLayout(pages: model.pages, fitWidth: fitWidth)
+        laidOutPages = model.pages
         layout = nil
         scrollView.zoomScale = 1
         for view in pageViews.values { view.removeFromSuperview() }
@@ -301,17 +360,30 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
         if let target, (0..<newLayout.pageCount).contains(target) {
             show(newLayout.frame(of: target).minY)
+        } else if case .currentPage(let zoom, let across) = placement {
+            scrollView.zoomScale = min(max(zoom, scrollView.minimumZoomScale), scrollView.maximumZoomScale)
+            // The model keeps the current page on one the document has.
+            show(CGPoint(x: across, y: newLayout.frame(of: currentPage).minY))
         } else if let position, (0..<newLayout.pageCount).contains(position.page) {
             scrollView.zoomScale = min(max(position.zoom, scrollView.minimumZoomScale), scrollView.maximumZoomScale)
             show(position.topLeft(in: newLayout))
         } else {
-            show(newLayout.frame(of: model.currentPage).minY)
+            show(newLayout.frame(of: currentPage).minY)
         }
 
         if let reveal = pendingReveal {
             pendingReveal = nil
             self.reveal(reveal)
         }
+    }
+
+    /// Where a new layout puts the reader.
+    private enum Placement {
+        /// Where they were: the same page, as far down and across it, at the same zoom.
+        case readingPosition
+        /// At the top of the current page, at `zoom`, `across` layout points (zoom 1) from the column's
+        /// left edge.
+        case currentPage(zoom: CGFloat, across: CGFloat)
     }
 
     /// Scrolls so that layout point `y` (at zoom 1) is at the top of the visible area, as near as

@@ -323,6 +323,86 @@ final class ThumbnailStoreTests: XCTestCase {
         XCTAssertEqual(probe.requested, [0], "pages queued behind the one in flight are not drawn for nobody")
     }
 
+    // MARK: Following the document's changes
+
+    func testReloadForANewRevisionDropsOldPictures() async throws {
+        let probe = RenderProbe()
+        let store = ThumbnailStore(pages: [Self.page(0, width: 612, height: 792)], render: probe.render)
+        XCTAssertEqual(store.revision, 0)
+        store.prefetch(0..<1)
+        let arrived = await eventually { store.image(for: 0) != nil }
+        XCTAssertTrue(arrived)
+
+        store.reload(pages: [Self.page(0, width: 792, height: 612)], revision: 1)
+        XCTAssertNil(store.image(for: 0))
+        XCTAssertEqual(store.revision, 1)
+
+        // Asked for again, the page is drawn afresh, to its new width.
+        store.prefetch(0..<1)
+        let redrawn = await eventually { store.image(for: 0) != nil }
+        XCTAssertTrue(redrawn)
+        XCTAssertEqual(probe.requested, [0, 0])
+        XCTAssertEqual(probe.scales.last ?? 0, 240.0 / 792.0, accuracy: 0.0001)
+    }
+
+    /// A picture that was being drawn when the document changed shows the page as it was: it is
+    /// thrown away, and the next page waiting is the new revision's.
+    func testAPictureDrawnForAnOlderRevisionIsThrownAway() async {
+        let probe = RenderProbe()
+        probe.holdFirstDraw()
+        let store = makeStore(probe, pages: 3)
+        store.prefetch(0..<3)
+        let started = await eventually { probe.requested == [0] }
+        XCTAssertTrue(started)
+
+        store.reload(pages: (0..<2).map { Self.page($0, width: 612, height: 792) }, revision: 4)
+        probe.release()
+        let finished = await eventually { probe.finishedDraws == 1 }
+        XCTAssertTrue(finished)
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertNil(store.image(for: 0), "the old revision's picture is not kept")
+        XCTAssertEqual(probe.requested, [0], "the pages waiting were the old revision's, and were dropped")
+
+        // The page being drawn is not counted as queued any more: it can be asked for again at once.
+        store.prefetch(0..<2)
+        let both = await eventually { store.image(for: 0) != nil && store.image(for: 1) != nil }
+        XCTAssertTrue(both)
+        store.prefetch(2..<3)
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertNil(store.image(for: 2), "the document has two pages now")
+    }
+
+    /// A reload for the revision the store already has (or an older one) changes nothing.
+    func testReloadForTheSameRevisionKeepsThePictures() async {
+        let probe = RenderProbe()
+        let store = makeStore(probe, pages: 1)
+        store.reload(pages: [Self.page(0, width: 612, height: 792)], revision: 2)
+        store.prefetch(0..<1)
+        let arrived = await eventually { store.image(for: 0) != nil }
+        XCTAssertTrue(arrived)
+        store.reload(pages: [Self.page(0, width: 612, height: 792)], revision: 2)
+        store.reload(pages: [Self.page(0, width: 612, height: 792)], revision: 1)
+        XCTAssertNotNil(store.image(for: 0))
+        XCTAssertEqual(store.revision, 2)
+    }
+
+    /// A view that read a picture is told when a reload takes it away.
+    func testReloadTellsWhatReadAPicture() async {
+        let probe = RenderProbe()
+        let store = makeStore(probe, pages: 1)
+        store.prefetch(0..<1)
+        let arrived = await eventually { store.image(for: 0) != nil }
+        XCTAssertTrue(arrived)
+        let told = expectation(description: "the reader of the picture is told")
+        withObservationTracking {
+            XCTAssertNotNil(store.image(for: 0))
+        } onChange: {
+            told.fulfill()
+        }
+        store.reload(pages: [Self.page(0, width: 612, height: 792)], revision: 1)
+        await fulfillment(of: [told], timeout: 1)
+    }
+
     // MARK: Helpers
 
     static func page(_ index: Int, width: Double, height: Double) -> PageInfo {
@@ -408,3 +488,4 @@ final class RenderProbe: @unchecked Sendable {
                             rgba: Data(repeating: 255, count: garbles ? 7 : width * height * 4))
     }
 }
+

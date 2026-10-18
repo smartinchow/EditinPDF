@@ -7,6 +7,9 @@ import SwiftUI
 /// The grid opens at the page the reader was on, and outlines it. Each picture is asked of `store`
 /// as its cell comes into view, and given up as the cell goes away, so only what is in or near the
 /// view is drawn; until its picture is there a cell shows a blank page of the right shape.
+///
+/// It follows changes to the document while it is up: the grid has the model's pages, and the cells
+/// in view are drawn again when the store moves on to the new revision.
 struct ThumbnailsSheet: View {
     let model: DocumentModel
     let store: ThumbnailStore
@@ -109,6 +112,11 @@ private struct ThumbnailCell: View {
         .onDisappear {
             isOnScreen = false
             store.cancelPrefetch(page..<page + 1)
+        }
+        // The document changed while the sheet is up: the store dropped every picture, and the
+        // cells in view ask for theirs again, of the new revision.
+        .onChange(of: store.revision) {
+            if isOnScreen { store.prefetch(page..<page + 1) }
         }
     }
 

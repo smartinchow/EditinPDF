@@ -73,11 +73,10 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertTrue(app.otherElements["selectionHandleStart"].waitForExistence(timeout: 5), "no selection after a long press on the word")
         XCTAssertTrue(app.otherElements["selectionHandleEnd"].exists)
 
-        let copy = app.buttons["copyButton"]
-        XCTAssertTrue(copy.waitForExistence(timeout: 5), "nothing to copy")
-        copy.tap()
-
-        app.buttons["searchButton"].tap()
+        // With Undo and Redo at the leading end, a phone's bar has no room for Copy as well: it is in
+        // the More menu then, by its title.
+        XCTAssertTrue(tapToolbarButton("copyButton", titled: "Copy", in: app), "nothing to copy")
+        XCTAssertTrue(tapToolbarButton("searchButton", titled: "Search", in: app), "no Search")
         let field = app.textFields["searchField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the search sheet did not come up")
         dismissKeyboardIntroduction(in: app)
@@ -115,6 +114,25 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label == %@", "Copy")).firstMatch.exists, "nothing is selected to copy")
         search.tap()
         XCTAssertTrue(app.textFields["searchField"].waitForExistence(timeout: 5), "Search in the More menu did not open the search")
+    }
+
+    /// Undo and Redo stand at the leading end of the bar, with their titles (for the More menu), and
+    /// are disabled while there is nothing to undo or redo.
+    func testUndoAndRedoAreThereAndDisabledOnAnUnchangedDocument() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        let undo = app.buttons["undoButton"]
+        let redo = app.buttons["redoButton"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5), "no Undo button")
+        XCTAssertTrue(redo.exists, "no Redo button")
+        XCTAssertFalse(undo.isEnabled, "nothing to undo")
+        XCTAssertFalse(redo.isEnabled, "nothing to redo")
+        XCTAssertEqual(undo.label, "Undo")
+        XCTAssertEqual(redo.label, "Redo")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "toolbar"
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     // MARK: A password
@@ -254,6 +272,23 @@ final class ViewerSmokeTests: XCTestCase {
     }
 
     /// Waits until the page indicator names one of the `count` pages: "N / count", N from 1 to `count`.
+    /// Taps the toolbar button `identifier`, or, when the bar has moved it into its More menu, the
+    /// menu's item `title` (the menu's copies have no identifiers). False if it is in neither.
+    private func tapToolbarButton(_ identifier: String, titled title: String, in app: XCUIApplication) -> Bool {
+        let button = app.buttons[identifier]
+        if button.waitForExistence(timeout: 3) {
+            button.tap()
+            return true
+        }
+        let more = app.buttons["OverflowBarButtonItem"]
+        guard more.exists else { return false }
+        more.tap()
+        let item = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+        guard item.waitForExistence(timeout: 5) else { return false }
+        item.tap()
+        return true
+    }
+
     private func expect(_ indicator: XCUIElement, toReadAPageOf count: Int, within seconds: TimeInterval, file: StaticString = #filePath, line: UInt = #line) {
         let pages = (1...count).map(String.init).joined(separator: "|")
         let reads = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label MATCHES %@", "^(\(pages)) / \(count)$"), object: indicator)
