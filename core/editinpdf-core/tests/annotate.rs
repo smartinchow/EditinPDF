@@ -982,3 +982,47 @@ fn huge_coordinates_and_moves_are_invalid() {
     assert_eq!(doc.revision(), 1, "nothing changed");
     assert_rect_close(&doc.annotations()[0].rect, &r, 0.5);
 }
+
+#[test]
+fn a_drawing_has_at_most_100_000_points_in_all() {
+    let doc = PdfDocument::open(fixtures::text_doc(&["x"]), None).unwrap();
+    let p = Point { x: 10.0, y: 10.0 };
+    // Each stroke is within its own cap (10,000 points) and the strokes within theirs (500), but
+    // together they are one point over the drawing's.
+    let mut over = vec![vec![p; 10_000]; 10];
+    over.push(vec![p]);
+    let edits = [
+        Edit::AddInk {
+            page: 0,
+            strokes: over.clone(),
+            color: RED,
+            width: 2.0,
+        },
+        Edit::AddSignature {
+            page: 0,
+            strokes: over,
+            color: RED,
+            width: 2.0,
+        },
+    ];
+    for edit in edits {
+        let result = doc.apply(edit.clone(), 0);
+        assert!(
+            matches!(result, Err(EditError::Invalid { .. })),
+            "{result:?}"
+        );
+    }
+    assert_eq!(doc.revision(), 0, "nothing changed");
+    // Exactly the cap is a drawing.
+    doc.apply(
+        Edit::AddInk {
+            page: 0,
+            strokes: vec![vec![p; 10_000]; 10],
+            color: RED,
+            width: 2.0,
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(doc.annotations().len(), 1);
+}

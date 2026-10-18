@@ -22,6 +22,8 @@ const MAX_VIEW_COORD: f64 = 4.0 * MAX_PAGE_SIDE_PT;
 const MAX_STROKES: usize = 500;
 /// The most points one stroke may have.
 const MAX_STROKE_POINTS: usize = 10_000;
+/// The most points one drawing may have, all its strokes together.
+const MAX_DRAWING_POINTS: usize = 100_000;
 /// The thinnest and thickest a drawn line may be, in points.
 const LINE_WIDTHS: std::ops::RangeInclusive<f64> = 0.1..=50.0;
 /// The smallest and largest a text box's text may be, in points.
@@ -164,8 +166,9 @@ pub enum Edit {
         contents: String,
     },
     /// Adds a freehand drawing: `strokes` are the lines drawn, each the points it passed through,
-    /// `width` points wide (0.1 through 50). At most 500 strokes of at most 10 000 points; at least
-    /// one stroke has a point (a stroke of one point is a dot, and empty strokes are left out).
+    /// `width` points wide (0.1 through 50). At most 500 strokes of at most 10 000 points, and at
+    /// most 100 000 points in all; at least one stroke has a point (a stroke of one point is a dot,
+    /// and empty strokes are left out).
     AddInk {
         page: u32,
         strokes: Vec<Vec<Point>>,
@@ -666,8 +669,8 @@ fn line_width(width: f64) -> Result<f64, EditError> {
 }
 
 /// A drawing's strokes in the page's user space, once they are known to be a drawing: at most
-/// `MAX_STROKES` strokes of at most `MAX_STROKE_POINTS` points within reach, at least one of them with a
-/// point. Empty strokes are left out.
+/// `MAX_STROKES` strokes of at most `MAX_STROKE_POINTS` points, at most `MAX_DRAWING_POINTS` points
+/// in all, every one within reach, and at least one stroke with a point. Empty strokes are left out.
 fn strokes_to_user(
     page: &pdfcraft_render::PageInfo,
     strokes: &[Vec<Point>],
@@ -682,6 +685,13 @@ fn strokes_to_user(
         return Err(invalid(format!(
             "a stroke has at most {MAX_STROKE_POINTS} points, not {}",
             long.len()
+        )));
+    }
+    // Each stroke is within its cap, so the sum cannot overflow.
+    let total: usize = strokes.iter().map(Vec::len).sum();
+    if total > MAX_DRAWING_POINTS {
+        return Err(invalid(format!(
+            "a drawing has at most {MAX_DRAWING_POINTS} points in all, not {total}"
         )));
     }
     if let Some(p) = strokes.iter().flatten().find(|p| !in_reach(**p)) {
