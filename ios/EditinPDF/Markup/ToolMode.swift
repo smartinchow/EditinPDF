@@ -55,6 +55,25 @@ enum Tool: String, CaseIterable, Sendable {
     /// Whether the tool's shape can be filled.
     var usesFill: Bool { self == .rectangle || self == .oval }
 
+    /// The tool that makes text markup of `kind`: its colour is the one a mark of that kind is made in.
+    init(markupKind kind: MarkupKind) {
+        switch kind {
+        case .highlight: self = .highlight
+        case .underline: self = .underline
+        case .strikeOut: self = .strikeout
+        }
+    }
+
+    /// The text markup the tool makes over the text a finger drags across; nil for every other tool.
+    var markupKind: MarkupKind? {
+        switch self {
+        case .highlight: .highlight
+        case .underline: .underline
+        case .strikeout: .strikeOut
+        default: nil
+        }
+    }
+
     /// Why the tool cannot be used on a page turned by `pageRotation` degrees of a document that
     /// does (`canAnnotate`) or does not allow annotations; nil when it can be. The engine draws a
     /// text box upright in the page's own space, so on a turned page it would come out sideways.

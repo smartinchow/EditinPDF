@@ -443,7 +443,8 @@ final class PageSelectionTests: XCTestCase {
         XCTAssertTrue(pan.map { interaction.gestureRecognizerShouldBegin($0) } ?? false)
     }
 
-    func testTheMenuHasCopyAndNothingElse() throws {
+    /// Before the document's permissions are read, marking is not offered (see `TextMarkupTests`).
+    func testBeforeThePermissionsAreReadTheMenuHasOnlyCopy() throws {
         let (controller, _) = makeController()
         let interaction = controller.selectionInteraction
         let menuInteraction = try XCTUnwrap(controller.scrollView.interactions.compactMap { $0 as? UIEditMenuInteraction }.first)

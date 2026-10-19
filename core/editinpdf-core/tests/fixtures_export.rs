@@ -3,7 +3,7 @@
 //! app's unit tests open `hello.pdf` too, `rotated.pdf` (one page turned by `/Rotate 90`),
 //! `form.pdf` (a page of form fields) and `annotated.pdf` (a page with a highlight and a note); and
 //! the app's UI tests open `sample.pdf` (three readable pages), `locked.pdf` (one page behind a
-//! password), `garbage.pdf` (not a PDF at all) and `form.pdf`.
+//! password), `garbage.pdf` (not a PDF at all), `form.pdf` and `rotated.pdf`.
 //!
 //! These tests are ignored, so a normal `cargo test` never touches the working tree. Run them
 //! with `cargo test -p editinpdf-core --test fixtures_export -- --ignored`, from anywhere in the
@@ -54,12 +54,9 @@ fn dump_fixtures() {
     fs::write(dir.join("hello.pdf"), &hello).unwrap();
     // One Letter page with `/Rotate 90`, so it is shown landscape, reading "Rotated page": the app's
     // unit tests check that a search hit's box, laid out and drawn the way the viewer does, lands on
-    // the text of a turned page.
-    fs::write(
-        dir.join("rotated.pdf"),
-        fixtures::rotated_doc("Rotated page"),
-    )
-    .unwrap();
+    // the text of a turned page, and that a highlight comes back over the text it was made on.
+    let rotated = fixtures::rotated_doc("Rotated page");
+    fs::write(dir.join("rotated.pdf"), &rotated).unwrap();
     // One page of form fields (`fixtures::form_doc`: a text field, a check box, a two-button radio
     // group, a combo box and a read-only text field, all empty): the app's tests list and fill them.
     let form = fixtures::form_doc();
@@ -79,6 +76,8 @@ fn dump_fixtures() {
     fs::create_dir_all(&dir).unwrap();
     // The same form: the UI tests fill it in.
     fs::write(dir.join("form.pdf"), &form).unwrap();
+    // The same turned page: text is marked on it by hand in the simulator (`-openFixture rotated.pdf`).
+    fs::write(dir.join("rotated.pdf"), &rotated).unwrap();
     // Three pages, each saying which it is: the viewer is scrolled, zoomed and searched through it.
     fs::write(
         dir.join("sample.pdf"),

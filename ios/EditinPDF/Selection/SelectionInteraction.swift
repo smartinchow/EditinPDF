@@ -15,7 +15,8 @@ import UIKit
 /// - **Long press** (0.4 s) on the content view, which is where touches on the pages land (the
 ///   overlays take none). It has to begin before the scroll view's pan does, and the scroll view's own
 ///   rules for two recognizers that want the same touch decide that: a finger that moves first
-///   scrolls, one that holds still for 0.4 s selects, and after that the touch does not scroll.
+///   scrolls, one that holds still for 0.4 s selects, and after that the touch does not scroll. It is
+///   off while a Markup tool that annotates is picked: that tool has the finger (`MarkupInteraction`).
 /// - **Tap** on the content view, only while there is a selection: on the selected text it brings the
 ///   menu back, anywhere else it ends the selection.
 /// - **Pan** on each handle. The scroll view's pan waits for it to fail, so that a drag that began on
@@ -27,7 +28,8 @@ import UIKit
 /// The handles are subviews of the scroll view, above the content, in the scroll view's own
 /// coordinates: they scroll with the pages by themselves, and are put in place again, at the same size,
 /// when the zoom or the layout changes. The menu is presented once the finger is up, anchored on the
-/// selection, and is dismissed when the reader scrolls or zooms.
+/// selection, and is dismissed when the reader scrolls or zooms. It offers Copy, and Highlight, Underline
+/// and Strikethrough when the document may be marked.
 @MainActor
 final class SelectionInteraction: NSObject {
     typealias Edge = SelectionHandleView.Edge
@@ -239,7 +241,8 @@ final class SelectionInteraction: NSObject {
     private var isIdle: Bool {
         guard let host else { return false }
         let scrollView = host.scrollView
-        return drag == nil && longPress.state != .began && longPress.state != .changed
+        // A Markup tool's drag selects as it goes, and marks (and so ends) the selection at its end.
+        return drag == nil && !host.markupInteraction.isMarking && longPress.state != .began && longPress.state != .changed
             && !scrollView.isDragging && !scrollView.isZooming && !scrollView.isDecelerating
     }
 
@@ -270,6 +273,29 @@ final class SelectionInteraction: NSObject {
     func copySelection() {
         host?.model.selection?.copySelection()
     }
+
+    /// Marks the selected text with `kind`: what the menu's Highlight, Underline and Strikethrough do.
+    /// Says whether the mark was made.
+    @discardableResult
+    func mark(_ kind: MarkupKind) async -> Bool {
+        await host?.model.markSelection(kind) ?? false
+    }
+
+    /// The marks the menu offers: those whose tool may be used on the selection's page (none before
+    /// the document's permissions are read).
+    private func offeredMarks() -> [MarkupKind] {
+        guard let model = host?.model, model.capabilities != nil else { return [] }
+        let page = host?.selection?.page ?? model.currentPage
+        return [MarkupKind.highlight, .underline, .strikeOut].filter { model.refusal(of: Tool(markupKind: $0), onPage: page) == nil }
+    }
+
+    /// Whether a finger held still at `point` (the content view's coordinates) may select the word
+    /// there: on a page, and not while a Markup tool that annotates is picked, which has the finger.
+    func isLongPressAllowed(atContentPoint point: CGPoint) -> Bool {
+        guard let host, host.model.selection != nil else { return false }
+        if let tool = host.model.tool, tool.annotates { return false }
+        return host.pageLocation(of: point) != nil
+    }
 }
 
 // MARK: - UIGestureRecognizerDelegate
@@ -278,8 +304,8 @@ extension SelectionInteraction: UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let host else { return false }
         if gestureRecognizer === longPress {
-            // On a page, and not in the gap between two.
-            return host.model.selection != nil && host.pageLocation(of: longPress.location(in: host.contentView)) != nil
+            // On a page, and not in the gap between two; not while a Markup tool has the finger.
+            return isLongPressAllowed(atContentPoint: longPress.location(in: host.contentView))
         }
         // The tap and the handles' pans have nothing to do without a selection.
         return host.selection != nil
@@ -295,7 +321,13 @@ extension SelectionInteraction: @preconcurrency UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         let copy = UIAction(title: Strings.copy) { [weak self] _ in self?.copySelection() }
-        return UIMenu(children: [copy])
+        let marks = offeredMarks().map { kind in
+            let tool = Tool(markupKind: kind)
+            return UIAction(title: tool.title, image: UIImage(systemName: tool.systemImage)) { [weak self] _ in
+                Task { await self?.mark(kind) }
+            }
+        }
+        return UIMenu(children: [copy] + marks)
     }
 
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, targetRectFor configuration: UIEditMenuConfiguration) -> CGRect {

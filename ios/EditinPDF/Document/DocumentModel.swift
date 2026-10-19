@@ -78,9 +78,47 @@ final class DocumentModel {
     /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can
     /// be (and while the document's permissions are not read yet).
     func refusal(of tool: Tool) -> String? {
+        refusal(of: tool, onPage: currentPage)
+    }
+
+    /// Why `tool` cannot be used on `page`; nil when it can be (and while the document's permissions
+    /// are not read yet).
+    func refusal(of tool: Tool, onPage page: Int) -> String? {
         guard let capabilities else { return nil }
-        let rotation = pages.indices.contains(currentPage) ? pages[currentPage].rotationDegrees : 0
+        let rotation = pages.indices.contains(page) ? pages[page].rotationDegrees : 0
         return tool.refusal(canAnnotate: capabilities.canAnnotate, pageRotation: rotation)
+    }
+
+    /// Marks the selected text with a highlight, an underline or a strikethrough (`kind`), in the colour
+    /// of the tool that makes it (`Tool(markupKind:)`, whatever tool is picked: the selection's menu
+    /// does it in reading mode too), over the selection's boxes, which are in view space like every
+    /// edit's. Says whether the mark was made.
+    ///
+    /// The selection goes either way: once the mark is made, with every other change (`refresh`);
+    /// when it is not (and the reader has not selected something else meanwhile), here, so that nothing is left on the page that looks marked when it is not. A
+    /// refusal is told as every change's is (`failure`): the tool's own (`refusal(of:onPage:)`) at
+    /// once, or the engine's, such as a mark queued behind a turn of its page, which is stale since its
+    /// boxes were worked out for the page as it was (`enqueue`). With nothing selected, nothing happens.
+    @discardableResult
+    func markSelection(_ kind: MarkupKind) async -> Bool {
+        guard let controller = selection, let selected = controller.selection else { return false }
+        let page = Int(selected.page)
+        let rects = SelectionController.rects(of: selected).map { Rect(x: $0.minX, y: $0.minY, width: $0.width, height: $0.height) }
+        let tool = Tool(markupKind: kind)
+        if let refusal = refusal(of: tool, onPage: page) {
+            controller.clear()
+            failure = EditFailure(message: refusal)
+            return false
+        }
+        guard !rects.isEmpty else {
+            controller.clear()
+            return false
+        }
+        let edit = Edit.addTextMarkup(page: selected.page, kind: kind, rects: rects, color: toolStyles[tool].color.rgbColor, contents: "")
+        let made = await perform(edit, named: Strings.actionAddAnnotation, touching: [page])
+        // A selection the reader made while the mark was on its way is theirs: it stays.
+        if !made, controller.selection == selected { controller.clear() }
+        return made
     }
 
     /// Whether `tool` can be used on the page being read: not before the document's permissions are

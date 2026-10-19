@@ -70,8 +70,8 @@ struct PageScrollView: UIViewControllerRepresentable {
 /// is on: the first or the last at either end of the document, otherwise the page at the centre of
 /// the view.
 ///
-/// The reader can select text on the pages: a long press, then handles to drag, then Copy. The gestures
-/// and the handles are `SelectionInteraction`'s; what is selected arrives as `selection`, to be drawn by
+/// The reader can select text on the pages: a long press, then handles to drag, then Copy or a mark. The
+/// gestures and the handles are `SelectionInteraction`'s, and a Markup tool's drag `MarkupInteraction`'s; what is selected arrives as `selection`, to be drawn by
 /// the page views' overlays like the search hits are.
 final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// How many pages above and below those in view keep a view, so they are drawn before they
@@ -112,6 +112,9 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     let model: DocumentModel
     /// The long press, the tap, the handles and the menu of text selection.
     private(set) lazy var selectionInteraction = SelectionInteraction(host: self)
+    /// What a finger does with a Markup tool picked: drags out text to highlight, underline or strike
+    /// through. It decides which of its gestures and the scroll view's has a finger.
+    private(set) lazy var markupInteraction = MarkupInteraction(host: self, model: model)
     /// Nil until the view has a width.
     private var layout: PageLayout?
     private var pageViews: [Int: PageView] = [:]
@@ -159,6 +162,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         scrollView.addSubview(contentView)
         view = scrollView
         selectionInteraction.install()
+        markupInteraction.install()
     }
 
     override func viewDidLayoutSubviews() {
@@ -276,11 +280,19 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// The page under `point` (the content view's coordinates: layout points at zoom 1) and where on it,
     /// in PDF points. Nil in a gap between pages, outside the column, or before there is a layout.
     func pageLocation(of point: CGPoint) -> (page: Int, point: CGPoint)? {
-        guard let layout, let page = layout.page(at: point) else { return nil }
+        guard let page = layout?.page(at: point), let pagePoint = pagePoint(ofContentPoint: point, onPage: page) else { return nil }
+        return (page, pagePoint)
+    }
+
+    /// Where `point` (the content view's coordinates) is in PDF points of `page`, though it be off that
+    /// page: what a drag that began on the page and went past its edge is at. Nil before there is a
+    /// layout, or for a page the document does not have.
+    func pagePoint(ofContentPoint point: CGPoint, onPage page: Int) -> CGPoint? {
+        guard let layout, (0..<layout.pageCount).contains(page) else { return nil }
         let scale = layout.scale(of: page)
         guard scale > 0 else { return nil }
         let frame = layout.frame(of: page)
-        return (page, CGPoint(x: (point.x - frame.minX) / scale, y: (point.y - frame.minY) / scale))
+        return CGPoint(x: (point.x - frame.minX) / scale, y: (point.y - frame.minY) / scale)
     }
 
     /// `rect` (PDF points on `page`) in the scroll view's own coordinates, which is where the zoom and the

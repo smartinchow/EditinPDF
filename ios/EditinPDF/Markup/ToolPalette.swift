@@ -50,6 +50,9 @@ struct ToolPalette: View {
                     }
             }
             refusalNote
+                // Its own height, not the side palette's: unbounded, the note filled the page above
+                // the bar and took the touches meant for it (seen on a turned page, Task 14).
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 12)
         }
         .padding(.vertical, 6)

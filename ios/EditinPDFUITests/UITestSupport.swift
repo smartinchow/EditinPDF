@@ -30,9 +30,17 @@ extension XCTestCase {
         let location = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'DOC.sidebar.item.On My'")).firstMatch
         let folder = app.cells.matching(NSPredicate(format: "label BEGINSWITH 'EditinPDF'")).firstMatch
         let browse = app.buttons["Browse"].firstMatch
+        // Inside the app's folder, the browser's back button is named for the location above it.
+        let inFolder = app.buttons.matching(NSPredicate(format: "identifier == 'BackButton' AND label BEGINSWITH 'On My'")).firstMatch
         for _ in 0..<8 {
             if cell.waitForExistence(timeout: 2) { break }
-            if location.exists, location.isHittable {
+            if inFolder.exists {
+                // In the folder, but the file is further down than the browser's half-height sheet
+                // shows (the folder fills up with the documents earlier tests and walks left there).
+                // The sheet is in the lower part of the screen: the drag scrolls its list.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
+                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
+            } else if location.exists, location.isHittable {
                 location.tap()
                 _ = folder.waitForExistence(timeout: 4)
             } else if folder.exists, folder.isHittable {
