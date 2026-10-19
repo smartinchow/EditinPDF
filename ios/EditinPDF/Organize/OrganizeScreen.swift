@@ -13,15 +13,16 @@ struct OrganizeScreen: View {
     let model: DocumentModel
     let store: ThumbnailStore
 
+    @State private var picksFile = false
     @State private var controller: OrganizeController
     @State private var confirmsDelete = false
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dismiss) private var dismiss
 
-    init(model: DocumentModel, store: ThumbnailStore) {
+    init(model: DocumentModel, store: ThumbnailStore, documentName: String = Strings.untitledDocument) {
         self.model = model
         self.store = store
-        _controller = State(initialValue: OrganizeController(model: model))
+        _controller = State(initialValue: OrganizeController(model: model, documentName: documentName))
     }
 
     var body: some View {
@@ -50,6 +51,9 @@ struct OrganizeScreen: View {
         .alert(model.failure?.title ?? "", isPresented: showsEditFailure, presenting: model.failure) { _ in
         } message: { failure in
             if !failure.message.isEmpty { Text(failure.message) }
+        }
+        .fileImporter(isPresented: $picksFile, allowedContentTypes: [.pdf]) { result in
+            if case .success(let url) = result { controller.insertFromFile(url) }
         }
         .onChange(of: model.lastChange) { controller.modelDidChange(model.lastChange) }
     }
@@ -113,19 +117,41 @@ struct OrganizeScreen: View {
         }
         .disabled(!controller.canInsertBlank)
         .accessibilityIdentifier("organizeInsertBlank")
+
+        Button {
+            picksFile = true
+        } label: {
+            Label(Strings.insertFromFile, systemImage: "doc.badge.arrow.up")
+        }
+        .disabled(!controller.canInsertFile)
+        .accessibilityIdentifier("organizeInsertFile")
+
+        // The share sheet offers Save to Files. With no page selected there is nothing to share.
+        if let item = controller.extractedPages() {
+            ShareLink(item: item, preview: SharePreview(item.fileName)) {
+                Label(Strings.extract, systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("organizeExtract")
+        } else {
+            Button {} label: {
+                Label(Strings.extract, systemImage: "square.and.arrow.up")
+            }
+            .disabled(true)
+            .accessibilityIdentifier("organizeExtract")
+        }
     }
 
     /// Says why nothing can be changed, for a document that does not allow it.
     @ViewBuilder private var notAllowedFooter: some View {
-        if controller.organizeIsRefused {
-            Text(Strings.organizeNotAllowed)
+        if controller.organizeIsRefused || (model.isEncrypted && controller.canExtract) {
+            Text(controller.organizeIsRefused ? Strings.organizeNotAllowed : Strings.extractUnprotectedNote)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .padding(12)
                 .background(.regularMaterial)
-                .accessibilityIdentifier("organizeNotAllowed")
+                .accessibilityIdentifier(controller.organizeIsRefused ? "organizeNotAllowed" : "organizeExtractNote")
         }
     }
 }

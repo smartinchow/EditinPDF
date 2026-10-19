@@ -14,7 +14,8 @@ struct EditinPDFApp: App {
         // iOS 27 replacements of this initializer and of ReferenceFileDocument need iOS 27, so their
         // deprecation warnings stay.
         DocumentGroup(newDocument: { PDFFileDocument() }) { configuration in
-            DocumentScreen(model: configuration.document.model)
+            DocumentScreen(model: configuration.document.model,
+                           documentName: configuration.fileURL?.deletingPathExtension().lastPathComponent ?? Strings.untitledDocument)
         }
     }
 }

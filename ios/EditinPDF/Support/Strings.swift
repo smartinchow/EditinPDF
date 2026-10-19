@@ -334,4 +334,42 @@ enum Strings {
     static func pagesSelected(count: Int) -> String {
         String(localized: "\(count) selected", comment: "Title of the Organize screen while pages are selected: how many")
     }
+
+    /// The Organize button that takes pages from another PDF.
+    static var insertFromFile: String {
+        String(localized: "Insert from File…", comment: "Organize button that opens the file picker to add pages from another PDF")
+    }
+
+    /// The Organize button that saves or shares the selected pages as a new PDF.
+    static var extract: String {
+        String(localized: "Extract Pages", comment: "Organize button that saves or shares the selected pages as a new PDF")
+    }
+
+    /// The name of the PDF made of pages `first` to `last` (counting from 1) of the document `base`, without ".pdf".
+    static func extractedFileName(base: String, first: Int, last: Int) -> String {
+        if first == last {
+            return String(localized: "\(base) (page \(first))", comment: "File name, without extension, of one page extracted from a PDF: the PDF's name and the page number")
+        }
+        return String(localized: "\(base) (pages \(first)–\(last))", comment: "File name, without extension, of pages extracted from a PDF: the PDF's name, the first and the last page number")
+    }
+
+    /// Shown with Extract when the document is password-protected.
+    static var extractUnprotectedNote: String {
+        String(localized: "The extracted pages are not password-protected.", comment: "Shown under the Extract button for a password-protected PDF: the new PDF has no password")
+    }
+
+    /// The name a document is given in the file name of extracted pages when it has none.
+    static var untitledDocument: String {
+        String(localized: "Document", comment: "Name used for a PDF that has no file name, in the name of pages extracted from it")
+    }
+
+    /// Why a file was not inserted: it is too big to be read into memory safely.
+    static var pickedFileTooLarge: String {
+        String(localized: "That file is too large to insert (over 500 MB).", comment: "Shown when the PDF chosen to take pages from is larger than 500 megabytes")
+    }
+
+    /// Why a file was not inserted: the app could not read it.
+    static var pickedFileUnreadable: String {
+        String(localized: "That file could not be opened.", comment: "Shown when the chosen file could not be read at all")
+    }
 }

@@ -15,6 +15,8 @@ import SwiftUI
 /// back to the documents, in the navigation bar, is always there.
 struct DocumentScreen: View {
     let model: DocumentModel
+    /// The document's file name, without its extension, for the name of pages extracted from it.
+    var documentName = Strings.untitledDocument
     /// A page to jump to, for the thumbnails and search to set.
     @State private var scrollTarget: Int?
     /// A box to bring into view on that page, for search to set along with it.
@@ -188,7 +190,7 @@ struct DocumentScreen: View {
                     ThumbnailsSheet(model: model, store: presentation.store, scrollTarget: $scrollTarget)
                 }
                 .fullScreenCover(item: $organizeCover) { presentation in
-                    OrganizeScreen(model: model, store: presentation.store)
+                    OrganizeScreen(model: model, store: presentation.store, documentName: documentName)
                 }
                 // A change to the document makes every picture the store has drawn out of date (and its
                 // pages, too): the store moves on to the new revision, and an open sheet with it.

@@ -20,6 +20,12 @@ struct EditFailure: Identifiable, Equatable {
         Self.log.error("change refused: \(String(describing: error), privacy: .private)")
     }
 
+    /// A refusal that is not the engine's: `message` is one of our sentences.
+    init(message: String) {
+        title = Strings.editFailed
+        self.message = message
+    }
+
     private static func message(for error: Error) -> String {
         guard let error = error as? EditError else { return "" }
         switch error {

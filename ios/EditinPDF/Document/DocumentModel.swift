@@ -36,6 +36,10 @@ final class DocumentModel {
     /// the model lives; nil unless the document is open. It holds the engine's document, not the model.
     private(set) var selection: SelectionController?
 
+    /// Whether the document was opened with a password (set once `unlock` opens it). Pages extracted from it
+    /// are a new PDF without one.
+    private(set) var isEncrypted = false
+
     /// How many pages the document has; 0 unless it is open.
     var pageCount: Int { pages.count }
 
@@ -112,6 +116,7 @@ final class DocumentModel {
         let outcome = await Task.detached(priority: .userInitiated) { open(bytes, password) }.value
         guard case .locked = state else { return document() != nil }
         install(outcome)
+        if document() != nil { isEncrypted = true }
         return document() != nil
     }
 

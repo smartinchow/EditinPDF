@@ -28,8 +28,15 @@ final class OrganizeController {
     /// Whether one of them renumbers the pages.
     private var renumberingPending = false
 
-    init(model: DocumentModel) {
+    /// The document's name, for the file name of extracted pages.
+    let documentName: String
+    /// Whether a file picked to insert is being read: no other renumbering change may be handed over
+    /// meanwhile, or the place it was worked out for could move.
+    private(set) var isReadingFile = false
+
+    init(model: DocumentModel, documentName: String = Strings.untitledDocument) {
         self.model = model
+        self.documentName = documentName
     }
 
     /// Whether the document allows its pages to be changed; false until that is known.
@@ -38,11 +45,14 @@ final class OrganizeController {
     var organizeIsRefused: Bool { model.capabilities.map { !$0.canOrganize } ?? false }
 
     /// Whether a change that renumbers the pages can be handed over now: nothing is being made.
-    private var canRenumber: Bool { canOrganize && !model.isApplying }
+    private var canRenumber: Bool { canOrganize && !model.isApplying && !isReadingFile }
 
     var canDelete: Bool { canRenumber && !selection.isEmpty && selection.count < model.pageCount }
     var canMove: Bool { canRenumber }
     var canInsertBlank: Bool { canRenumber }
+    var canInsertFile: Bool { canRenumber }
+    /// Whether the selected pages can be extracted: pages are selected (reading them needs no permission to change them).
+    var canExtract: Bool { model.document() != nil && !selection.isEmpty }
     var canRotate: Bool { canOrganize && !selection.isEmpty && !renumberingPending }
 
     /// Whether every page is selected (Select All then reads Deselect All).
@@ -84,6 +94,42 @@ final class OrganizeController {
         let size = OrganizeMath.blankSize(near: index, pages: model.pages)
         return run(.insertBlankPage(at: UInt32(index), widthPt: size.width, heightPt: size.height),
                    named: Strings.actionInsertBlank, touching: nil, renumbers: true) { $0.selection = [index] }
+    }
+
+    /// Adds every page of the PDF at `url` after the selection (at the end with none), and selects them.
+    /// The file is read off the main actor; one that is too big, or cannot be read, is reported and
+    /// nothing is changed. The engine says why a PDF it cannot take pages from (a password, a
+    /// protection, not a PDF) is refused.
+    @discardableResult
+    func insertFromFile(_ url: URL, limit: Int = PickedFile.sizeLimit) -> Task<Void, Never>? {
+        guard canInsertFile else { return nil }
+        isReadingFile = true
+        return Task { [weak self] in
+            let result = await PickedFile.read(url, limit: limit)
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                isReadingFile = false
+                model.failure = EditFailure(message: PickedFile.message(for: error))
+            case .success(let bytes):
+                let index = OrganizeMath.insertionIndex(selection: selection, pageCount: model.pageCount)
+                let before = model.pageCount
+                let made = run(.insertPagesFrom(name: url.lastPathComponent, bytes: bytes, pages: nil, at: UInt32(index)),
+                               named: Strings.actionInsertFile, touching: nil, renumbers: true) { me in
+                    me.selection = Set(index..<index + max(me.model.pageCount - before, 0))
+                }
+                isReadingFile = false
+                await made.value
+            }
+        }
+    }
+
+    /// The selected pages as a PDF of their own, for the share sheet; nil with none selected.
+    func extractedPages() -> ExtractedPages? {
+        guard canExtract, let document = model.document() else { return nil }
+        let pages = selection.sorted()
+        let name = Strings.extractedFileName(base: documentName, first: (pages.first ?? 0) + 1, last: (pages.last ?? 0) + 1)
+        return ExtractedPages(document: document, pages: pages.map(UInt32.init), fileName: name)
     }
 
     /// Moves `pages` to just before the item at `dropIndex` of the grid as it is (the page count for
