@@ -34,3 +34,16 @@ func firstGlyphCenter(_ m: DocumentModel) throws -> CGPoint {
 }
 
 enum FixtureError: Error { case notOpen(String) }
+
+/// An annotation of kind `kind` at `rect` (view space) on `page`, number `index` there.
+func info(page: Int = 0, index: UInt32, rect: CGRect = CGRect(x: 0, y: 0, width: 10, height: 10),
+          kind: AnnotationKind = .rectangle) -> AnnotationInfo {
+    AnnotationInfo(page: UInt32(page), index: index, kind: kind,
+                   rect: Rect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
+                   contents: nil, author: nil, modified: nil, color: nil, locked: false)
+}
+
+/// A 10 × 10 rectangle annotation whose top is at `y` on `page`.
+func info(page: Int = 0, index: UInt32, y: CGFloat) -> AnnotationInfo {
+    info(page: page, index: index, rect: CGRect(x: 0, y: y, width: 10, height: 10))
+}

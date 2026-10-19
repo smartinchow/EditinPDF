@@ -372,4 +372,123 @@ enum Strings {
     static var pickedFileUnreadable: String {
         String(localized: "That file could not be opened.", comment: "Shown when the chosen file could not be read at all")
     }
+
+    // MARK: Markup
+
+    /// The toolbar button that turns Markup mode, with its tool palette, on and off.
+    static var markup: String {
+        String(localized: "Markup", comment: "Toolbar button that shows or hides the markup tools")
+    }
+
+    /// Under the tool palette, for a document whose permissions forbid adding or changing annotations.
+    static var markupNotAllowed: String {
+        String(localized: "This document doesn't allow markup.", comment: "Under the markup tools when the document forbids annotations")
+    }
+
+    /// Under the tool palette while the page being read is turned: the engine cannot yet draw a text box on it.
+    static var textBoxNeedsUprightPage: String {
+        String(localized: "Text boxes can't be added to turned pages yet.", comment: "Under the markup tools when the current page is rotated: the Text Box tool is unavailable there")
+    }
+
+    /// The tool that picks annotations instead of making them.
+    static var toolSelect: String {
+        String(localized: "Select", comment: "Markup tool that selects existing annotations")
+    }
+
+    /// The highlight tool, and the selection menu's Highlight.
+    static var highlight: String {
+        String(localized: "Highlight", comment: "Markup tool and menu item that highlights text")
+    }
+
+    /// The underline tool, and the selection menu's Underline.
+    static var underline: String {
+        String(localized: "Underline", comment: "Markup tool and menu item that underlines text")
+    }
+
+    /// The strikethrough tool, and the selection menu's Strikethrough.
+    static var strikeout: String {
+        String(localized: "Strikethrough", comment: "Markup tool and menu item that strikes text through")
+    }
+
+    /// The freehand drawing tool.
+    static var toolInk: String {
+        String(localized: "Draw", comment: "Markup tool for drawing freehand")
+    }
+
+    /// The tool that types text onto the page.
+    static var toolTextBox: String {
+        String(localized: "Text Box", comment: "Markup tool that adds a box of typed text")
+    }
+
+    /// The sticky-note tool.
+    static var toolNote: String {
+        String(localized: "Note", comment: "Markup tool that adds a sticky note")
+    }
+
+    /// The rectangle tool.
+    static var toolRectangle: String {
+        String(localized: "Rectangle", comment: "Markup tool that draws a rectangle")
+    }
+
+    /// The oval tool.
+    static var toolOval: String {
+        String(localized: "Oval", comment: "Markup tool that draws an oval")
+    }
+
+    /// The straight-line tool.
+    static var toolLine: String {
+        String(localized: "Line", comment: "Markup tool that draws a straight line")
+    }
+
+    /// The arrow tool.
+    static var toolArrow: String {
+        String(localized: "Arrow", comment: "Markup tool that draws an arrow")
+    }
+
+    /// The tool that deletes the annotations it touches.
+    static var toolEraser: String {
+        String(localized: "Eraser", comment: "Markup tool that deletes annotations")
+    }
+
+    /// The palette button that opens the colour, width and size of the current tool.
+    static var toolStyle: String {
+        String(localized: "Style", comment: "Markup palette button that opens the current tool's colour and size")
+    }
+
+    /// The style picker's colour well.
+    static var styleColor: String {
+        String(localized: "Color", comment: "Label of the colour picker in the markup style picker")
+    }
+
+    /// The style picker's line width slider.
+    static var styleWidth: String {
+        String(localized: "Line Width", comment: "Label of the line width slider in the markup style picker")
+    }
+
+    /// A line width, in points, beside its slider.
+    static func styleWidthValue(_ width: Double) -> String {
+        String(localized: "\(width.formatted(.number.precision(.fractionLength(0...1)))) pt", comment: "A line width in points, shown beside its slider")
+    }
+
+    /// The style picker's font size stepper, with the size in points.
+    static func styleFontSize(_ size: Double) -> String {
+        String(localized: "Font Size: \(size.formatted(.number.precision(.fractionLength(0...1)))) pt", comment: "Font size stepper in the markup style picker, with the size in points")
+    }
+
+    /// The style picker's switch that fills a rectangle or an oval.
+    static var styleFill: String {
+        String(localized: "Fill", comment: "Switch in the markup style picker that fills a rectangle or oval")
+    }
+
+    /// The names of the style picker's eight colour swatches, in their order, for VoiceOver.
+    static var styleSwatchNames: [String] {
+        [String(localized: "Black", comment: "Colour swatch name"),
+         String(localized: "Gray", comment: "Colour swatch name"),
+         String(localized: "Red", comment: "Colour swatch name"),
+         String(localized: "Orange", comment: "Colour swatch name"),
+         String(localized: "Yellow", comment: "Colour swatch name"),
+         String(localized: "Green", comment: "Colour swatch name"),
+         String(localized: "Blue", comment: "Colour swatch name"),
+         String(localized: "Purple", comment: "Colour swatch name")]
+    }
 }

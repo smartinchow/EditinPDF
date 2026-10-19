@@ -133,4 +133,29 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.organizeNotAllowed, "This document doesn't allow changing its pages.")
         XCTAssertEqual(Strings.pagesSelected(count: 2), "2 selected")
     }
+
+    func testMarkupWording() {
+        XCTAssertEqual(Strings.markup, "Markup")
+        XCTAssertEqual(Strings.markupNotAllowed, "This document doesn't allow markup.")
+        XCTAssertEqual(Strings.textBoxNeedsUprightPage, "Text boxes can't be added to turned pages yet.")
+        XCTAssertEqual(Strings.toolSelect, "Select")
+        XCTAssertEqual(Strings.highlight, "Highlight")
+        XCTAssertEqual(Strings.underline, "Underline")
+        XCTAssertEqual(Strings.strikeout, "Strikethrough")
+        XCTAssertEqual(Strings.toolInk, "Draw")
+        XCTAssertEqual(Strings.toolTextBox, "Text Box")
+        XCTAssertEqual(Strings.toolNote, "Note")
+        XCTAssertEqual(Strings.toolRectangle, "Rectangle")
+        XCTAssertEqual(Strings.toolOval, "Oval")
+        XCTAssertEqual(Strings.toolLine, "Line")
+        XCTAssertEqual(Strings.toolArrow, "Arrow")
+        XCTAssertEqual(Strings.toolEraser, "Eraser")
+        XCTAssertEqual(Strings.toolStyle, "Style")
+        XCTAssertEqual(Strings.styleColor, "Color")
+        XCTAssertEqual(Strings.styleWidth, "Line Width")
+        XCTAssertEqual(Strings.styleWidthValue(2.5), "2.5 pt")
+        XCTAssertEqual(Strings.styleFontSize(14), "Font Size: 14 pt")
+        XCTAssertEqual(Strings.styleFill, "Fill")
+        XCTAssertEqual(Strings.styleSwatchNames, ["Black", "Gray", "Red", "Orange", "Yellow", "Green", "Blue", "Purple"])
+    }
 }

@@ -45,4 +45,44 @@ final class EditorSmokeTests: XCTestCase {
         let reads = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label MATCHES %@", "^1 / [45]$"), object: indicator)
         XCTAssertEqual(XCTWaiter().wait(for: [reads], timeout: 5), .completed, "the indicator reads \"\(indicator.label)\"")
     }
+
+    /// Markup in the toolbar brings up the tool palette (a bar at the bottom on a phone, a column at the
+    /// leading edge on a tablet), with Select picked; a tool is picked by tapping it, its style opens
+    /// from the palette, and Markup again puts the palette away.
+    func testMarkupShowsThePaletteAndAToolsStyle() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let select = app.buttons["tool-select"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5), "no tool palette")
+        XCTAssertTrue(select.isSelected, "Markup starts with Select")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5), "Draw is disabled on a document that allows markup")
+        ink.tap()
+        XCTAssertTrue(ink.isSelected)
+        let palette = XCTAttachment(screenshot: app.screenshot())
+        palette.name = "palette"
+        palette.lifetime = .keepAlways
+        add(palette)
+        app.buttons["toolStyleButton"].tap()
+        XCTAssertTrue(app.sliders["toolWidthSlider"].waitForExistence(timeout: 5), "no style picker for Draw")
+        XCTAssertTrue(app.buttons["swatch-0"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "palette-style"
+        shot.lifetime = .keepAlways
+        add(shot)
+        // A sheet (phone) and a popover (tablet) both go with a tap outside them, on the dimmed pages.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.2)).tap()
+        XCTAssertTrue(app.sliders["toolWidthSlider"].waitForNonExistence(timeout: 5), "the style picker did not go")
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app))
+        XCTAssertTrue(ink.waitForNonExistence(timeout: 5), "the palette stayed after Markup was turned off")
+    }
+}
+
+private extension XCUIElement {
+    /// Waits up to `timeout` seconds for the element to exist and be enabled.
+    func waitForEnabled(timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: self)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
 }

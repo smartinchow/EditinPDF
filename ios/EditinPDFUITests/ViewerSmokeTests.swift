@@ -41,7 +41,8 @@ final class ViewerSmokeTests: XCTestCase {
         app.swipeDown()
         expect(indicator, toRead: "1 / 3", within: 5)
 
-        app.buttons["searchButton"].tap()
+        // With Markup in the bar, a phone has Search in the More menu.
+        XCTAssertTrue(tapToolbarButton("searchButton", titled: "Search", in: app), "no Search")
         let field = app.textFields["searchField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the search sheet did not come up")
         dismissKeyboardIntroduction(in: app)

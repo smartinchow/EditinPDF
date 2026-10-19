@@ -51,8 +51,11 @@ final class DocumentModel {
     /// What may be changed in the document; nil unless it is open (and until its state is first
     /// read, a moment after it opens).
     private(set) var capabilities: EditCapabilities?
+    /// The document's annotations, by page, and which one a touch lands on: read again with every
+    /// revision.
+    private(set) var annotationIndex = AnnotationIndex([])
     /// The document's annotations, by the page (counting from 0) they are on, in the engine's order.
-    private(set) var annotationsByPage: [Int: [AnnotationInfo]] = [:]
+    var annotationsByPage: [Int: [AnnotationInfo]] { annotationIndex.byPage }
     /// The document's form fields.
     private(set) var formFields: [FormField] = []
     /// What the last change, undo or redo did: its revision, the pages it touched (nil: any of them
@@ -63,6 +66,29 @@ final class DocumentModel {
     /// The annotation the reader has picked. Every change clears it: its index may name another
     /// annotation afterwards.
     var selectedAnnotation: AnnotationRef?
+
+    // MARK: Markup
+
+    /// What a touch on the page does: nil while the reader is only reading (touches scroll, zoom and
+    /// select text); Markup in the toolbar sets `.select`, and the palette any other tool.
+    var tool: Tool?
+    /// Each tool's colour and size, kept between documents and launches.
+    let toolStyles: ToolStyleStore
+
+    /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can
+    /// be (and while the document's permissions are not read yet).
+    func refusal(of tool: Tool) -> String? {
+        guard let capabilities else { return nil }
+        let rotation = pages.indices.contains(currentPage) ? pages[currentPage].rotationDegrees : 0
+        return tool.refusal(canAnnotate: capabilities.canAnnotate, pageRotation: rotation)
+    }
+
+    /// Whether `tool` can be used on the page being read: not before the document's permissions are
+    /// read, and not when they refuse it.
+    func canUse(_ tool: Tool) -> Bool {
+        capabilities != nil && refusal(of: tool) == nil
+    }
+
     /// The scene's undo manager, which the screen hands over (`@Environment(\.undoManager)`). With
     /// none, changes are still made, and cannot be undone.
     @ObservationIgnored weak var undoManager: UndoManager?
@@ -94,8 +120,10 @@ final class DocumentModel {
     let engine: EngineHandle
 
     /// `engine` is the file's handle; a model with no file of its own (a test's) gets a handle of its own.
-    init(outcome: OpenOutcome, engine: EngineHandle = EngineHandle()) {
+    /// `toolStyles` defaults to the styles kept in the standard user defaults.
+    init(outcome: OpenOutcome, engine: EngineHandle = EngineHandle(), toolStyles: ToolStyleStore? = nil) {
         self.engine = engine
+        self.toolStyles = toolStyles ?? ToolStyleStore()
         (state, pages) = Self.resolve(outcome)
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
@@ -372,9 +400,11 @@ final class DocumentModel {
     /// Takes the revision, annotations, fields and capabilities of `state`.
     private func adopt(_ state: EngineState) {
         revision = state.revision
-        annotationsByPage = Dictionary(grouping: state.annotations) { Int($0.page) }
+        annotationIndex = AnnotationIndex(state.annotations)
         formFields = state.formFields
         capabilities = state.capabilities
+        // A document that no longer allows annotations (or never did) leaves a tool that makes them.
+        if let tool, tool.annotates, !state.capabilities.canAnnotate { self.tool = .select }
     }
 
     /// Reads the state of a document that has just opened, off the main actor, through the queue,

@@ -1,9 +1,10 @@
 import SwiftUI
 
 /// The screen for one document: its pages, once it is open, with Undo and Redo at the leading end of
-/// the toolbar and the search, thumbnails and Organize Pages buttons at the trailing end (and, while text is selected,
+/// the toolbar and the Markup, search, thumbnails and Organize Pages buttons at the trailing end (and, while text is selected,
 /// a Copy button before them), and the page indicator (and, while a search has hits, the bar to move
-/// between them) over the pages. The pages and the thumbnails follow every change, undo and redo.
+/// between them) over the pages. In Markup mode the tool palette stands over the pages too: above
+/// the page indicator on a compact width, at the leading edge on a regular one. The pages and the thumbnails follow every change, undo and redo.
 ///
 /// A document that is locked has no pages to show yet: the prompt for its password (`PasswordSheet`)
 /// comes up over a screen that says it is locked. Cancel puts the prompt away and leaves that screen,
@@ -32,6 +33,9 @@ struct DocumentScreen: View {
     /// sheet opens with its pictures the next time. Organize Pages shows the same pictures.
     @State private var thumbnails: ThumbnailStore?
     @Environment(\.displayScale) private var displayScale
+    /// The width class of the scene, which places the tool palette (`PaletteLayout`): read again
+    /// whenever the width changes (an iPhone Duo folding or unfolding, Split View on a tablet).
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// The scene's undo manager, handed to the model, which registers each change with it.
     @Environment(\.undoManager) private var undoManager
     /// Whether the undo manager has something to undo, and to redo. It is not observable, so these are
@@ -166,9 +170,23 @@ struct DocumentScreen: View {
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 8) {
                         searchHitBar
+                        if model.tool != nil, paletteLayout == .bottomBar {
+                            ToolPalette(model: model, layout: .bottomBar)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                         pageIndicator
                     }
                 }
+                // On a regular width the tools stand in a column at the leading edge; the navigation
+                // bar's own column, on an iPhone Duo, stands at the trailing one.
+                .overlay(alignment: .leading) {
+                    if model.tool != nil, paletteLayout == .sidePalette {
+                        ToolPalette(model: model, layout: .sidePalette)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                    }
+                }
+                .animation(.snappy, value: model.tool == nil)
+                .animation(.snappy, value: paletteLayout)
                 // Each button is a Label, title and icon: the bar shows the icon, and when the bar has no
                 // room for them all (a long file name beside the title menu, a narrow phone, large text)
                 // iOS moves them into its "More" menu, which shows the titles. With icons alone (Image
@@ -181,6 +199,7 @@ struct DocumentScreen: View {
                     }
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         copyButton
+                        markupButton
                         searchButton
                         thumbnailsButton
                         organizeButton
@@ -284,6 +303,22 @@ struct DocumentScreen: View {
             }
             .accessibilityIdentifier("copyButton")
         }
+    }
+
+    /// Where the tool palette stands for the scene's width.
+    private var paletteLayout: PaletteLayout { PaletteLayout.for(horizontalSizeClass) }
+
+    /// Turns Markup mode on (with the Select tool) and off (back to reading, where touches scroll,
+    /// zoom and select text).
+    private var markupButton: some View {
+        Button {
+            model.tool = model.tool == nil ? .select : nil
+        } label: {
+            Label(Strings.markup, systemImage: model.tool == nil ? "pencil.tip.crop.circle" : "pencil.tip.crop.circle.fill")
+        }
+        .disabled(model.pageCount == 0)
+        .accessibilityIdentifier("markupButton")
+        .accessibilityAddTraits(model.tool == nil ? [] : .isSelected)
     }
 
     /// Takes back the last change. Changes stay tappable while one is being made: the model makes
