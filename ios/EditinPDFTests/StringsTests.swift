@@ -119,4 +119,18 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.actionEditAnnotation, "Edit Markup")
         XCTAssertEqual(Strings.actionFillField, "Fill Form")
     }
+
+    func testOrganizeStrings() {
+        XCTAssertEqual(Strings.organize, "Organize Pages")
+        XCTAssertEqual(Strings.selectAll, "Select All")
+        XCTAssertEqual(Strings.deselectAll, "Deselect All")
+        XCTAssertEqual(Strings.rotateLeft, "Rotate Left")
+        XCTAssertEqual(Strings.rotateRight, "Rotate Right")
+        XCTAssertEqual(Strings.delete, "Delete")
+        XCTAssertEqual(Strings.insertBlank, "Insert Blank Page")
+        XCTAssertEqual(Strings.deletePagesConfirm(count: 3), "Delete 3 pages?")
+        XCTAssertEqual(Strings.deletePagesConfirmMessage, "You can undo this.")
+        XCTAssertEqual(Strings.organizeNotAllowed, "This document doesn't allow changing its pages.")
+        XCTAssertEqual(Strings.pagesSelected(count: 2), "2 selected")
+    }
 }

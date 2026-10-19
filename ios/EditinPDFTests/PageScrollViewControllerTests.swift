@@ -504,4 +504,27 @@ final class PageScrollViewControllerTests: XCTestCase {
         controller.apply(change); controller.view.layoutIfNeeded()
         XCTAssertTrue(controller.pageView(for: 0) === view)
     }
+
+    /// Moving the page the reader is on takes the reader with it, though no page changed its shape.
+    func testMovingThePageBeingReadFollowsIt() async throws {
+        let (controller, model) = makeController(pages: 12)
+        controller.scroll(to: 6)
+        XCTAssertEqual(model.currentPage, 6)
+        await model.perform(.movePages(pages: [6], to: 0), named: Strings.actionMove, touching: nil)
+        let change = try XCTUnwrap(model.lastChange)
+        XCTAssertFalse(change.geometryChanged)
+        controller.apply(change); controller.view.layoutIfNeeded()
+        XCTAssertEqual(model.currentPage, 0)
+        XCTAssertEqual(controller.scrollView.contentOffset.y, 0, accuracy: 1, "page 0 (the moved page) at the top")
+    }
+
+    /// Deleting a page before the one being read keeps the reader on that page's content.
+    func testDeletingAnEarlierPageKeepsThePageBeingRead() async throws {
+        let (controller, model) = makeController(pages: 12)
+        controller.scroll(to: 6)
+        await model.perform(.deletePages(pages: [0]), named: Strings.actionDelete, touching: nil)
+        controller.apply(try XCTUnwrap(model.lastChange)); controller.view.layoutIfNeeded()
+        XCTAssertEqual(model.currentPage, 5)
+        XCTAssertEqual(controller.scrollView.contentOffset.y, 5 * 530, accuracy: 1)
+    }
 }

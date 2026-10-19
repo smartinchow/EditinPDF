@@ -234,7 +234,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// model has published. One that changed the number of pages, or a page's size or rotation, has
     /// the pages laid out again and their views made again, at the zoom the reader had, with the
     /// current page (`model.currentPage`, which the model keeps on a page the document still has) at
-    /// the top. Any other has its pages redrawn where they are: `change.pages`, or every page that has
+    /// the top; so does one after which the model has the reader on another page than the one in view
+    /// (the page being read was moved). Any other has its pages redrawn where they are: `change.pages`, or every page that has
     /// a view when it does not say.
     ///
     /// A change already followed, or older, does nothing. Two changes can be published before the
@@ -247,7 +248,11 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         followedRevision = change.revision
         // Before the first layout there is nothing drawn: that layout reads the pages as they are.
         guard let layout else { return }
-        if change.geometryChanged || !Self.sameGeometry(laidOutPages, model.pages) {
+        // The model moves the current page with its content when pages before it are deleted, moved
+        // or inserted (`OrganizeMath.readerPage`): with the shapes all the same, the reader is taken
+        // there too.
+        let readerMoved = readerPage(in: layout).map { $0 != model.currentPage } ?? false
+        if change.geometryChanged || readerMoved || !Self.sameGeometry(laidOutPages, model.pages) {
             let zoom = scrollView.zoomScale
             let across = visibleArea().minX
             relayout(fitWidth: layout.fitWidth, placing: .currentPage(zoom: zoom, across: across))

@@ -246,6 +246,26 @@ final class DocumentEditingTests: XCTestCase {
         let other = EditFailure(CocoaError(.fileReadUnknown))
         XCTAssertEqual(other.title, Strings.editFailed); XCTAssertEqual(other.message, "")
     }
+
+    // MARK: The reader's page follows its content
+
+    func testDeletingAnEarlierPageKeepsTheReaderOnTheSamePage() async throws {
+        let (m, u) = try makeModel()
+        m.currentPage = 2
+        await m.perform(.deletePages(pages: [0]), named: Strings.actionDelete, touching: nil)
+        XCTAssertEqual(m.currentPage, 1, "still on \"Page three\", now the second page")
+        u.undo(); await m.settle()
+        XCTAssertEqual(m.pageCount, 3)
+    }
+
+    func testMovingPagesKeepsTheReaderOnTheSamePage() async throws {
+        let (m, _) = try makeModel()
+        m.currentPage = 0
+        await m.perform(.movePages(pages: [0], to: 2), named: Strings.actionMove, touching: nil)
+        XCTAssertEqual(m.currentPage, 2)
+        await m.perform(.insertBlankPage(at: 0, widthPt: 612, heightPt: 792), named: Strings.actionInsertBlank, touching: nil)
+        XCTAssertEqual(m.currentPage, 3)
+    }
 }
 
 /// Numbers appended from any thread, in the order they arrived.

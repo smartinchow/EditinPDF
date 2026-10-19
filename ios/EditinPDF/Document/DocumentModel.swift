@@ -248,6 +248,9 @@ final class DocumentModel {
         switch result {
         case .success(let state):
             token.applied = true
+            // The reader stays on the page they were reading when pages before it go, move or arrive.
+            // (An undo or redo does not say where pages went: there, the index is only kept in range.)
+            currentPage = OrganizeMath.readerPage(currentPage, after: edits, pagesAdded: state.pages.count - self.pages.count)
             refresh(state, touching: pages, shift: Self.shift(of: edits))
             return true
         case .failure(let error):
@@ -338,7 +341,7 @@ final class DocumentModel {
     }
 
     /// Publishes the document as it is after a change, undo or redo: its pages, with the current
-    /// page kept on one of them; nothing selected (an index into the old pages or annotations may
+    /// page kept on one of them (`apply` has moved it with its page first); nothing selected (an index into the old pages or annotations may
     /// name something else now); its annotations, fields and capabilities; the search run again;
     /// and what changed.
     private func refresh(_ state: EngineState, touching pagesTouched: Set<Int>?, shift: Shift) {

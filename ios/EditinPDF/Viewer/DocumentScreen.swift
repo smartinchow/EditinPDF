@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The screen for one document: its pages, once it is open, with Undo and Redo at the leading end of
-/// the toolbar and the search and thumbnails buttons at the trailing end (and, while text is selected,
+/// the toolbar and the search, thumbnails and Organize Pages buttons at the trailing end (and, while text is selected,
 /// a Copy button before them), and the page indicator (and, while a search has hits, the bar to move
 /// between them) over the pages. The pages and the thumbnails follow every change, undo and redo.
 ///
@@ -24,8 +24,10 @@ struct DocumentScreen: View {
     @State private var showsSearch = false
     /// Set to show the thumbnails sheet, and cleared when it closes.
     @State private var thumbnailsSheet: ThumbnailsPresentation?
+    /// Set to show Organize Pages, and cleared when it closes.
+    @State private var organizeCover: ThumbnailsPresentation?
     /// Made when the thumbnails are first asked for and kept while the document is on screen, so the
-    /// sheet opens with its pictures the next time.
+    /// sheet opens with its pictures the next time. Organize Pages shows the same pictures.
     @State private var thumbnails: ThumbnailStore?
     @Environment(\.displayScale) private var displayScale
     /// The scene's undo manager, handed to the model, which registers each change with it.
@@ -49,7 +51,7 @@ struct DocumentScreen: View {
     /// while the document is closing (UIKit logs an attempt to present on a view that is leaving).
     @State private var failureAnswered = false
 
-    /// What the thumbnails sheet is shown with. The store travels in the item the sheet is presented
+    /// What the thumbnails sheet (and Organize Pages) is shown with. The store travels in the item the sheet is presented
     /// for, instead of the sheet's content reading it from this view's state: done that way the
     /// content ran with the store still nil, though the button's action had set it just before
     /// (observed on the iOS 26.5 simulator, in a document scene).
@@ -179,10 +181,14 @@ struct DocumentScreen: View {
                         copyButton
                         searchButton
                         thumbnailsButton
+                        organizeButton
                     }
                 }
                 .sheet(item: $thumbnailsSheet) { presentation in
                     ThumbnailsSheet(model: model, store: presentation.store, scrollTarget: $scrollTarget)
+                }
+                .fullScreenCover(item: $organizeCover) { presentation in
+                    OrganizeScreen(model: model, store: presentation.store)
                 }
                 // A change to the document makes every picture the store has drawn out of date (and its
                 // pages, too): the store moves on to the new revision, and an open sheet with it.
@@ -321,16 +327,39 @@ struct DocumentScreen: View {
 
     private func showThumbnails() {
         // Not while the sheet is already on its way up (a second tap), or a second one would replace it.
-        guard thumbnailsSheet == nil, let document = model.document() else { return }
-        // A store drawn for another screen resolution (the window moved to another display) is
-        // replaced, so the pictures are sharp on this one.
-        let kept = thumbnails.flatMap { $0.displayScale == displayScale ? $0 : nil }
-        let store = kept ?? ThumbnailStore(document: document, pages: model.pages, revision: model.revision,
-                                             displayScale: displayScale)
-        thumbnails = store
+        guard thumbnailsSheet == nil, let store = thumbnailStore() else { return }
         // The pictures the sheet opens on are drawn while it slides up, so its first rows are not
         // blank; the cells ask for the rest as they come into view.
         store.prefetch(around: model.currentPage, radius: ThumbnailsSheet.openingRadius)
         thumbnailsSheet = ThumbnailsPresentation(store: store)
+    }
+
+    /// Opens, over everything, the grid where pages are selected, moved, turned, deleted and added.
+    private var organizeButton: some View {
+        Button(action: showOrganize) {
+            Label(Strings.organize, systemImage: "rectangle.grid.2x2")
+        }
+        .disabled(model.pageCount == 0)
+        .accessibilityIdentifier("organizeButton")
+    }
+
+    private func showOrganize() {
+        guard organizeCover == nil, let store = thumbnailStore() else { return }
+        organizeCover = ThumbnailsPresentation(store: store)
+    }
+
+    /// The store of page pictures, made the first time it is needed and kept: the same pictures for
+    /// the thumbnails and Organize. Nil unless the document is open.
+    private func thumbnailStore() -> ThumbnailStore? {
+        guard let document = model.document() else { return nil }
+        // A store drawn for another screen resolution (the window moved to another display) is
+        // replaced, so the pictures are sharp on this one. A kept store is brought up to the
+        // document's revision (it does nothing when it is there already).
+        let kept = thumbnails.flatMap { $0.displayScale == displayScale ? $0 : nil }
+        let store = kept ?? ThumbnailStore(document: document, pages: model.pages, revision: model.revision,
+                                             displayScale: displayScale)
+        store.reload(pages: model.pages, revision: model.revision)
+        thumbnails = store
+        return store
     }
 }

@@ -277,4 +277,61 @@ enum Strings {
     static var actionFillField: String {
         String(localized: "Fill Form", comment: "Name of the change in Undo and Redo: a form field was filled in")
     }
+
+    // MARK: Organize
+
+    /// The name of the Organize screen: the toolbar button that opens it, and its title.
+    static var organize: String {
+        String(localized: "Organize Pages", comment: "Toolbar button and screen title for reordering, turning, deleting and adding pages")
+    }
+
+    /// The Organize button that selects every page.
+    static var selectAll: String {
+        String(localized: "Select All", comment: "Organize button that selects every page")
+    }
+
+    /// The Organize button that clears the selection, once every page is selected.
+    static var deselectAll: String {
+        String(localized: "Deselect All", comment: "Organize button that clears the selection of pages")
+    }
+
+    /// The Organize button that turns the selected pages a quarter turn anticlockwise.
+    static var rotateLeft: String {
+        String(localized: "Rotate Left", comment: "Organize button that turns the selected pages a quarter turn anticlockwise")
+    }
+
+    /// The Organize button that turns the selected pages a quarter turn clockwise.
+    static var rotateRight: String {
+        String(localized: "Rotate Right", comment: "Organize button that turns the selected pages a quarter turn clockwise")
+    }
+
+    /// The Organize button that removes the selected pages, and the confirmation's button.
+    static var delete: String {
+        String(localized: "Delete", comment: "Organize button that removes the selected pages; also the button that confirms it")
+    }
+
+    /// The Organize button that adds an empty page after the selection.
+    static var insertBlank: String {
+        String(localized: "Insert Blank Page", comment: "Organize button that adds an empty page")
+    }
+
+    /// The question asked before several pages are deleted.
+    static func deletePagesConfirm(count: Int) -> String {
+        String(localized: "Delete \(count) pages?", comment: "Title of the confirmation before deleting several pages")
+    }
+
+    /// Under that question.
+    static var deletePagesConfirmMessage: String {
+        String(localized: "You can undo this.", comment: "Message of the confirmation before deleting several pages")
+    }
+
+    /// Shown in Organize when the document does not allow its pages to be changed.
+    static var organizeNotAllowed: String {
+        String(localized: "This document doesn't allow changing its pages.", comment: "Shown in Organize when the PDF's settings do not allow changing its pages")
+    }
+
+    /// How many pages are selected in Organize, as its title.
+    static func pagesSelected(count: Int) -> String {
+        String(localized: "\(count) selected", comment: "Title of the Organize screen while pages are selected: how many")
+    }
 }
