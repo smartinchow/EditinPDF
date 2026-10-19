@@ -15,8 +15,10 @@ struct ExtractedPages: Transferable, Sendable {
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .pdf) { item in
-            // A folder of its own, so two shares of the same name cannot meet.
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            // A folder of its own, so two shares of the same name cannot meet. The share sheet reads the
+            // file after this returns, so it cannot be removed here: older folders go instead.
+            sweepShareFolders(olderThan: 3600)
+            let folder = shareRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             return SentTransferredFile(try item.write(to: folder), allowAccessingOriginalFile: false)
         }
@@ -34,6 +36,22 @@ struct ExtractedPages: Transferable, Sendable {
     private var safeName: String {
         let cleaned = fileName.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         return cleaned.lowercased().hasSuffix(".pdf") ? cleaned : cleaned + ".pdf"
+    }
+}
+
+/// The folder the files made for sharing are in, one folder to each.
+private var shareRoot: URL {
+    FileManager.default.temporaryDirectory.appendingPathComponent("EditinPDFShare", isDirectory: true)
+}
+
+/// Removes the folders in `shareRoot` last changed more than `age` seconds ago (all of them for 0).
+/// The app calls it with 0 at launch, when no share is under way.
+func sweepShareFolders(olderThan age: TimeInterval) {
+    let fm = FileManager.default
+    guard let folders = try? fm.contentsOfDirectory(at: shareRoot, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+    for folder in folders {
+        let changed = (try? folder.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        if age <= 0 || Date().timeIntervalSince(changed) > age { try? fm.removeItem(at: folder) }
     }
 }
 
@@ -64,11 +82,15 @@ enum PickedFile {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
-            if let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > limit {
-                return .failure(.tooLarge)
+            // Read in pieces and stop past the limit, whatever the file says about its size.
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            var data = Data()
+            while let piece = try handle.read(upToCount: 4 * 1024 * 1024), !piece.isEmpty {
+                if data.count + piece.count > limit { return .failure(.tooLarge) }
+                data.append(piece)
             }
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            return data.count > limit ? .failure(.tooLarge) : .success(data)
+            return .success(data)
         } catch {
             return .failure(.unreadable)
         }

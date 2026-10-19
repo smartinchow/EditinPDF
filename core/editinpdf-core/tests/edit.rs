@@ -260,3 +260,15 @@ fn capabilities_of_a_plain_document() {
     );
     assert_eq!(caps.read_only_reason, None);
 }
+
+#[test]
+fn capabilities_say_whether_the_document_is_password_protected() {
+    let plain = PdfDocument::open(fixtures::text_doc(&["x"]), None).unwrap();
+    assert!(!plain.capabilities().is_encrypted);
+    let locked =
+        PdfDocument::open(fixtures::encrypted_doc(&["x"], "pw"), Some("pw".into())).unwrap();
+    assert!(locked.capabilities().is_encrypted);
+    // An owner password alone: it opens with no password, and is still protected.
+    let owner_only = PdfDocument::open(fixtures::restricted_doc(&["x"], "owner"), None).unwrap();
+    assert!(owner_only.capabilities().is_encrypted);
+}

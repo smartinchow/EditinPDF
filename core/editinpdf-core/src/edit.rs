@@ -110,6 +110,9 @@ pub struct EditCapabilities {
     pub can_fill_forms: bool,
     /// At least one signature field holds a signature.
     pub is_signed: bool,
+    /// The document is password-protected (an owner password counts, even with no open password).
+    /// Pages extracted from it make a new PDF with no protection.
+    pub is_encrypted: bool,
 }
 
 /// A change to a document. Pages are 0-based.

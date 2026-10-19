@@ -67,6 +67,13 @@ fn dump_fixtures() {
     // One page reading "Marked page" with a highlight over that line and a sticky note
     // (`fixtures::annotated_doc`): the app's tests list, select and delete comments.
     fs::write(dir.join("annotated.pdf"), fixtures::annotated_doc()).unwrap();
+    // Opens with no password but has an owner password (`fixtures::restricted_doc`): extracting its
+    // pages drops that protection, which the app says.
+    fs::write(
+        dir.join("owner-only.pdf"),
+        fixtures::restricted_doc(&["Owner only"], "owner"),
+    )
+    .unwrap();
 
     let dir = ui_test_fixtures();
     fs::create_dir_all(&dir).unwrap();

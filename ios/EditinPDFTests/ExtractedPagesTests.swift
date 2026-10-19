@@ -96,13 +96,41 @@ final class ExtractedPagesTests: XCTestCase {
         XCTAssertEqual(c.extractedPages()?.fileName, "doc (page 2)")
     }
 
-    func testIsEncryptedOnlyOnceUnlocked() async throws {
+    func testIsEncryptedFollowsTheEngine() async throws {
         let (m, _) = try makeModel()
+        await m.settle()
         XCTAssertFalse(m.isEncrypted)
         let locked = DocumentModel(bytes: try fixtureData("locked"))
         XCTAssertFalse(locked.isEncrypted)
         await locked.unlock(password: "hunter2")
+        await locked.settle()
         XCTAssertTrue(locked.isEncrypted)
+    }
+
+    func testAnOwnerPasswordOnlyDocumentIsEncrypted() async throws {
+        let (m, _) = try makeModel(fixture: "owner-only")
+        await m.settle()
+        XCTAssertTrue(m.isEncrypted, "it opens without a password but extracting drops its protection")
+        let c = OrganizeController(model: m)
+        c.selection = [0]
+        XCTAssertNotNil(c.extractedPages())
+    }
+
+    func testSweepRemovesShareFolders() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("EditinPDFShare/\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        sweepShareFolders(olderThan: 3600)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path), "a fresh folder stays")
+        sweepShareFolders(olderThan: 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    func testReadingStopsPastTheLimitWhateverTheSize() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).bin")
+        try Data(count: 5_000_000).write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        XCTAssertEqual(PickedFile.readNow(url, limit: 4_000_000), .failure(.tooLarge))
+        XCTAssertEqual(try PickedFile.readNow(url, limit: 5_000_000).get().count, 5_000_000)
     }
 
     func testExtractStrings() {

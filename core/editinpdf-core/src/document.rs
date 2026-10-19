@@ -685,6 +685,7 @@ impl PdfDocument {
             can_annotate: false,
             can_fill_forms: false,
             is_signed: false,
+            is_encrypted: false,
         };
         self.read(closed, |doc| {
             let editable = doc.editable();
@@ -695,6 +696,7 @@ impl PdfDocument {
                 can_annotate: editable && doc.allows_annotation(),
                 can_fill_forms: editable && doc.allows_form_filling(),
                 is_signed: doc.is_signed(),
+                is_encrypted: doc.info.encrypted || doc.permissions().is_some(),
             }
         })
     }

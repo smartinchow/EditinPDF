@@ -13,6 +13,7 @@
 		1BD10BF615F8A913E50F4307 /* EditorSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33B0236F5F0EC452E2CFBC6D /* EditorSmokeTests.swift */; };
 		1C09C8ED746FED8068CD658B /* OrganizeControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8310CC2E867D5C492E8B65DC /* OrganizeControllerTests.swift */; };
 		206E694BA5DB96C5B95002B8 /* ThumbnailStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C886BE236F046F62791FDD5E /* ThumbnailStoreTests.swift */; };
+		225CC512551C27B81138BB22 /* owner-only.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 01542E7C8766F737DAB1EBC6 /* owner-only.pdf */; };
 		2D0A2AFE4FE0B9E60D3A48F5 /* PDFFileDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4127BE4AD19CFC6F89810E23 /* PDFFileDocumentTests.swift */; };
 		317B0D48D7DE556D252F4019 /* locked.pdf in Resources */ = {isa = PBXBuildFile; fileRef = A9A5081BA8D089C224584764 /* locked.pdf */; };
 		320B958E2160EE4892724CB8 /* rotated.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 2F472452DDACC231079CB6A3 /* rotated.pdf */; };
@@ -103,6 +104,7 @@
 
 /* Begin PBXFileReference section */
 		007F3C73DAF8FFB514F5B498 /* PDFFileDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFFileDocument.swift; sourceTree = "<group>"; };
+		01542E7C8766F737DAB1EBC6 /* owner-only.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "owner-only.pdf"; sourceTree = "<group>"; };
 		0278541C69CCE329E11DD326 /* SearchSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchSheet.swift; sourceTree = "<group>"; };
 		038B53D508CA4C8CFF671EB9 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		0616B8DE53B65D75B577EF75 /* sample.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = sample.pdf; sourceTree = "<group>"; };
@@ -395,6 +397,7 @@
 				4C1125033EA5E30924C174D5 /* form.pdf */,
 				22177CB12AF8A846F8AE260E /* hello.pdf */,
 				A9A5081BA8D089C224584764 /* locked.pdf */,
+				01542E7C8766F737DAB1EBC6 /* owner-only.pdf */,
 				2F472452DDACC231079CB6A3 /* rotated.pdf */,
 				0616B8DE53B65D75B577EF75 /* sample.pdf */,
 			);
@@ -547,6 +550,7 @@
 				D43355A4DEB64242D02469F0 /* form.pdf in Resources */,
 				FA4B8AA1028D578B338F701E /* hello.pdf in Resources */,
 				317B0D48D7DE556D252F4019 /* locked.pdf in Resources */,
+				225CC512551C27B81138BB22 /* owner-only.pdf in Resources */,
 				320B958E2160EE4892724CB8 /* rotated.pdf in Resources */,
 				E752FA1C1DEBD9BBACCBD473 /* sample.pdf in Resources */,
 			);
