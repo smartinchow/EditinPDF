@@ -76,7 +76,7 @@ final class InkSavingTests: XCTestCase {
     }
 
     func draw(on controller: PageScrollViewController) throws {
-        let ink = try XCTUnwrap(controller.markupInteraction.ink)
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
         ink.drawing = PKDrawing(strokes: [InkGeometryTests.stroke((0...20).map { CGPoint(x: 50 + Double($0) * 5, y: 100) })])
     }
 
@@ -87,7 +87,7 @@ final class InkSavingTests: XCTestCase {
         try draw(on: controller)
         controller.markupInteraction.fingerWentDown(on: controller.contentView)
         XCTAssertTrue(model.hasPendingInk, "on the pages: still drawing")
-        controller.markupInteraction.fingerWentDown(on: try XCTUnwrap(controller.markupInteraction.ink))
+        controller.markupInteraction.fingerWentDown(on: try XCTUnwrap(controller.markupInteraction.drawing.ink))
         XCTAssertTrue(model.hasPendingInk, "on the canvas: still drawing")
         controller.markupInteraction.fingerWentDown(on: UIView())
         XCTAssertFalse(model.hasPendingInk, "outside the pages: added")
@@ -173,7 +173,7 @@ final class InkSavingTests: XCTestCase {
     func testTheCanvasKeepsNoHistoryOfStrokesAdded() async throws {
         let (controller, model) = await makeController()
         let markup = controller.markupInteraction
-        let ink = try XCTUnwrap(markup.ink)
+        let ink = try XCTUnwrap(markup.drawing.ink)
         XCTAssertFalse(ink.scrollsToTop)
         ink.undoManager?.registerUndo(withTarget: ink) { _ in }
         XCTAssertEqual(ink.undoManager?.canUndo, true)
@@ -181,7 +181,7 @@ final class InkSavingTests: XCTestCase {
         model.commitPendingInk()
         XCTAssertEqual(ink.undoManager?.canUndo, false, "added: the canvas's history goes")
         ink.undoManager?.registerUndo(withTarget: ink) { _ in }
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 530 + 200)))
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 530 + 200)))
         XCTAssertEqual(ink.page, 1)
         XCTAssertEqual(ink.undoManager?.canUndo, false, "moved to another page: the history goes")
     }

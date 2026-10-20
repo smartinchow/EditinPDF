@@ -58,9 +58,9 @@ final class InkDrawingTests: XCTestCase {
     /// `testDrawingWithAFingerAddsInkThatUndoTakesBack` draws with it at once).
     func testPickingDrawPutsTheCanvasOverThePageBeingRead() async throws {
         let (controller, model, _) = await makeController(tool: .highlight)
-        XCTAssertNil(controller.markupInteraction.ink, "no canvas without Draw")
+        XCTAssertNil(controller.markupInteraction.drawing.ink, "no canvas without Draw")
         pick(.ink, in: model, controller)
-        let ink = try XCTUnwrap(controller.markupInteraction.ink)
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
         XCTAssertEqual(ink.page, model.currentPage)
         XCTAssertTrue(ink.superview === controller.contentView)
         XCTAssertEqual(ink.frame, try XCTUnwrap(controller.pageView(for: 0)).frame)
@@ -69,9 +69,9 @@ final class InkDrawingTests: XCTestCase {
     func testAFirstFingerOnAPageWithDrawPickedPutsTheCanvasOverThatPage() async throws {
         let (controller, _, _) = await makeController()
         let markup = controller.markupInteraction
-        XCTAssertEqual(markup.ink?.page, 0, "over the page being read")
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertEqual(markup.drawing.ink?.page, 0, "over the page being read")
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         XCTAssertEqual(ink.page, 1)
         XCTAssertTrue(ink.superview === controller.contentView)
         XCTAssertEqual(ink.frame, try XCTUnwrap(controller.pageView(for: 1)).frame)
@@ -89,13 +89,13 @@ final class InkDrawingTests: XCTestCase {
         let onPage = try contentPoint(CGPoint(x: 300, y: 400), page: 0, in: controller)
         for tool in [nil, Tool.select, .highlight, .eraser] {
             pick(tool, in: model, controller)
-            XCTAssertFalse(markup.prepareToDraw(atContentPoint: onPage), "\(String(describing: tool))")
+            XCTAssertFalse(markup.drawing.prepareToDraw(atContentPoint: onPage), "\(String(describing: tool))")
         }
         pick(.ink, in: model, controller)
         let gap = try contentPoint(CGPoint(x: 300, y: 795), page: 0, in: controller)
         XCTAssertNil(controller.pageLocation(of: gap), "the gap between two pages")
-        XCTAssertFalse(markup.prepareToDraw(atContentPoint: gap))
-        XCTAssertEqual(markup.ink?.page, 0, "the canvas stays where it was")
+        XCTAssertFalse(markup.drawing.prepareToDraw(atContentPoint: gap))
+        XCTAssertEqual(markup.drawing.ink?.page, 0, "the canvas stays where it was")
 
         // Before the permissions are read, nothing may be drawn.
         let fresh = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(2))
@@ -104,9 +104,9 @@ final class InkDrawingTests: XCTestCase {
         other.view.layoutIfNeeded()
         fresh.tool = .ink
         other.markupTool = .ink
-        XCTAssertFalse(other.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        XCTAssertFalse(other.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
         await fresh.settle()
-        XCTAssertTrue(other.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        XCTAssertTrue(other.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
     }
 
     /// Two fingers scroll and zoom while Draw is picked; one finger draws. With any other tool, or
@@ -141,7 +141,7 @@ final class InkDrawingTests: XCTestCase {
         let onPage1 = try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)
         XCTAssertNotNil(controller.contentView.touchWillLand)
         controller.contentView.touchWillLand?(onPage1)
-        let ink = try XCTUnwrap(controller.markupInteraction.ink)
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
         XCTAssertEqual(ink.page, 1)
         let hit = try XCTUnwrap(controller.contentView.hitTest(onPage1, with: nil))
         XCTAssertTrue(hit.isDescendant(of: ink), "the finger lands on the canvas")
@@ -149,8 +149,8 @@ final class InkDrawingTests: XCTestCase {
 
     func testTheStrokesNeverLandOnTheDocumentsUndoManager() async throws {
         let (controller, _, undoManager) = await makeController()
-        XCTAssertTrue(controller.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        let ink = try XCTUnwrap(controller.markupInteraction.ink)
+        XCTAssertTrue(controller.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
         XCTAssertNotNil(ink.undoManager)
         XCTAssertFalse(ink.undoManager === undoManager)
         draw([line], on: ink)
@@ -162,8 +162,8 @@ final class InkDrawingTests: XCTestCase {
     func testTheCanvasDrawsInDrawsStyle() async throws {
         let (controller, model, _) = await makeController()
         model.toolStyles[.ink] = ToolStyle(color: RGBA(r: 0, g: 0.4, b: 1), width: 3, fontSize: 14, fill: false)
-        XCTAssertTrue(controller.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        let ink = try XCTUnwrap(controller.markupInteraction.ink)
+        XCTAssertTrue(controller.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
         let tool = try XCTUnwrap(ink.tool as? PKInkingTool)
         XCTAssertEqual(tool.inkType, .monoline)
         XCTAssertEqual(tool.width, 3 * scale / 2, accuracy: 0.01, "PencilKit draws a monoline twice its tool's width")
@@ -183,8 +183,8 @@ final class InkDrawingTests: XCTestCase {
             let (controller, model, _) = await makeController()
             controller.scrollView.zoomScale = zoom
             let markup = controller.markupInteraction
-            XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 150, y: 120), page: 0, in: controller)))
-            let ink = try XCTUnwrap(markup.ink)
+            XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 150, y: 120), page: 0, in: controller)))
+            let ink = try XCTUnwrap(markup.drawing.ink)
             draw([line], on: ink)
             XCTAssertTrue(model.hasPendingInk)
             let made = await markup.commitPendingInk()?.value
@@ -207,8 +207,8 @@ final class InkDrawingTests: XCTestCase {
         pick(.ink, in: model, controller)
         XCTAssertEqual(model.pages[0].rotationDegrees, 90)
         let markup = controller.markupInteraction
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: CGPoint(x: 100, y: 100)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 100, y: 100)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         XCTAssertEqual(ink.pointsPerCanvasPoint, 792 / 400, accuracy: 0.001, "the turned page is 792 points wide as shown")
         draw([line], on: ink)
         let made = await markup.commitPendingInk()?.value
@@ -222,8 +222,8 @@ final class InkDrawingTests: XCTestCase {
         let (controller, model, undoManager) = await makeController()
         let markup = controller.markupInteraction
         XCTAssertFalse(model.hasPendingInk)
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         draw([line], on: ink)
         draw([line.map { CGPoint(x: $0.x, y: $0.y + 100) }], on: ink)
         XCTAssertTrue(model.hasPendingInk, "the palette shows Done")
@@ -239,7 +239,7 @@ final class InkDrawingTests: XCTestCase {
     /// Nothing drawn, nothing added.
     func testDoneWithNothingDrawnChangesNothing() async throws {
         let (controller, model, undoManager) = await makeController()
-        XCTAssertTrue(controller.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        XCTAssertTrue(controller.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
         model.commitPendingInk()
         await model.settle()
         XCTAssertFalse(undoManager.canUndo)
@@ -251,12 +251,12 @@ final class InkDrawingTests: XCTestCase {
     func testAFingerOnAnotherPageAddsTheStrokesAndTakesTheCanvasThere() async throws {
         let (controller, model, _) = await makeController()
         let markup = controller.markupInteraction
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 0, in: controller)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 0, in: controller)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         draw([line], on: ink)
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 600), page: 0, in: controller)))
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 600), page: 0, in: controller)))
         XCTAssertTrue(model.hasPendingInk, "the same page: still drawing")
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
         XCTAssertFalse(model.hasPendingInk)
         XCTAssertEqual(ink.page, 1)
         XCTAssertEqual(ink.frame, try XCTUnwrap(controller.pageView(for: 1)).frame)
@@ -270,15 +270,15 @@ final class InkDrawingTests: XCTestCase {
     func testTheCanvasDoesNotMoveWhileAStrokeIsDrawn() async throws {
         let (controller, model, _) = await makeController()
         let markup = controller.markupInteraction
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 0, in: controller)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 0, in: controller)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         draw([line], on: ink)
-        markup.canvasViewDidBeginUsingTool(ink)
-        XCTAssertFalse(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
+        markup.drawing.canvasViewDidBeginUsingTool(ink)
+        XCTAssertFalse(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
         XCTAssertEqual(ink.page, 0)
         XCTAssertTrue(model.hasPendingInk)
-        markup.canvasViewDidEndUsingTool(ink)
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
+        markup.drawing.canvasViewDidEndUsingTool(ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
         XCTAssertEqual(ink.page, 1)
     }
 
@@ -287,8 +287,8 @@ final class InkDrawingTests: XCTestCase {
         for next in [Tool.highlight, nil] {
             let (controller, model, _) = await makeController()
             let markup = controller.markupInteraction
-            XCTAssertTrue(markup.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-            let ink = try XCTUnwrap(markup.ink)
+            XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+            let ink = try XCTUnwrap(markup.drawing.ink)
             draw([line], on: ink)
             pick(next, in: model, controller)
             XCTAssertFalse(model.hasPendingInk)
@@ -302,8 +302,8 @@ final class InkDrawingTests: XCTestCase {
     /// Redo brings it back.
     func testUndoAddsThePendingStrokesThenTakesThemBack() async throws {
         let (controller, model, undoManager) = await makeController()
-        XCTAssertTrue(controller.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        draw([line], on: try XCTUnwrap(controller.markupInteraction.ink))
+        XCTAssertTrue(controller.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        draw([line], on: try XCTUnwrap(controller.markupInteraction.drawing.ink))
         model.undo()
         await model.settle()
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
@@ -318,8 +318,8 @@ final class InkDrawingTests: XCTestCase {
     /// was, and are added first, where they were drawn.
     func testAnotherChangeAddsThePendingStrokesFirst() async throws {
         let (controller, model, _) = await makeController()
-        XCTAssertTrue(controller.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        draw([line], on: try XCTUnwrap(controller.markupInteraction.ink))
+        XCTAssertTrue(controller.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        draw([line], on: try XCTUnwrap(controller.markupInteraction.drawing.ink))
         let rotated = await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
         XCTAssertTrue(rotated)
         XCTAssertNil(model.failure)
@@ -333,18 +333,18 @@ final class InkDrawingTests: XCTestCase {
         let (controller, model, undoManager) = await makeController()
         let markup = controller.markupInteraction
         let rotate = model.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         draw([line], on: ink)
         let commit = try XCTUnwrap(markup.commitPendingInk())
-        XCTAssertEqual(markup.inkPreviews.count, 1, "what was drawn stays on screen while it is added")
+        XCTAssertEqual(markup.drawing.inkPreviews.count, 1, "what was drawn stays on screen while it is added")
         let rotated = await rotate.value
         let made = await commit.value
         XCTAssertTrue(rotated); XCTAssertFalse(made)
         XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
         XCTAssertTrue(ink.drawing.strokes.isEmpty)
-        XCTAssertTrue(markup.inkPreviews.isEmpty, "no ghost of the refused strokes")
+        XCTAssertTrue(markup.drawing.inkPreviews.isEmpty, "no ghost of the refused strokes")
         undoManager.undo(); await model.settle()
         XCTAssertFalse(undoManager.canUndo, "the refused drawing left nothing to undo")
     }
@@ -356,8 +356,8 @@ final class InkDrawingTests: XCTestCase {
         let (controller, model, _) = await makeController()
         let markup = controller.markupInteraction
         let rotate = model.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
-        XCTAssertTrue(markup.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        let ink = try XCTUnwrap(markup.ink)
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
         draw([line], on: ink)
         _ = await rotate.value
         controller.apply(try XCTUnwrap(model.lastChange))
@@ -366,15 +366,15 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
         XCTAssertNil(ink.superview, "the canvas of the old layout is gone")
-        XCTAssertTrue(markup.inkPreviews.isEmpty)
+        XCTAssertTrue(markup.drawing.inkPreviews.isEmpty)
         XCTAssertFalse(model.hasPendingInk)
     }
 
     /// The canvas stays over its page when that page's view is made again (scrolled away and back).
     func testTheCanvasStaysOverItsPageWhenThePageIsMadeAgain() async throws {
         let (controller, _, _) = await makeController(pages: 12)
-        XCTAssertTrue(controller.markupInteraction.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
-        let ink = try XCTUnwrap(controller.markupInteraction.ink)
+        XCTAssertTrue(controller.markupInteraction.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
         controller.scrollView.contentOffset = CGPoint(x: 0, y: 4_000)
         XCTAssertNil(controller.pageView(for: 0))
         controller.scrollView.contentOffset = .zero

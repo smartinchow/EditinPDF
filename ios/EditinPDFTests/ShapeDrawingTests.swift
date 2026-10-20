@@ -244,7 +244,7 @@ final class ShapeDrawingTests: XCTestCase {
     func testPickingAnotherToolAddsTheStrokesWaiting() async throws {
         for next in [Tool.rectangle, .textBox, .note] {
             let (controller, model, _) = await makeController(tool: .ink)
-            let ink = try XCTUnwrap(controller.markupInteraction.ink)
+            let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
             let points = (0...10).map { CGPoint(x: 100 + 10 * Double($0), y: 100) }
             ink.drawing = PKDrawing(strokes: [InkGeometryTests.stroke(points.map { CGPoint(x: $0.x * scale, y: $0.y * scale) })])
             XCTAssertTrue(model.hasPendingInk)
@@ -293,7 +293,7 @@ final class ShapeDrawingTests: XCTestCase {
         let (controller, model, undoManager) = await makeController(tool: .textBox)
         let markup = controller.markupInteraction
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 200), in: controller))
-        let editor = try XCTUnwrap(markup.textEditor)
+        let editor = try XCTUnwrap(markup.textBoxes.textEditor)
         XCTAssertTrue(editor.superview === controller.scrollView, "in the scroll view, sharp at any zoom")
         XCTAssertEqual(editor.page, 0)
         XCTAssertEqual(editor.origin.x, 100, accuracy: 0.001); XCTAssertEqual(editor.origin.y, 200, accuracy: 0.001)
@@ -323,13 +323,13 @@ final class ShapeDrawingTests: XCTestCase {
         model.toolStyles[.textBox] = ToolStyle(color: RGBA(r: 0.9, g: 0.1, b: 0.1), width: 2, fontSize: 20, fill: false)
         let markup = controller.markupInteraction
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 120, y: 240), in: controller))
-        let editor = try XCTUnwrap(markup.textEditor)
+        let editor = try XCTUnwrap(markup.textBoxes.textEditor)
         type("Two\nlines", into: editor)
         pick(.select, in: model, controller)
-        XCTAssertNil(markup.textEditor)
+        XCTAssertNil(markup.textBoxes.textEditor)
         XCTAssertNil(editor.superview)
         XCTAssertFalse(model.hasPendingText)
-        XCTAssertEqual(markup.textPreviews.count, 1, "what was typed stays on screen while it is added")
+        XCTAssertEqual(markup.textBoxes.textPreviews.count, 1, "what was typed stays on screen while it is added")
         await model.settle()
         let box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first)
         XCTAssertEqual(box.kind, .textBox)
@@ -340,7 +340,7 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(box.color).red, 0.9, accuracy: 0.01)
         XCTAssertEqual(undoManager.undoActionName, Strings.actionAddAnnotation)
         try await Task.sleep(for: MarkupInteraction.inkPreviewDuration + .milliseconds(200))
-        XCTAssertTrue(markup.textPreviews.isEmpty)
+        XCTAssertTrue(markup.textBoxes.textPreviews.isEmpty)
     }
 
     /// A tap on the page while a box is being typed in ends it (its text is added) and starts none.
@@ -348,15 +348,15 @@ final class ShapeDrawingTests: XCTestCase {
         let (controller, model, _) = await makeController(tool: .textBox)
         let markup = controller.markupInteraction
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller))
-        type("Hello", into: try XCTUnwrap(markup.textEditor))
+        type("Hello", into: try XCTUnwrap(markup.textBoxes.textEditor))
         XCTAssertTrue(markup.takesTap(atContentPoint: try contentPoint(CGPoint(x: 300, y: 795), in: controller)), "in the gap too")
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 300, y: 500), in: controller))
-        XCTAssertNil(markup.textEditor, "no new box on the same tap")
+        XCTAssertNil(markup.textBoxes.textEditor, "no new box on the same tap")
         await model.settle()
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.contents), ["Hello"])
         // The next tap starts one.
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 300, y: 500), in: controller))
-        XCTAssertNotNil(markup.textEditor)
+        XCTAssertNotNil(markup.textBoxes.textEditor)
     }
 
     /// The end of editing (the keyboard put away), Markup turned off, the pages laid out again, a
@@ -374,11 +374,11 @@ final class ShapeDrawingTests: XCTestCase {
             let (controller, model, _) = await makeController(tool: .textBox)
             let markup = controller.markupInteraction
             markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller))
-            let editor = try XCTUnwrap(markup.textEditor)
+            let editor = try XCTUnwrap(markup.textBoxes.textEditor)
             type("Kept", into: editor)
             trigger(controller, model, editor)
             await model.settle()
-            XCTAssertNil(markup.textEditor, name)
+            XCTAssertNil(markup.textBoxes.textEditor, name)
             XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.contents), ["Kept"], name)
         }
     }
@@ -388,11 +388,11 @@ final class ShapeDrawingTests: XCTestCase {
         let (controller, _, _) = await makeController(tool: .textBox)
         let markup = controller.markupInteraction
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller))
-        let editor = try XCTUnwrap(markup.textEditor)
+        let editor = try XCTUnwrap(markup.textBoxes.textEditor)
         type("Still typing", into: editor)
         markup.fingerWentDown(on: editor)
         markup.fingerWentDown(on: controller.contentView)
-        XCTAssertTrue(markup.textEditor === editor)
+        XCTAssertTrue(markup.textBoxes.textEditor === editor)
     }
 
     /// Nothing typed: no text box, no change, nothing left on the page.
@@ -400,12 +400,12 @@ final class ShapeDrawingTests: XCTestCase {
         let (controller, model, undoManager) = await makeController(tool: .textBox)
         let markup = controller.markupInteraction
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller))
-        type("  \n", into: try XCTUnwrap(markup.textEditor))
+        type("  \n", into: try XCTUnwrap(markup.textBoxes.textEditor))
         XCTAssertFalse(model.hasPendingText, "only spaces are nothing to add")
         pick(.note, in: model, controller)
         await model.settle()
-        XCTAssertNil(markup.textEditor)
-        XCTAssertTrue(markup.textPreviews.isEmpty)
+        XCTAssertNil(markup.textBoxes.textEditor)
+        XCTAssertTrue(markup.textBoxes.textPreviews.isEmpty)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
         XCTAssertFalse(undoManager.canUndo)
         XCTAssertNil(model.failure)
@@ -419,7 +419,7 @@ final class ShapeDrawingTests: XCTestCase {
         let point = try contentPoint(CGPoint(x: 100, y: 100), in: controller)
         XCTAssertFalse(markup.takesTap(atContentPoint: point))
         markup.place(atContentPoint: point)
-        XCTAssertNil(markup.textEditor)
+        XCTAssertNil(markup.textBoxes.textEditor)
         XCTAssertFalse(model.canUse(.textBox))
         XCTAssertEqual(model.refusal(of: .textBox), Strings.textBoxNeedsUprightPage)
     }
@@ -431,13 +431,13 @@ final class ShapeDrawingTests: XCTestCase {
         let markup = controller.markupInteraction
         _ = await model.addNote(page: 0, at: CGPoint(x: 500, y: 700), contents: "x")
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller))
-        type("Late", into: try XCTUnwrap(markup.textEditor))
+        type("Late", into: try XCTUnwrap(markup.textBoxes.textEditor))
         undoManager.undo(); await model.settle()
         let made = try XCTUnwrap(markup.commitPendingText())
         let ok = await made.value
         XCTAssertFalse(ok)
         XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
-        XCTAssertTrue(markup.textPreviews.isEmpty, "no ghost of the refused text")
+        XCTAssertTrue(markup.textBoxes.textPreviews.isEmpty, "no ghost of the refused text")
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
     }
 

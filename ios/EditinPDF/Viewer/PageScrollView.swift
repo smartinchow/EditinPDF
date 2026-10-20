@@ -532,7 +532,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         // The zoom and the layout move the selection on screen, and its handles with it; and the box a
         // text box is typed in.
         selectionInteraction.layoutHandles()
-        markupInteraction.layoutTextEditor()
+        markupInteraction.textBoxes.layoutTextEditor()
         // With a text tool picked, whether a finger is on text is known before it goes down.
         markupInteraction.prefetchText(onPages: inView)
     }
