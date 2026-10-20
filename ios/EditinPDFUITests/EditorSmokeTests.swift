@@ -227,6 +227,51 @@ final class EditorSmokeTests: XCTestCase {
         attach(app, "ink-zoomed-added")
     }
 
+    /// Strokes left waiting (no Done) when the reader goes back to the documents are in the file: the
+    /// document, opened again in a fresh launch of the app, shows them. And ⌘Z on a hardware keyboard
+    /// takes back strokes waiting, as the Undo button does.
+    func testStrokesLeftWaitingAreKeptWhenTheDocumentIsClosed() throws {
+        let app = launchAndOpen("sample.pdf", as: "ink-closed.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5))
+        ink.tap()
+        let done = app.buttons["doneDrawingButton"]
+
+        // ⌘Z: the strokes waiting are added, then taken back.
+        pagePoint(CGPoint(x: 150, y: 500), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 500), pageWidth: 612, in: app))
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5), "⌘Z left the strokes waiting")
+        XCTAssertTrue(app.buttons["redoButton"].waitForEnabled(timeout: 5), "⌘Z did not take the drawing back")
+        sleep(2)
+        let undone = pagePoint(CGPoint(x: 300, y: 500), pageWidth: 612, in: app).screenPoint
+        XCTAssertFalse(try isInked(around: undone, in: app), "⌘Z left the drawing on the page")
+
+        // Drawn, and left waiting: back to the documents without Done.
+        pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
+        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
+        back.tap()
+        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        sleep(2)
+
+        // A fresh launch, without staging the sample again: the file as saved.
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        openFromBrowser("ink-closed.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        sleep(2)
+        let kept = pagePoint(CGPoint(x: 300, y: 300), pageWidth: 612, in: app).screenPoint
+        XCTAssertTrue(try isInked(around: kept, in: app), "the strokes left waiting were lost when the document closed")
+        XCTAssertFalse(try isInked(around: undone, in: app), "the drawing ⌘Z took back is in the file")
+        attach(app, "ink-kept-after-close")
+    }
+
     /// On a page turned by `/Rotate 90`, a drawing stays where it was drawn.
     func testDrawingOnATurnedPageStaysWhereItWasDrawn() throws {
         let app = launchAndOpen("rotated.pdf")

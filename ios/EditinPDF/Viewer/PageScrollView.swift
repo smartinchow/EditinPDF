@@ -63,6 +63,11 @@ struct PageScrollView: UIViewControllerRepresentable {
     /// controller hears when it changes.
     var tool: Tool?
 
+    /// The screen is going: strokes drawn with Draw and waiting are added (the canvas goes with it).
+    static func dismantleUIViewController(_ controller: PageScrollViewController, coordinator: ()) {
+        controller.model.commitPendingInk()
+    }
+
     func makeUIViewController(context: Context) -> PageScrollViewController {
         PageScrollViewController(model: model)
     }
@@ -201,6 +206,22 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         view = scrollView
         selectionInteraction.install()
         markupInteraction.install()
+    }
+
+    /// On screen, the window tells the markup of every finger going down, outside the pages too
+    /// (`MarkupInteraction.fingerWentDown`).
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        let observer = markupInteraction.fingersDown
+        guard let window = view.window, observer.view !== window else { return }
+        observer.view?.removeGestureRecognizer(observer)
+        window.addGestureRecognizer(observer)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        let observer = markupInteraction.fingersDown
+        observer.view?.removeGestureRecognizer(observer)
     }
 
     override func viewDidLayoutSubviews() {

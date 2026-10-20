@@ -101,6 +101,17 @@ final class InkGeometryTests: XCTestCase {
         XCTAssertEqual(InkGeometry.drawings([[], []]), [], "empty strokes are left out")
     }
 
+    /// A stroke more than one drawing may hold (only one not kept within the limits first) is a drawing
+    /// of its own: no empty drawing comes before it.
+    func testNoDrawingIsEmpty() {
+        let huge = (0..<150_000).map { CGPoint(x: Double($0 % 1_000), y: Double($0 / 1_000)) }
+        let short = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1)]
+        let drawings = InkGeometry.drawings([huge, short])
+        XCTAssertFalse(drawings.contains { $0.isEmpty })
+        XCTAssertEqual(drawings.map(\.count), [1, 1])
+        XCTAssertEqual(InkGeometry.drawings([short, huge]).map(\.count), [1, 1])
+    }
+
     func testTheLineWidthIsOneTheBridgeTakes() {
         XCTAssertEqual(InkGeometry.lineWidth(2), 2)
         XCTAssertEqual(InkGeometry.lineWidth(0), 0.1)

@@ -50,9 +50,13 @@ import UIKit.UIGestureRecognizerSubclass
 /// - The strokes wait on the canvas, off the document and its undo manager, and are added as one
 ///   drawing (`commitPendingInk`, the model's `addInk`) when the tool changes, when the reader taps
 ///   Done, when a touch starts on another page, before any other change and before Undo or Redo
-///   (the model's), when the scene leaves the screen, and when the pages are laid out again. Each is
-///   worked out against the revision it was drawn on: one drawn while a turn of its page was on its
-///   way is refused as stale, and leaves nothing on the screen.
+///   (the model's), when the scene leaves the screen, when the pages are laid out again, when the
+///   screen goes, and when a finger goes down anywhere outside the pages (`fingerWentDown`: the
+///   toolbar, the palette, the back button). That last one is what keeps them when the document is
+///   closed: the scene closes the file as soon as the back button is tapped, before the screen hears it
+///   is going, and saves it only if a change has been registered by then. Each is worked out against
+///   the revision it was drawn on: one drawn while a turn of its page was on its way is refused as
+///   stale, and leaves nothing on the screen.
 @MainActor
 final class MarkupInteraction: NSObject {
     /// How far outside an annotation's box, in points on screen, a touch still lands on it: a finger is
@@ -75,6 +79,9 @@ final class MarkupInteraction: NSObject {
     /// Pictures of strokes on their way into the document, over their page, each until the page has
     /// been drawn again with them (or at once when they are refused).
     private(set) var inkPreviews: [UIView] = []
+    /// Hears of every finger going down in the screen's window, without taking it: see
+    /// `fingerWentDown`. The scroll view's controller puts it on its window while it is on screen.
+    let fingersDown = FingerDownObserver()
     /// How long a picture of strokes added stays: the page's cover while it is drawn again, and a
     /// little more for its tiles to come in.
     static let inkPreviewDuration: Duration = PageView.redrawCoverDuration + .milliseconds(250)
@@ -112,6 +119,7 @@ final class MarkupInteraction: NSObject {
         host.contentView.addGestureRecognizer(pan)
         host.scrollView.panGestureRecognizer.require(toFail: pan)
         host.contentView.touchWillLand = { [weak self] point in self?.prepareToDraw(atContentPoint: point) }
+        fingersDown.fingerWentDown = { [weak self] view in self?.fingerWentDown(on: view) }
         model.inkHolder = self
         toolDidChange()
     }
@@ -267,6 +275,16 @@ final class MarkupInteraction: NSObject {
         return placeCanvas(onPage: location.page, style: style)
     }
 
+    /// A finger went down on `view`: anywhere but the pages (the toolbar, the palette, the back button,
+    /// a bar over the pages), the strokes waiting are added. Going back to the documents closes the
+    /// file at once, saving it only if it has a change by then; the finger going down on the back
+    /// button is the last moment the strokes can become one.
+    func fingerWentDown(on view: UIView?) {
+        guard let host, model.hasPendingInk else { return }
+        if let view, view.isDescendant(of: host.scrollView) { return }
+        model.commitPendingInk()
+    }
+
     /// Puts the canvas, empty, over `page`, drawing in `style`. False without a layout for the page.
     private func placeCanvas(onPage page: Int, style: ToolStyle) -> Bool {
         guard let host, let place = host.layoutPlace(ofPage: page) else { return false }
@@ -280,6 +298,7 @@ final class MarkupInteraction: NSObject {
         canvas.tool = PKInkingTool(.monoline, color: UIColor(red: style.color.r, green: style.color.g, blue: style.color.b, alpha: 1),
                                    width: InkCaptureView.toolWidth(drawingLinesOf: InkGeometry.lineWidth(style.width) * place.scale))
         if !canvas.drawing.strokes.isEmpty { canvas.drawing = PKDrawing() }
+        canvas.forgetStrokeHistory()
         if canvas.superview === host.contentView {
             host.contentView.bringSubviewToFront(canvas)
         } else {
@@ -319,8 +338,11 @@ final class MarkupInteraction: NSObject {
                                           spacing: 1 / zoom, tolerance: min(0.5, halfAScreenPoint))
         let revision = ink.drawnAt ?? model.revision
         let preview = showPreview(of: drawing, on: ink)
+        // The canvas is emptied before the change is handed over: handing it over adds whatever strokes
+        // are waiting first (`DocumentModel.enqueue`), which must then be none, or these would be added twice.
         ink.drawing = PKDrawing()
         ink.drawnAt = nil
+        ink.forgetStrokeHistory()
         model.pendingInkDidChange(false)
         let made = model.enqueueInk(page: ink.page, strokes: strokes, drawnAt: revision, style: ink.style)
         return Task { [weak self] in
@@ -507,3 +529,25 @@ extension MarkupInteraction: PKCanvasViewDelegate {
 }
 
 extension MarkupInteraction: PendingInkHolder {}
+
+/// A gesture recognizer that only listens: it hears of each finger going down where it is attached
+/// (the window), says on which view (`fingerWentDown`), and fails at once, so it never takes a touch,
+/// delays one, or keeps another recognizer from recognizing.
+final class FingerDownObserver: UIGestureRecognizer {
+    /// Told the view each finger that goes down landed on.
+    var fingerWentDown: ((UIView?) -> Void)?
+
+    init() {
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        for touch in touches { fingerWentDown?(touch.view) }
+        state = .failed
+    }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+}

@@ -111,13 +111,14 @@ enum InkGeometry {
     }
 
     /// `strokes` (each within `maxStrokePoints`) cut, in order, into drawings of at most `maxStrokes`
-    /// strokes and `maxDrawingPoints` points: one annotation each. Empty strokes are left out.
+    /// strokes and `maxDrawingPoints` points: one annotation each. Empty strokes are left out, and no
+    /// drawing is empty (a stroke over the limit on its own, not kept within them first, is one).
     static func drawings(_ strokes: [[CGPoint]]) -> [[[CGPoint]]] {
         var drawings: [[[CGPoint]]] = []
         var current: [[CGPoint]] = []
         var points = 0
         for stroke in strokes where !stroke.isEmpty {
-            if current.count == maxStrokes || points + stroke.count > maxDrawingPoints {
+            if !current.isEmpty, current.count == maxStrokes || points + stroke.count > maxDrawingPoints {
                 drawings.append(current)
                 current = []
                 points = 0

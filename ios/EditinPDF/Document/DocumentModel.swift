@@ -298,8 +298,11 @@ final class DocumentModel {
         registerStep(.undo, token: token, named: actionName, touching: pages)
         liveChanges.add(token)
         let base = base ?? revision
+        let engine = engine
+        engine.editWillStart()
         return queue.submit { [weak self] in
-            await self?.apply(edits, label: actionName, base: base, token: token, touching: pages) ?? false
+            defer { engine.editDidFinish() }
+            return await self?.apply(edits, label: actionName, base: base, token: token, touching: pages) ?? false
         }
     }
 
@@ -356,7 +359,10 @@ final class DocumentModel {
         undoManager.registerUndo(withTarget: token) { [weak self, token] _ in
             guard let self else { return }
             self.registerStep(step.opposite, token: token, named: actionName, touching: pages)
+            let engine = self.engine
+            engine.editWillStart()
             self.queue.submit { [weak self] in
+                defer { engine.editDidFinish() }
                 await self?.move(step, token: token, touching: pages)
             }
         }

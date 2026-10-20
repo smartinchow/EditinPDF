@@ -41,6 +41,8 @@ final class InkCaptureView: PKCanvasView {
         isOpaque = false
         // The pages scroll and zoom, not the canvas: it is the page's size, at the page's zoom.
         isScrollEnabled = false
+        // A tap on the status bar scrolls the pages to the top, not the canvas.
+        scrollsToTop = false
         minimumZoomScale = 1
         maximumZoomScale = 1
         contentInsetAdjustmentBehavior = .never
@@ -55,6 +57,12 @@ final class InkCaptureView: PKCanvasView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Forgets the canvas's own history of strokes: they have been added to the document, or the canvas
+    /// has moved to another page, and undoing them on the canvas would mean nothing.
+    func forgetStrokeHistory() {
+        localUndo.removeAllActions()
+    }
 
     /// The width of a monoline `PKInkingTool` whose strokes are `lineWidth` canvas points wide. PencilKit
     /// draws a monoline stroke twice as wide as its tool's width (measured on iOS 26: a tool 2.63 wide

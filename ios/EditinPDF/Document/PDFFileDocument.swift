@@ -82,16 +82,29 @@ final class PDFFileDocument: ReferenceFileDocument {
         return document
     }
 
+    /// How long a save waits for the changes on their way to reach the engine (`savedBytes`).
+    static let editWait: TimeInterval = 2
+
     /// The file as opened with the current changes appended. Runs off the main thread.
     func fileWrapper(snapshot: PdfDocument, configuration: WriteConfiguration) throws -> FileWrapper {
         do {
-            return FileWrapper(regularFileWithContents: try snapshot.save(mode: .incremental))
+            return FileWrapper(regularFileWithContents: try savedBytes(of: snapshot))
         } catch {
             // The engine's words stay out of the alert and, since they may quote the file, out of the
             // readable log.
             Self.log.error("saving failed: \(String(describing: error), privacy: .private)")
             throw Self.writeRefused
         }
+    }
+
+    /// What `fileWrapper` writes: `snapshot` (the engine document) saved incrementally, once the
+    /// changes handed over have reached it, for up to `editWait` seconds. The scene saves as the
+    /// document closes, and the change that makes it save (the strokes drawn with Draw, added as the
+    /// back button goes down) is applied off the main actor, a moment later. Off the main thread only:
+    /// on it, the changes could not finish, and it saves what the engine has.
+    func savedBytes(of snapshot: PdfDocument) throws -> Data {
+        if !Thread.isMainThread { _ = engine.waitForEdits(timeout: Self.editWait) }
+        return try snapshot.save(mode: .incremental)
     }
 
     /// What a refused save throws: the system's alert shows our reason.

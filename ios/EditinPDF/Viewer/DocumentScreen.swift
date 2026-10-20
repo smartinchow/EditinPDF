@@ -71,6 +71,10 @@ struct DocumentScreen: View {
     var body: some View {
         content
             .onAppear { adoptUndoManager() }
+            // Strokes drawn with Draw and waiting are added as the screen goes. (Going back to the
+            // documents closes the file before this: the strokes were added as the back button was
+            // touched, see `MarkupInteraction.fingerWentDown`.)
+            .onDisappear { model.commitPendingInk() }
             .onChange(of: undoManager) { adoptUndoManager() }
             // Strokes left waiting on the page are added before the scene goes to the background (and
             // the file is saved): they would not be in it otherwise.
@@ -339,6 +343,8 @@ struct DocumentScreen: View {
             Label(Strings.undo, systemImage: "arrow.uturn.backward")
         }
         .disabled(!canUndo && !model.hasPendingInk)
+        // ⌘Z on a hardware keyboard comes here, so strokes waiting are added first, as with a tap.
+        .keyboardShortcut("z", modifiers: .command)
         .accessibilityIdentifier("undoButton")
     }
 
@@ -351,6 +357,7 @@ struct DocumentScreen: View {
             Label(Strings.redo, systemImage: "arrow.uturn.forward")
         }
         .disabled(!canRedo || model.hasPendingInk)
+        .keyboardShortcut("z", modifiers: [.command, .shift])
         .accessibilityIdentifier("redoButton")
     }
 
