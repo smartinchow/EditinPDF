@@ -6,7 +6,10 @@ final class BridgeTests: XCTestCase {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "hello", withExtension: "pdf", subdirectory: "Fixtures"))
         return try Data(contentsOf: url)
     }
-    func testVersionMentionsPdfcraft() { XCTAssertTrue(engineVersion().contains("pdfcraft v0.7")) }
+    func testVersionMentionsPdfcraft() {
+        XCTAssertTrue(engineVersion().contains("pdfcraft v0.7"))
+        XCTAssertTrue(engineVersion().hasPrefix("editinpdf-core 0.2.0"))
+    }
     func testSearchHitLimitIsExported() { XCTAssertEqual(searchHitLimit(), 1000) }
     func testOpenRenderSearch() throws {
         let doc = try PdfDocument.open(bytes: fixture(), password: nil)

@@ -2,8 +2,8 @@
 
 A free, native iOS app for reading, organizing and annotating PDFs — fully offline, no account, no telemetry.
 
-**Status: pre-release, in TestFlight.** The viewer (M1) and page organizing with autosave (M2) work; mark-up
-and forms (M3) are being built. Nothing is on the App Store yet.
+**Status: pre-release, in TestFlight (0.2.0).** The viewer, page organizing, mark-up, form filling and signing
+work. The Licenses screen and the App Store release (M4) are still to come. Nothing is on the App Store yet.
 
 [![CI](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml/badge.svg)](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml)
 
@@ -11,7 +11,24 @@ EditinPDF is based on [PdfCraft](https://github.com/storytold/pdfcraft) by the A
 PDF engine written in pure Rust. EditinPDF is an independent project and is not affiliated with or endorsed by
 the ArtCraft team or Adobe Inc.
 
-<!-- Screenshots: to be added with the store listing (milestone M4). -->
+<table>
+  <tr>
+    <td><img src="docs/screenshots/m2/04-organize-iphone.png" width="170" alt="Organizing pages: two pages selected"></td>
+    <td><img src="docs/screenshots/m3/06-shapes.png" width="170" alt="A rectangle, an oval, a line and an arrow drawn on a page"></td>
+    <td><img src="docs/screenshots/m3/08-comments-iphone.png" width="170" alt="The Comments list with a highlight and a note"></td>
+    <td><img src="docs/screenshots/m3/10-form-iphone.png" width="170" alt="Filling in a form: choosing from a list"></td>
+    <td><img src="docs/screenshots/m3/12-sign.png" width="170" alt="A saved signature placed twice on a page"></td>
+  </tr>
+  <tr>
+    <td align="center">Organize pages</td>
+    <td align="center">Shapes and arrows</td>
+    <td align="center">Comments list</td>
+    <td align="center">Fill in forms</td>
+    <td align="center">Sign</td>
+  </tr>
+</table>
+
+The screenshots show sample documents made for testing. More are in [docs/screenshots](docs/screenshots/).
 
 ## What works today
 
@@ -28,13 +45,34 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
   pages of another PDF, and extract pages to a new PDF to share or save.
 - **Undo and redo** every change; changes **save automatically** back to the original file, as an incremental
   update that keeps the original bytes. A new blank document can be started from the file browser.
-- **Mark up** (in progress): a Markup mode with a tool palette, and highlight, underline and strikethrough over
-  text.
+- **Mark up**: a Markup mode with a tool palette (a bar at the bottom on iPhone, a side palette on iPad). Each
+  tool remembers its colour and line width.
+  - **Text markup**: highlight, underline and strikethrough over text you drag across.
+  - **Draw** with a finger or an Apple Pencil.
+  - **Shapes and arrows**: rectangle, oval, line and arrow, with an optional fill for rectangles and ovals.
+  - **Text boxes** and **notes**: type on the page, or leave a sticky note.
+  - **Select, move, edit and delete** marks and notes. The **eraser** deletes whole marks it touches.
+  - A **Comments list** of the marks and notes in the file, by page. Tap one to jump to it; swipe to delete it.
+- **Fill in forms**: text fields, check boxes, radio buttons, and lists (drop-down and list boxes).
+- **Sign**: draw your signature once, then place it on any page, as often as you need. It is a drawn mark on the
+  page, not a digital signature. The saved signature is stored only on your device, in the app's own folder with
+  file protection, and is excluded from backups.
 
-Still to come: drawing, text boxes, notes, shapes, a comments list and form filling (M3), then the Licenses
-screen and App Store release (M4). The privacy manifest ships already: no tracking and no data collected.
+Still to come: the Licenses screen and the App Store release (M4). The privacy manifest ships already: no
+tracking and no data collected.
 
-iOS 17 and 18 are untested (Xcode 27 offers no simulator runtime for them).
+## Known issues
+
+- iOS 17 and 18 are untested (Xcode 27 offers no simulator runtime for them).
+- Apple Pencil has only been tested in the simulator, which sends finger touches. Drawing and signing use
+  PencilKit's any-input policy and the other tools use ordinary drags, so a Pencil should work, but it has not
+  been tried on a device.
+- Text boxes are not offered on a page that has been turned (rotated), because the engine draws their text
+  sideways there. Turn the page back first. The other tools are offered on turned pages.
+- Pages extracted from a password-protected PDF are written without the password. The Organize screen says so.
+- The iOS 27 SDK marks `ReferenceFileDocument` and the `DocumentGroup` initializer the app uses as deprecated, in
+  favour of a `Document` protocol that needs iOS 27. The app supports iOS 17, so it keeps them. The build prints
+  no warning for this today; the switch comes when the minimum moves to iOS 27.
 
 ## Building
 
@@ -66,7 +104,7 @@ output, not committed: run `make xcframework` again after changing anything in `
 | `make release-check` | Builds Release for the simulator and fails if the app contains any PDF (the UI tests' sample documents are Debug-only) |
 | `make update-upstream TAG=v0.8.0` | Moves the engine to a newer PdfCraft release and re-runs the bridge tests |
 | `make clean` | Removes the build output |
-| `make notices` | Placeholder: the third-party notices are generated in milestone M4 |
+| `make notices` | Not implemented until milestone M4: prints a message and exits with an error. `docs/THIRD-PARTY-NOTICES.md` is a stub until then |
 
 The Xcode targets print only warnings and errors (`-quiet`); `make test XCFLAGS=` prints everything.
 
@@ -84,7 +122,17 @@ core/                    Rust workspace
   vendor/num_threads/    a patched copy of one dependency that does not compile for iOS (docs/adr/0001)
 ios/
   project.yml            XcodeGen spec; EditinPDF.xcodeproj is generated from it and committed
-  EditinPDF/             the SwiftUI app
+  Config/Base.xcconfig   bundle identifier and version numbers
+  EditinPDF/             the SwiftUI app, in folders by feature:
+    App/                   the app entry and the document scene
+    Document/              the document model, the edit queue and saving (docs/adr/0002)
+    Viewer/                the tiled page view, zoom and the screen around it
+    Thumbnails/ Search/ Selection/    thumbnails, search, select and copy text
+    Organize/              the page grid: reorder, rotate, delete, insert, extract
+    Markup/                the tool palette, drawing, shapes, text boxes, notes, select and erase, the Comments list
+    Forms/                 filling in form fields
+    Sign/                  the drawn signature and where it is kept
+    Open/ Support/         the password prompt; user-visible strings and diagnostics
   EditinPDFCore/         Swift package around the XCFramework (the bindings and the XCFramework are build output)
   EditinPDFTests/        unit tests
   EditinPDFUITests/      UI tests, and the sample PDFs only Debug builds bundle
@@ -94,8 +142,9 @@ docs/                    design spec, plans and architecture decision records (A
 .github/workflows/       CI
 ```
 
-Design notes live in [docs/superpowers/specs](docs/superpowers/specs/); the build spike and its numbers are in
-[docs/adr/0001-ios-build-spike.md](docs/adr/0001-ios-build-spike.md).
+Design notes live in [docs/superpowers/specs](docs/superpowers/specs/). The build spike and its numbers are in
+[docs/adr/0001-ios-build-spike.md](docs/adr/0001-ios-build-spike.md); how edits, undo and saving fit together is in
+[docs/adr/0002-editing.md](docs/adr/0002-editing.md).
 
 ## Continuous integration
 

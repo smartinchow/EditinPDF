@@ -4,8 +4,8 @@
 // The test targets derive their bundle identifiers from PRODUCT_BUNDLE_IDENTIFIER.
 
 PRODUCT_BUNDLE_IDENTIFIER = app.editinpdf.ios
-MARKETING_VERSION = 0.1.0
-CURRENT_PROJECT_VERSION = 3
+MARKETING_VERSION = 0.2.0
+CURRENT_PROJECT_VERSION = 4
 IPHONEOS_DEPLOYMENT_TARGET = 17.0
 
 // Apple Developer team that signs device and App Store builds (Consultin AI Pty Ltd).

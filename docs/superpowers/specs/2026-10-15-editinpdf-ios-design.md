@@ -1,6 +1,6 @@
 # EditinPDF — iOS app on the PdfCraft engine: design
 
-Date: 2026-10-15. Status: approved in conversation (sections 1–2 explicitly; sections 3–6 decided by Claude at the user's request to proceed without further questions).
+Date: 2026-10-15. Status: approved in conversation (sections 1–2 explicitly; sections 3–6 decided by Claude at the user's request to proceed without further questions). Progress (2026-10-21): M3 is done, so M0–M3 are done and the app is at version 0.2.0; M4 (store polish) is still to come.
 
 ## 1. Intent
 
