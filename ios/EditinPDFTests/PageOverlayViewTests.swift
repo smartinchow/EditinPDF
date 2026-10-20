@@ -158,7 +158,8 @@ final class PageOverlayViewTests: XCTestCase {
     func testTheActiveBoxIsOnTop() throws {
         let overlay = makeOverlay()
         let layers = try XCTUnwrap(overlay.layer.sublayers)
-        XCTAssertEqual(layers, [overlay.selectionLayer, overlay.highlightLayer, overlay.activeLayer])
+        // A shape being dragged out with a Markup tool is drawn over them all.
+        XCTAssertEqual(layers, [overlay.selectionLayer, overlay.highlightLayer, overlay.activeLayer, overlay.draftLayer])
     }
 
     /// Drawn over the page, but the page's gestures (Task 10's selection, the scroll view's own) are

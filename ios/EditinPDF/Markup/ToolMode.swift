@@ -54,6 +54,10 @@ enum Tool: String, CaseIterable, Sendable {
     var usesFontSize: Bool { self == .textBox }
     /// Whether the tool's shape can be filled.
     var usesFill: Bool { self == .rectangle || self == .oval }
+    /// Whether one finger dragged across the page draws the tool's shape (`ShapeGeometry.draft`).
+    var drawsShape: Bool { [.rectangle, .oval, .line, .arrow].contains(self) }
+    /// Whether a tap on the page places what the tool makes: a box to type in, or a note.
+    var placesByTap: Bool { self == .textBox || self == .note }
 
     /// The tool that makes text markup of `kind`: its colour is the one a mark of that kind is made in.
     init(markupKind kind: MarkupKind) {

@@ -16,7 +16,7 @@ enum PaletteLayout: Equatable {
 /// Markup mode's tools, and the button that opens the current tool's style: in a bar along the
 /// bottom (the style in a sheet) or a column at the leading edge (the style in a popover). Tools
 /// the document or the page refuses are disabled, and the palette says why. While strokes drawn with
-/// Draw are waiting, Done stands before the style button.
+/// Draw, or text typed in a text box, are waiting, Done stands before the style button.
 struct ToolPalette: View {
     @Bindable var model: DocumentModel
     let layout: PaletteLayout
@@ -65,7 +65,8 @@ struct ToolPalette: View {
     }
 
     /// A column of tools that scrolls when the height is short, the style button at its foot, and
-    /// why something is refused beside it.
+    /// why something is refused beside it: a small panel at the column's top, as tall as its words,
+    /// that touches go through to the page under it.
     private var sidePalette: some View {
         HStack(alignment: .top, spacing: 8) {
             VStack(spacing: 4) {
@@ -91,7 +92,12 @@ struct ToolPalette: View {
                 refusalNote
                     .padding(10)
                     .frame(maxWidth: 220, alignment: .leading)
+                    // Its own height: as tall as the tools, it covered a strip of the page and took the
+                    // touches meant for it (Task 14).
+                    .fixedSize(horizontal: false, vertical: true)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    // It only says something: a finger on it draws, scrolls or taps on the page under it.
+                    .allowsHitTesting(false)
             }
         }
         .padding(.leading, 12)
@@ -123,9 +129,10 @@ struct ToolPalette: View {
         }
     }
 
-    /// Adds the strokes drawn with Draw to the page, as one drawing; there only while some are waiting.
+    /// Adds the strokes drawn with Draw to the page, as one drawing, and the text typed in a text box as
+    /// a text box; there only while some are waiting.
     @ViewBuilder private var doneDrawingButton: some View {
-        if model.hasPendingInk {
+        if model.hasPendingMarkup {
             Button {
                 model.commitPendingInk()
             } label: {
@@ -191,8 +198,6 @@ struct ToolPalette: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                // As tall as the tools when there is room for them, and scrolling when there is not.
-                .frame(maxHeight: CGFloat(Tool.allCases.count) * 42 + 12)
                 .accessibilityIdentifier(refusal == Strings.markupNotAllowed ? "markupNotAllowed" : "textBoxNeedsUprightPage")
         }
     }

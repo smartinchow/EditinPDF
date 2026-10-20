@@ -15,14 +15,27 @@ func fixtureData(_ name: String) throws -> Data {
 private final class FixtureBundleMarker {}
 
 /// A model of `<fixture>.pdf`, opened, with a fresh `UndoManager` of its own wired in, as the
-/// document scene's would be. The caller keeps the undo manager: the model only holds it weakly.
+/// document scene's would be. The caller keeps the undo manager: the model only holds it weakly. Its
+/// tools' styles are its own (`isolatedToolStyles`): a test that changes one changes no other test's,
+/// nor the app's.
 @MainActor
 func makeModel(fixture: String = "sample") throws -> (DocumentModel, UndoManager) {
-    let model = DocumentModel(bytes: try fixtureData(fixture))
+    let model = DocumentModel(outcome: OpenOutcome(bytes: try fixtureData(fixture)), toolStyles: isolatedToolStyles())
     guard case .open = model.state else { throw FixtureError.notOpen(fixture) }
     let undoManager = UndoManager()
     model.undoManager = undoManager
     return (model, undoManager)
+}
+
+/// Tools' styles kept in user defaults of the tests' own, emptied first: every tool's first style. The
+/// app's (the test host's standard defaults) are left alone. A store reads its defaults once, when it
+/// is made, so emptying them for the next one changes none made before.
+@MainActor
+func isolatedToolStyles() -> ToolStyleStore {
+    let suite = "EditinPDFTests.toolStyles"
+    guard let defaults = UserDefaults(suiteName: suite) else { return ToolStyleStore(defaults: UserDefaults()) }
+    defaults.removePersistentDomain(forName: suite)
+    return ToolStyleStore(defaults: defaults)
 }
 
 /// The middle of the first glyph on page 0 of the model's document, in view space.

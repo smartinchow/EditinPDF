@@ -71,7 +71,8 @@ final class DocumentModel {
 
     /// What a touch on the page does: nil while the reader is only reading (touches scroll, zoom and
     /// select text); Markup in the toolbar sets `.select`, and the palette any other tool. Strokes drawn
-    /// with Draw and not added yet are added as soon as it changes (`commitPendingInk`).
+    /// with Draw and text typed in a text box, not added yet, are added as soon as it changes
+    /// (`commitPendingInk`).
     var tool: Tool? {
         didSet { if tool != oldValue { commitPendingInk() } }
     }
@@ -144,11 +145,13 @@ final class DocumentModel {
         if hasPendingInk != pending { hasPendingInk = pending }
     }
 
-    /// Adds the strokes drawn with Draw and waiting, if any, as one change, handed over before this
-    /// returns: Done does it, and so does everything that must come after them (another tool, any other
-    /// change, Undo and Redo, the scene leaving the screen). Nothing happens with none waiting.
+    /// Adds the strokes drawn with Draw and waiting, if any, as one change, and the text typed in a
+    /// text box and waiting, if any, as another, each handed over before this returns: Done does it,
+    /// and so does everything that must come after them (another tool, any other change, Undo and
+    /// Redo, the scene leaving the screen). Nothing happens with none waiting.
     func commitPendingInk() {
         inkHolder?.commitPendingInk()
+        inkHolder?.commitPendingText()
     }
 
     /// Adds `strokes` (view space: PDF points of `page`, each stroke the points it passed through) as
@@ -181,6 +184,160 @@ final class DocumentModel {
                         color: style.color.rgbColor, width: width)
         }
         return enqueue(edits, named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+    }
+
+    // MARK: Text boxes, notes and shapes
+
+    /// Whether text typed in a box on the page (Text Box) is waiting to be added as a text box: added
+    /// with the strokes waiting (`commitPendingInk`). Only spaces and new lines are not waiting.
+    private(set) var hasPendingText = false
+
+    /// The text being typed in a text box came or went.
+    func pendingTextDidChange(_ pending: Bool) {
+        if hasPendingText != pending { hasPendingText = pending }
+    }
+
+    /// Whether strokes or text are waiting to be added (`hasPendingInk`, `hasPendingText`): the palette
+    /// shows Done meanwhile, Undo adds them and takes them back, and Redo waits (adding them would
+    /// leave nothing to redo).
+    var hasPendingMarkup: Bool { hasPendingInk || hasPendingText }
+
+    /// The note the note sheet is open for: one to add, where a tap with Note put it, or one on the page
+    /// to read and change. Nil while the sheet is not up. Its text is the reader's, and never logged.
+    var noteDraft: NoteDraft?
+
+    /// Whether a text box may be put on `page`: the document allows markup (once its permissions are
+    /// read) and the page is shown upright, as the file has it. The engine sets a text box's text
+    /// upright in the file, so on a turned page it would read sideways.
+    func canAddTextBox(onPage page: Int) -> Bool {
+        guard let capabilities, capabilities.canAnnotate, pages.indices.contains(page) else { return false }
+        return pages[page].rotationDegrees % 360 == 0
+    }
+
+    /// Adds `draft`, a rectangle, an oval, a line or an arrow in view space, in its tool's style (see
+    /// `enqueueShape`), and says whether it was added.
+    @discardableResult
+    func addShape(page: Int, draft: DraftShape) async -> Bool {
+        await enqueueShape(page: page, draft: draft).value
+    }
+
+    /// `addShape`, handed over at once (registered with the undo manager before this returns): one
+    /// change named `Strings.actionAddAnnotation`. A rectangle or an oval is outlined in its tool's
+    /// colour and width (held to what the bridge takes, as Draw's is) and, when its style says so,
+    /// filled with that colour mixed toward white (`ShapeGeometry.fill`); a line has an arrow head at
+    /// its end for Arrow. `style` is the tool's own when nil. Like every placement in view space it is
+    /// worked out against a revision: `revision`, the one it was dragged out on (the model's now when
+    /// nil), so that a shape dragged out before a turn of its page is refused as stale. A tool that may
+    /// not be used is refused at once, with its reason; a box or a line the bridge would not take (a
+    /// side under a point, a point out of its reach) is refused before it is asked, as it would be.
+    @discardableResult
+    func enqueueShape(page: Int, draft: DraftShape, workedOutAt revision: UInt64? = nil, style: ToolStyle? = nil) -> Task<Bool, Never> {
+        let tool = draft.tool
+        if let refusal = refusal(of: tool, onPage: page) { return refuse(refusal) }
+        guard let pageNumber = UInt32(exactly: page) else { return Task { false } }
+        let style = style ?? toolStyles[tool]
+        let width = InkGeometry.lineWidth(style.width)
+        let edit: Edit
+        switch draft {
+        case .rect(let box, let oval):
+            guard ShapeGeometry.isDrawable(box) else {
+                return refuseInvalid("a shape is a box at least \(ShapeGeometry.bridgeMinimumSide) point each way, within reach")
+            }
+            let fill = style.fill ? ShapeGeometry.fill(for: style.color).rgbColor : nil
+            edit = .addShape(page: pageNumber, kind: oval ? .oval : .rectangle,
+                             rect: Rect(x: box.minX, y: box.minY, width: box.width, height: box.height),
+                             color: style.color.rgbColor, fill: fill, width: width)
+        case .line(let from, let to, let arrow):
+            guard ShapeGeometry.isDrawableLine(from: from, to: to) else {
+                return refuseInvalid("a line joins two points at least \(ShapeGeometry.bridgeMinimumSide) point apart, within reach")
+            }
+            edit = .addLine(page: pageNumber, from: Point(x: from.x, y: from.y), to: Point(x: to.x, y: to.y), arrow: arrow,
+                            color: style.color.rgbColor, width: width)
+        }
+        return enqueue([edit], named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+    }
+
+    /// Adds a text box showing `text` with its top-left at `point` (view space), in Text Box's style
+    /// (see `enqueueTextBox`), and says whether it was added.
+    @discardableResult
+    func addTextBox(page: Int, at point: CGPoint, text: String) async -> Bool {
+        await enqueueTextBox(page: page, at: point, text: text).value
+    }
+
+    /// `addTextBox`, handed over at once: one change named `Strings.actionAddAnnotation`, of a box
+    /// `ShapeGeometry.textBoxRect` gives, showing `text` without the spaces and new lines after its
+    /// last character, in Text Box's colour and size (held to what the bridge takes). `style` is Text
+    /// Box's own when nil; `revision` as for `enqueueShape`. Nothing typed is no text box, and no
+    /// change. On a turned page it is refused (`Strings.textBoxNeedsUprightPage`), even before the
+    /// permissions are read: its text would read sideways.
+    @discardableResult
+    func enqueueTextBox(page: Int, at point: CGPoint, text: String, workedOutAt revision: UInt64? = nil, style: ToolStyle? = nil) -> Task<Bool, Never> {
+        let text = ShapeGeometry.committedText(text)
+        guard !text.isEmpty else { return Task { false } }
+        if let refusal = refusal(of: .textBox, onPage: page) { return refuse(refusal) }
+        // Before the permissions are read, `refusal` says nothing: a turned page is still no place for one.
+        if pages.indices.contains(page), pages[page].rotationDegrees % 360 != 0 { return refuse(Strings.textBoxNeedsUprightPage) }
+        guard pages.indices.contains(page), let pageNumber = UInt32(exactly: page) else { return Task { false } }
+        let style = style ?? toolStyles[.textBox]
+        let fontSize = ShapeGeometry.fontSize(style.fontSize)
+        let box = ShapeGeometry.textBoxRect(at: point, text: text, fontSize: fontSize,
+                                            pageSize: CGSize(width: pages[page].widthPt, height: pages[page].heightPt))
+        guard ShapeGeometry.isDrawable(box) else {
+            return refuseInvalid("a text box is a box at least \(ShapeGeometry.bridgeMinimumSide) point each way, within reach")
+        }
+        let edit = Edit.addTextBox(page: pageNumber, rect: Rect(x: box.minX, y: box.minY, width: box.width, height: box.height),
+                                   text: text, fontSize: fontSize, color: style.color.rgbColor)
+        return enqueue([edit], named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+    }
+
+    /// Adds a note whose icon's top-left is at `point` (view space), with `contents`, in Note's colour
+    /// (see `enqueueNote`), and says whether it was added.
+    @discardableResult
+    func addNote(page: Int, at point: CGPoint, contents: String) async -> Bool {
+        await enqueueNote(page: page, at: point, contents: contents).value
+    }
+
+    /// `addNote`, handed over at once: one change named `Strings.actionAddAnnotation`; `revision` as
+    /// for `enqueueShape`. A point out of the bridge's reach is refused before it is asked.
+    @discardableResult
+    func enqueueNote(page: Int, at point: CGPoint, contents: String, workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
+        if let refusal = refusal(of: .note, onPage: page) { return refuse(refusal) }
+        guard let pageNumber = UInt32(exactly: page) else { return Task { false } }
+        guard ShapeGeometry.isInReach(point) else { return refuseInvalid("a note goes at a point within reach") }
+        let edit = Edit.addNote(page: pageNumber, at: Point(x: point.x, y: point.y), contents: contents,
+                                color: toolStyles[.note].color.rgbColor)
+        return enqueue([edit], named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+    }
+
+    /// What the note sheet's Save does with `text`: a new note (`draft.existing` nil) is added where
+    /// `draft` puts it, unless nothing but spaces was written; a note on the page gets `text`, unless it
+    /// is the text it had (one change named `Strings.actionEditAnnotation`). Either is worked out
+    /// against the revision the sheet was opened on: a note another change has numbered again since is
+    /// refused as stale rather than changing another one. Says whether a change was made.
+    @discardableResult
+    func saveNote(_ draft: NoteDraft, text: String) async -> Bool {
+        guard let existing = draft.existing else {
+            guard !ShapeGeometry.committedText(text).isEmpty else { return false }
+            return await enqueueNote(page: draft.page, at: draft.point, contents: text, workedOutAt: draft.revision).value
+        }
+        guard text != draft.text else { return false }
+        if let refusal = refusal(of: .note, onPage: existing.page) { return await refuse(refusal).value }
+        guard let pageNumber = UInt32(exactly: existing.page) else { return false }
+        let edit = Edit.setAnnotationContents(page: pageNumber, index: existing.index, contents: text)
+        return await enqueue([edit], named: Strings.actionEditAnnotation, touching: [existing.page], workedOutAt: draft.revision).value
+    }
+
+    /// Tells the reader why a change is not made (`message`, one of our sentences), and makes none.
+    private func refuse(_ message: String) -> Task<Bool, Never> {
+        failure = EditFailure(message: message)
+        return Task { false }
+    }
+
+    /// Tells the reader a change is not made, as the engine's refusal of it would (`EditError.Invalid`,
+    /// whose `why` goes to the private log: it never has the reader's text in it), and makes none.
+    private func refuseInvalid(_ why: String) -> Task<Bool, Never> {
+        failure = EditFailure(EditError.Invalid(message: why))
+        return Task { false }
     }
 
     /// The scene's undo manager, which the screen hands over (`@Environment(\.undoManager)`). With
@@ -527,14 +684,31 @@ final class DocumentModel {
     }
 }
 
-/// What holds strokes drawn with Draw that are not added to the document yet: the page view's ink
-/// capture (`MarkupInteraction`).
+/// What holds strokes drawn with Draw, and text typed in a text box, that are not added to the
+/// document yet: the page view's markup (`MarkupInteraction`).
 @MainActor
 protocol PendingInkHolder: AnyObject {
     /// Adds the strokes waiting, if any, as one change, handed over before this returns; the task says
     /// whether it was made. Nil with none waiting.
     @discardableResult
     func commitPendingInk() -> Task<Bool, Never>?
+
+    /// Ends the text box being typed in, if any, adding its text as a text box (handed over before this
+    /// returns); the task says whether it was made. Nil with none being typed in.
+    @discardableResult
+    func commitPendingText() -> Task<Bool, Never>?
+}
+
+/// A note the note sheet is open for (`DocumentModel.noteDraft`): on `page`, its icon's top-left at
+/// `point` (view space); a note on the page (`existing`) or one to add (nil); its text when the sheet
+/// opened; and the revision of the document it was worked out on, which its save is checked against.
+struct NoteDraft: Identifiable, Equatable {
+    let id = UUID()
+    let page: Int
+    let point: CGPoint
+    let existing: AnnotationRef?
+    let text: String
+    let revision: UInt64
 }
 
 /// What one change, undo or redo did, for the views that redraw pages: its revision, the pages it

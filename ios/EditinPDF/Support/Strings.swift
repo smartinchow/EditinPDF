@@ -165,9 +165,15 @@ enum Strings {
         String(localized: "Unlock", comment: "Button that tries the password typed for a protected PDF")
     }
 
-    /// The button that puts the password prompt away; the document stays locked.
+    /// The button that puts a prompt or a sheet away without doing anything: the password prompt (the
+    /// document stays locked), the note sheet (the note stays as it was).
     static var cancel: String {
-        String(localized: "Cancel", comment: "Button that puts away the prompt for a PDF's password; the PDF stays locked")
+        String(localized: "Cancel", comment: "Button that puts away a prompt or sheet without changing anything: the prompt for a PDF's password (the PDF stays locked), the note editor (the note stays as it was)")
+    }
+
+    /// The note sheet's button that keeps what was written.
+    static var save: String {
+        String(localized: "Save", comment: "Button of the note editor that keeps the note's text")
     }
 
     /// The button of the message about a file that could not be opened; it closes the document.
@@ -415,10 +421,10 @@ enum Strings {
         String(localized: "Draw", comment: "Markup tool for drawing freehand")
     }
 
-    /// The palette button, there while strokes drawn with Draw are waiting, that adds them to the page.
-    /// Its own key: the "Done" that closes a sheet may be translated otherwise.
+    /// The palette button, there while strokes drawn with Draw or text typed in a text box are waiting,
+    /// that adds them to the page. Its own key: the "Done" that closes a sheet may be translated otherwise.
     static var doneDrawing: String {
-        String(localized: "doneDrawing", defaultValue: "Done", comment: "Markup palette button that adds the strokes just drawn to the page")
+        String(localized: "doneDrawing", defaultValue: "Done", comment: "Markup palette button that adds the strokes just drawn, or the text just typed in a text box, to the page")
     }
 
     /// The tool that types text onto the page.
@@ -429,6 +435,17 @@ enum Strings {
     /// The sticky-note tool.
     static var toolNote: String {
         String(localized: "Note", comment: "Markup tool that adds a sticky note")
+    }
+
+    /// The title of the sheet a note is written and read in. Its own key: the tool's "Note" may be
+    /// translated otherwise.
+    static var noteTitle: String {
+        String(localized: "noteTitle", defaultValue: "Note", comment: "Title of the sheet where a sticky note's text is written or read")
+    }
+
+    /// What the note sheet's empty text says.
+    static var notePlaceholder: String {
+        String(localized: "Add a note", comment: "Placeholder in the empty text of a sticky note being written")
     }
 
     /// The rectangle tool.

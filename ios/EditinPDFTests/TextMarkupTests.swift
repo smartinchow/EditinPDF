@@ -263,6 +263,45 @@ final class TextMarkupTests: XCTestCase {
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).first?.kind, .highlight)
     }
 
+    /// A drag that starts just off a word (above it, within the slop on screen that has the touch taken
+    /// as on the text) starts at that word, and marks from it: a drag taken for the text marks.
+    func testADragThatStartsJustOffAWordMarksFromIt() async throws {
+        let (controller, model) = await makeController()
+        model.tool = .highlight
+        let markup = controller.markupInteraction
+        await markup.loadText(onPage: 0)
+        let glyph = try XCTUnwrap(try XCTUnwrap(model.document()).pageText(page: 0).glyphs.first).rect
+        let above = CGPoint(x: (glyph.x + glyph.width / 2) * scale, y: (glyph.y - markup.hitSlop(onPage: 0) * 0.8) * scale)
+        XCTAssertTrue(markup.takesTouch(atContentPoint: above))
+        markup.begin(atContentPoint: above)
+        let ok = await markup.end(atContentPoint: try contentPoint(ofGlyph: 3, page: 0, in: model))
+        XCTAssertTrue(ok, "a drag taken as on the text marked nothing")
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).first?.kind, .highlight)
+    }
+
+    /// The same down the line of a turned page, where the text runs down and a finger just above the
+    /// line's first glyph is level with no line of text (the UI test `testDraggingDownTheTextOfATurnedPageMarksIt`).
+    func testADragThatStartsJustBeforeATurnedLineMarksFromIt() async throws {
+        let model = DocumentModel(bytes: try fixtureData("rotated"))
+        let controller = PageScrollViewController(model: model)
+        controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
+        controller.view.layoutIfNeeded()
+        await model.settle()
+        model.tool = .highlight
+        let markup = controller.markupInteraction
+        await markup.loadText(onPage: 0)
+        let glyphs = try XCTUnwrap(model.document()).pageText(page: 0).glyphs
+        let first = try XCTUnwrap(glyphs.first).rect, fourth = glyphs[3].rect
+        XCTAssertGreaterThan(fourth.y, first.y, "the line runs down the page")
+        let scale = 400.0 / CGFloat(model.pages[0].widthPt)
+        let above = CGPoint(x: (first.x + first.width / 2) * scale, y: (first.y - markup.hitSlop(onPage: 0) * 0.9) * scale)
+        XCTAssertTrue(markup.takesTouch(atContentPoint: above))
+        markup.begin(atContentPoint: above)
+        let ok = await markup.end(atContentPoint: CGPoint(x: (fourth.x + fourth.width / 2) * scale, y: (fourth.y + fourth.height / 2) * scale))
+        XCTAssertTrue(ok, "a drag taken as on the text marked nothing")
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).first?.kind, .highlight)
+    }
+
     /// A finger a little off the text, within 8 points on screen of a glyph, is on it; further off it is not.
     func testATouchJustOffTheTextIsOnIt() async throws {
         let (controller, model) = await makeController()

@@ -17,6 +17,7 @@
 		206E694BA5DB96C5B95002B8 /* ThumbnailStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C886BE236F046F62791FDD5E /* ThumbnailStoreTests.swift */; };
 		20E6F2C39CC7B4F41DB9193C /* ToolModeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBEBAFEAFFB9D73A05C95CCA /* ToolModeTests.swift */; };
 		225CC512551C27B81138BB22 /* owner-only.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 01542E7C8766F737DAB1EBC6 /* owner-only.pdf */; };
+		23DDA4623643B33BE6C0587D /* ShapeGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F9390D1B6826E2C418D6DD /* ShapeGeometry.swift */; };
 		2D0A2AFE4FE0B9E60D3A48F5 /* PDFFileDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4127BE4AD19CFC6F89810E23 /* PDFFileDocumentTests.swift */; };
 		317B0D48D7DE556D252F4019 /* locked.pdf in Resources */ = {isa = PBXBuildFile; fileRef = A9A5081BA8D089C224584764 /* locked.pdf */; };
 		320B958E2160EE4892724CB8 /* rotated.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 2F472452DDACC231079CB6A3 /* rotated.pdf */; };
@@ -53,20 +54,24 @@
 		851BDA976FE7597B8F80BDBF /* EditinPDFApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 984C365033689202DB4131F4 /* EditinPDFApp.swift */; };
 		86C85D952D715A004CBEE9AF /* SearchSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0278541C69CCE329E11DD326 /* SearchSheet.swift */; };
 		8AF740CC376D697A5191CDBF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 038B53D508CA4C8CFF671EB9 /* PrivacyInfo.xcprivacy */; };
+		90D1CBF93CAB09B61A17157B /* ShapeDrawingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 821D1CC922347204C5013C04 /* ShapeDrawingTests.swift */; };
 		914FA6CBAD6E9AED3A732585 /* DocumentModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0EFE7925C9963412D714A02 /* DocumentModelTests.swift */; };
 		91A6F7D718450CBAB28C87D4 /* AnnotationIndexTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F5652E0774A95EA21FB389E /* AnnotationIndexTests.swift */; };
 		991F199DE1FAAC91B076D798 /* Strings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A09A727CE94FC70B23ED5AAE /* Strings.swift */; };
 		9ABEECF405575D3B8B834ABA /* PencilKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2943D75B9FCE584A3897479A /* PencilKit.framework */; };
 		9C3FDBEFCB6917CC9661D7D0 /* InkGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02686DFD4ACCF289D3E4BB2B /* InkGeometry.swift */; };
+		9D05688A773825CC910EE4F6 /* ShapeGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73535509BE25BAED759B61E6 /* ShapeGeometryTests.swift */; };
 		9DE628AF229E1BDB7833ECD0 /* InkGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BAFD29DD41688C90AB4244 /* InkGeometryTests.swift */; };
 		9F6449B8D8C79AD3EDE8B41D /* EditinPDFCore in Frameworks */ = {isa = PBXBuildFile; productRef = C8C1A199A51571D78CD908BE /* EditinPDFCore */; };
 		9F951352CAAC51C0C2D8DD91 /* FixtureStaging.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4596F96C58D2514B2D8F2FE7 /* FixtureStaging.swift */; };
 		9FBCFD591C6116AFEC871D19 /* DocumentEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 663A356725A88F611265AF96 /* DocumentEditingTests.swift */; };
 		A0C977C0069A3D69E4936487 /* GlyphLinesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 933CE8DF35DC968673A1FFCD /* GlyphLinesTests.swift */; };
 		A19335DE0BFC936889598E2D /* ToolPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */; };
+		A413F6AF560A16018A988D1F /* InlineTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7182941450B00A7B7523D7E9 /* InlineTextEditor.swift */; };
 		A844E2B9A520DB22C36D007B /* TileRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D671E13DDD6E967E359AC59 /* TileRendererTests.swift */; };
 		AAAD7C41A3BE44A1814E5DF3 /* garbage.pdf in Resources */ = {isa = PBXBuildFile; fileRef = D376F6746615A0D211777A9F /* garbage.pdf */; };
 		AED190AE7905336EF89ED5A4 /* TileMath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 333AE47B2FC7D5C0B9CA66F5 /* TileMath.swift */; };
+		B1E32822304C6BEB366F9151 /* NoteEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83135E856075D9367EB868 /* NoteEditorSheet.swift */; };
 		B8BEA77D0DE0B01E0C1A0DA3 /* SelectionHandleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B7AC6B84267DB9ACC157CB9 /* SelectionHandleView.swift */; };
 		BC40D99CCADBEE1084766945 /* SelectionWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 411BC18CF1E9EE12989DBBA8 /* SelectionWorker.swift */; };
 		BF1122270EA2EB45C3748482 /* PageScrollViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */; };
@@ -128,6 +133,7 @@
 		13DA569D4F944923F74FF9BA /* EditinPDFUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = EditinPDFUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		16F0B5557588EBB1C8642716 /* form.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = form.pdf; sourceTree = "<group>"; };
 		1A7CC6AA0FC49DEF665FDB7E /* OrganizeScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeScreen.swift; sourceTree = "<group>"; };
+		1A83135E856075D9367EB868 /* NoteEditorSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteEditorSheet.swift; sourceTree = "<group>"; };
 		1D7A79832AAD1D92FC1F4E8A /* sample.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = sample.pdf; sourceTree = "<group>"; };
 		1F41A6CBEBB600930F951039 /* OrganizeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeController.swift; sourceTree = "<group>"; };
 		1FC41F11AF49E48B5BDC9F86 /* OrganizeMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeMath.swift; sourceTree = "<group>"; };
@@ -155,6 +161,7 @@
 		520ABFCBB01B5ACD21E16F11 /* PageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageView.swift; sourceTree = "<group>"; };
 		531FCA150C659E74AADC8B53 /* PageLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageLayoutTests.swift; sourceTree = "<group>"; };
 		5381AF84FDD67972CC727B80 /* InkCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InkCaptureView.swift; sourceTree = "<group>"; };
+		55F9390D1B6826E2C418D6DD /* ShapeGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShapeGeometry.swift; sourceTree = "<group>"; };
 		5890ABDC3D59A1CB8A126264 /* TileMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileMathTests.swift; sourceTree = "<group>"; };
 		5B7AC6B84267DB9ACC157CB9 /* SelectionHandleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionHandleView.swift; sourceTree = "<group>"; };
 		64A29E7BABE7AB023F41655A /* PasswordSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasswordSheet.swift; sourceTree = "<group>"; };
@@ -163,10 +170,13 @@
 		6C8CB7C655ABDBB7F63EB993 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
 		6D671E13DDD6E967E359AC59 /* TileRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileRendererTests.swift; sourceTree = "<group>"; };
 		70E31D0F54FEE759D2B890E9 /* ViewerSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerSmokeTests.swift; sourceTree = "<group>"; };
+		7182941450B00A7B7523D7E9 /* InlineTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineTextEditor.swift; sourceTree = "<group>"; };
 		71D3B0AB0D03422F8570F999 /* ToolMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolMode.swift; sourceTree = "<group>"; };
+		73535509BE25BAED759B61E6 /* ShapeGeometryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShapeGeometryTests.swift; sourceTree = "<group>"; };
 		76F21D75399FE612FC1D81FA /* EditQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditQueue.swift; sourceTree = "<group>"; };
 		7A4310632D0D90390638FB56 /* StringsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StringsTests.swift; sourceTree = "<group>"; };
 		7D2EDFDB1AAB25268DF91544 /* PageOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageOverlayView.swift; sourceTree = "<group>"; };
+		821D1CC922347204C5013C04 /* ShapeDrawingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShapeDrawingTests.swift; sourceTree = "<group>"; };
 		8310CC2E867D5C492E8B65DC /* OrganizeControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeControllerTests.swift; sourceTree = "<group>"; };
 		872B29FBFB80D8E673D90592 /* EditFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditFailure.swift; sourceTree = "<group>"; };
 		8B6658CE4C759BBD49389820 /* PageTiledLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTiledLayerTests.swift; sourceTree = "<group>"; };
@@ -265,6 +275,8 @@
 				FC5419A246A2C541D4A71869 /* RotatedPageTests.swift */,
 				99DB16EDA82D406E4E0BC98F /* SearchControllerTests.swift */,
 				3DB0B3D43A2587473993B158 /* SelectionControllerTests.swift */,
+				821D1CC922347204C5013C04 /* ShapeDrawingTests.swift */,
+				73535509BE25BAED759B61E6 /* ShapeGeometryTests.swift */,
 				7A4310632D0D90390638FB56 /* StringsTests.swift */,
 				A251CBFBE6CA026DAF3F783A /* TextMarkupTests.swift */,
 				C886BE236F046F62791FDD5E /* ThumbnailStoreTests.swift */,
@@ -399,8 +411,11 @@
 				3CDF6776F0D3EB05CFEC0B1E /* AnnotationIndex.swift */,
 				5381AF84FDD67972CC727B80 /* InkCaptureView.swift */,
 				02686DFD4ACCF289D3E4BB2B /* InkGeometry.swift */,
+				7182941450B00A7B7523D7E9 /* InlineTextEditor.swift */,
 				BF165FC973AC8E834A0479C1 /* MarkupInteraction.swift */,
+				1A83135E856075D9367EB868 /* NoteEditorSheet.swift */,
 				BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */,
+				55F9390D1B6826E2C418D6DD /* ShapeGeometry.swift */,
 				71D3B0AB0D03422F8570F999 /* ToolMode.swift */,
 				28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */,
 			);
@@ -650,6 +665,8 @@
 				E2C018B702ACDE8FAD3D6153 /* RotatedPageTests.swift in Sources */,
 				CE2196BB96862118185A87D0 /* SearchControllerTests.swift in Sources */,
 				35C451C203BCC3592132D4B4 /* SelectionControllerTests.swift in Sources */,
+				90D1CBF93CAB09B61A17157B /* ShapeDrawingTests.swift in Sources */,
+				9D05688A773825CC910EE4F6 /* ShapeGeometryTests.swift in Sources */,
 				7CBBA7ECDDB055F0291A00ED /* StringsTests.swift in Sources */,
 				F1B92F5EA5A80BDBC8708C50 /* TextMarkupTests.swift in Sources */,
 				206E694BA5DB96C5B95002B8 /* ThumbnailStoreTests.swift in Sources */,
@@ -687,7 +704,9 @@
 				C25B3F488C382CD146BCD02B /* GlyphLines.swift in Sources */,
 				DB4F0A751960E1CBAEBC05B6 /* InkCaptureView.swift in Sources */,
 				9C3FDBEFCB6917CC9661D7D0 /* InkGeometry.swift in Sources */,
+				A413F6AF560A16018A988D1F /* InlineTextEditor.swift in Sources */,
 				3C29D037C106BB915B1E0CA5 /* MarkupInteraction.swift in Sources */,
+				B1E32822304C6BEB366F9151 /* NoteEditorSheet.swift in Sources */,
 				79BFA52DB07FEEA3ABACDCA0 /* OpenOutcome.swift in Sources */,
 				1073C409E61E635E09D2F082 /* OrganizeController.swift in Sources */,
 				FF1E8E482AC03968F6E4E2C9 /* OrganizeMath.swift in Sources */,
@@ -708,6 +727,7 @@
 				B8BEA77D0DE0B01E0C1A0DA3 /* SelectionHandleView.swift in Sources */,
 				44752728C47DA01CA1A5C7EA /* SelectionInteraction.swift in Sources */,
 				BC40D99CCADBEE1084766945 /* SelectionWorker.swift in Sources */,
+				23DDA4623643B33BE6C0587D /* ShapeGeometry.swift in Sources */,
 				991F199DE1FAAC91B076D798 /* Strings.swift in Sources */,
 				811F22A75C3D879FEDF10ADE /* ThumbnailStore.swift in Sources */,
 				4A83D1AB0DDAE61FD63BA9AF /* ThumbnailsSheet.swift in Sources */,

@@ -160,8 +160,11 @@ final class EditorSmokeTests: XCTestCase {
         button.tap()
         attach(app, "rotated-before")
         // The page is shown landscape (792 x 612 points), fitted to the width; its line of text,
-        // "Rotated page", runs down near the right edge, from the top of the page.
-        let start = pagePoint(CGPoint(x: 711, y: 60), pageWidth: 792, in: app)
+        // "Rotated page", runs down near the right edge, from 72 points below the top of the page. The
+        // drag starts on it: a finger 12 points above it is more than 8 points on screen off it on a
+        // tablet, and scrolls. (It used to start there and mark, because the drag began some 10 points
+        // along from where the finger went down; it now begins where the finger did.)
+        let start = pagePoint(CGPoint(x: 711, y: 80), pageWidth: 792, in: app)
         let end = pagePoint(CGPoint(x: 711, y: 150), pageWidth: 792, in: app)
         start.press(forDuration: 0.05, thenDragTo: end)
         XCTAssertTrue(app.buttons["undoButton"].waitForEnabled(timeout: 5), "the drag marked nothing")
@@ -292,6 +295,204 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 400, y: 250), pageWidth: 792, in: app).screenPoint, in: app),
                       "the drawing did not stay where it was drawn")
         attach(app, "ink-rotated")
+    }
+
+    /// Rectangle, Oval, Line and Arrow: one finger drags each out on the page, instead of scrolling it,
+    /// and it is added where it was dragged; each is a change Undo can take back.
+    func testDraggingOutShapesAddsThem() throws {
+        let app = launchAndOpen("sample.pdf")
+        let indicator = app.staticTexts["pageIndicator"]
+        expect(indicator, toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let undo = app.buttons["undoButton"]
+        // Each drag, and a point on the line it draws (page points of the first page).
+        let shapes: [(tool: String, from: CGPoint, to: CGPoint, onIt: CGPoint)] = [
+            ("rectangle", CGPoint(x: 150, y: 300), CGPoint(x: 450, y: 420), CGPoint(x: 151, y: 360)),
+            ("oval", CGPoint(x: 150, y: 450), CGPoint(x: 450, y: 560), CGPoint(x: 151, y: 505)),
+            ("line", CGPoint(x: 150, y: 600), CGPoint(x: 450, y: 600), CGPoint(x: 300, y: 600)),
+            ("arrow", CGPoint(x: 150, y: 700), CGPoint(x: 450, y: 640), CGPoint(x: 300, y: 670)),
+        ]
+        for shape in shapes {
+            let button = app.buttons["tool-\(shape.tool)"]
+            XCTAssertTrue(button.waitForEnabled(timeout: 5), "\(shape.tool) is disabled on a document that allows markup")
+            button.tap()
+            XCTAssertFalse(try isInked(around: pagePoint(shape.onIt, pageWidth: 612, in: app).screenPoint, in: app), "\(shape.tool): ink there already")
+            pagePoint(shape.from, pageWidth: 612, in: app).press(forDuration: 0.05, thenDragTo: pagePoint(shape.to, pageWidth: 612, in: app))
+            XCTAssertTrue(undo.waitForEnabled(timeout: 5), "dragging with \(shape.tool) added nothing")
+            sleep(1)
+            XCTAssertTrue(try isInked(around: pagePoint(shape.onIt, pageWidth: 612, in: app).screenPoint, in: app),
+                          "the \(shape.tool) is not where it was dragged")
+        }
+        XCTAssertEqual(indicator.label, "1 / 3", "one finger scrolled")
+        attach(app, "shapes")
+        undo.tap()
+        sleep(2)
+        XCTAssertFalse(try isInked(around: pagePoint(shapes[3].onIt, pageWidth: 612, in: app).screenPoint, in: app), "Undo left the arrow")
+        XCTAssertTrue(try isInked(around: pagePoint(shapes[2].onIt, pageWidth: 612, in: app).screenPoint, in: app), "Undo took more than the arrow")
+    }
+
+    /// Note: a tap opens the note sheet; what is written and cancelled changes nothing (typing there is
+    /// not a change to the document), and Save puts the note's icon where it was tapped. Text Box: a tap
+    /// puts a box to type in there, the keyboard comes up, and what is typed (two lines) is added
+    /// exactly where it was typed once a tap elsewhere ends it, at the first zoom and zoomed in.
+    func testTypingATextBoxAndWritingANote() throws {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let undo = app.buttons["undoButton"]
+
+        let note = app.buttons["tool-note"]
+        XCTAssertTrue(note.waitForEnabled(timeout: 5))
+        note.tap()
+        let noteText = app.textViews["noteText"]
+        let save = app.buttons["noteSaveButton"]
+        pagePoint(CGPoint(x: 450, y: 150), pageWidth: 612, in: app).tap()
+        XCTAssertTrue(noteText.waitForExistence(timeout: 5), "no note sheet")
+        dismissKeyboardIntroduction(in: app)
+        XCTAssertFalse(save.isEnabled, "nothing written to save")
+        noteText.typeText("Never mind")
+        app.buttons["noteCancelButton"].tap()
+        XCTAssertTrue(noteText.waitForNonExistence(timeout: 5), "Cancel left the sheet")
+        sleep(1)
+        XCTAssertFalse(undo.isEnabled, "writing in the note sheet and cancelling changed the document")
+        XCTAssertFalse(try isInked(around: pagePoint(CGPoint(x: 460, y: 160), pageWidth: 612, in: app).screenPoint, in: app),
+                       "a cancelled note was added")
+        pagePoint(CGPoint(x: 450, y: 150), pageWidth: 612, in: app).tap()
+        XCTAssertTrue(noteText.waitForExistence(timeout: 5), "no note sheet")
+        noteText.typeText("Check this")
+        XCTAssertTrue(save.waitForEnabled(timeout: 5))
+        attach(app, "note-sheet")
+        save.tap()
+        XCTAssertTrue(noteText.waitForNonExistence(timeout: 5), "the sheet stayed")
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "the note was not added")
+        sleep(2)
+        XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 460, y: 160), pageWidth: 612, in: app).screenPoint, in: app),
+                      "no note where it was tapped")
+
+        let textBox = app.buttons["tool-textBox"]
+        XCTAssertTrue(textBox.waitForEnabled(timeout: 5), "Text Box is disabled on an upright page")
+        textBox.tap()
+        let editor = app.textViews["inlineTextEditor"]
+        let at = pagePoint(CGPoint(x: 100, y: 150), pageWidth: 612, in: app)
+        try typeTextBox("Hello\nWorld", at: at, endingAt: pagePoint(CGPoint(x: 400, y: 500), pageWidth: 612, in: app), in: app)
+        XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 112, y: 176), pageWidth: 612, in: app).screenPoint, in: app),
+                      "no second line")
+        attach(app, "textbox-note")
+
+        // Zoomed in about twice, a text box lands where it is typed too.
+        let scrollView = app.scrollViews["pageScrollView"].firstMatch
+        scrollView.pinch(withScale: 2, velocity: 1)
+        sleep(1)
+        try typeTextBox("Zoomed\nin", at: scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.45)),
+                        endingAt: scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.3)), in: app)
+        attach(app, "textbox-zoomed")
+        XCTAssertFalse(editor.exists)
+    }
+
+    /// Taps `at` with Text Box picked, types `text`, and taps `end` to add it: what was typed is drawn,
+    /// once added, where it was typed (the dark pixels around it within a point).
+    private func typeTextBox(_ text: String, at: XCUICoordinate, endingAt end: XCUICoordinate, in app: XCUIApplication) throws {
+        at.tap()
+        let editor = app.textViews["inlineTextEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "no box to type in")
+        dismissKeyboardIntroduction(in: app)
+        editor.typeText(text)
+        XCTAssertTrue(app.buttons["doneDrawingButton"].waitForExistence(timeout: 5), "no Done while text waits")
+        sleep(1)
+        let area = editor.frame.insetBy(dx: -20, dy: -20)
+        let typed = try XCTUnwrap(try darkBox(in: area, of: app), "nothing typed shows")
+        attach(app, "textbox-typing")
+        end.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "the box stayed")
+        XCTAssertTrue(app.buttons["undoButton"].waitForEnabled(timeout: 5), "the text was not added")
+        sleep(2)
+        let added = try XCTUnwrap(try darkBox(in: area, of: app), "the text added does not show")
+        for (a, b) in [(typed.minX, added.minX), (typed.minY, added.minY), (typed.maxX, added.maxX), (typed.maxY, added.maxY)] {
+            XCTAssertEqual(a, b, accuracy: 1.5, "the text is not where it was typed: \(typed) then \(added)")
+        }
+    }
+
+    /// The box, in screen points, of the dark pixels (text) in `area` of the screen; nil when there are none.
+    private func darkBox(in area: CGRect, of app: XCUIApplication) throws -> CGRect? {
+        let image = try XCTUnwrap(app.screenshot().image.cgImage)
+        let scale = CGFloat(image.width) / app.frame.width
+        let crop = try XCTUnwrap(image.cropping(to: CGRect(x: area.minX * scale, y: area.minY * scale,
+                                                           width: area.width * scale, height: area.height * scale).integral))
+        let width = crop.width, height = crop.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?
+                .draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        var box = CGRect.null
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                if Int(pixels[i]) + Int(pixels[i + 1]) + Int(pixels[i + 2]) < 300 {
+                    box = box.union(CGRect(x: x, y: y, width: 1, height: 1))
+                }
+            }
+        }
+        guard !box.isNull else { return nil }
+        return CGRect(x: area.minX + box.minX / scale, y: area.minY + box.minY / scale, width: box.width / scale, height: box.height / scale)
+    }
+
+    /// Text still being typed (no tap elsewhere, no Done) when the reader goes back to the documents is
+    /// in the file: the document, opened again in a fresh launch of the app, shows it.
+    func testTextLeftBeingTypedIsKeptWhenTheDocumentIsClosed() throws {
+        let app = launchAndOpen("sample.pdf", as: "text-closed.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let textBox = app.buttons["tool-textBox"]
+        XCTAssertTrue(textBox.waitForEnabled(timeout: 5))
+        textBox.tap()
+        pagePoint(CGPoint(x: 100, y: 300), pageWidth: 612, in: app).tap()
+        let editor = app.textViews["inlineTextEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "no box to type in")
+        dismissKeyboardIntroduction(in: app)
+        editor.typeText("Kept")
+        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
+        back.tap()
+        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        sleep(2)
+
+        // A fresh launch, without staging the sample again: the file as saved.
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        openFromBrowser("text-closed.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        sleep(2)
+        XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 112, y: 309), pageWidth: 612, in: app).screenPoint, in: app),
+                      "the text left being typed was lost when the document closed")
+        attach(app, "text-kept-after-close")
+    }
+
+    /// On a turned page Text Box is off, and the palette says why; the note saying so takes no touch:
+    /// a rectangle dragged from under it is drawn (on a tablet, where it stands beside the tools over
+    /// the page).
+    func testTextBoxIsOffOnATurnedPageAndTheNoteDoesNotBlockThePage() throws {
+        let app = launchAndOpen("rotated.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let rectangle = app.buttons["tool-rectangle"]
+        XCTAssertTrue(rectangle.waitForEnabled(timeout: 5))
+        XCTAssertFalse(app.buttons["tool-textBox"].isEnabled, "Text Box is on on a turned page")
+        let note = app.staticTexts["textBoxNeedsUprightPage"]
+        XCTAssertTrue(note.waitForExistence(timeout: 5), "the palette does not say why")
+        rectangle.tap()
+        attach(app, "turned-page-palette")
+        let scrollView = app.scrollViews["pageScrollView"].firstMatch
+        // In the bottom bar (a compact width) the note is part of the bar; in the side palette (a
+        // regular width), whose tools stand one below the other, it stands over the page beside them.
+        guard app.buttons["tool-highlight"].frame.minY > app.buttons["tool-select"].frame.maxY - 1 else { return }
+        XCTAssertLessThan(note.frame.height, 160, "the note is as tall as the tools")
+        let start = scrollView.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: note.frame.midX - scrollView.frame.minX, dy: note.frame.midY - scrollView.frame.minY))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 160, dy: 120)))
+        XCTAssertTrue(app.buttons["undoButton"].waitForEnabled(timeout: 5), "a drag from under the note drew nothing")
+        attach(app, "turned-page-drag-under-note")
     }
 
     /// Whether the screen around `point` (a 9-point square) has ink on it: any pixel well away from

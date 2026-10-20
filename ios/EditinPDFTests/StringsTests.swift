@@ -158,5 +158,9 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.styleFontSize(14), "Font Size: 14 pt")
         XCTAssertEqual(Strings.styleFill, "Fill")
         XCTAssertEqual(Strings.styleSwatchNames, ["Black", "Gray", "Red", "Orange", "Yellow", "Green", "Blue", "Purple"])
+        XCTAssertEqual(Strings.noteTitle, "Note")
+        XCTAssertEqual(Strings.notePlaceholder, "Add a note")
+        XCTAssertEqual(Strings.save, "Save")
+        XCTAssertEqual(Strings.cancel, "Cancel")
     }
 }

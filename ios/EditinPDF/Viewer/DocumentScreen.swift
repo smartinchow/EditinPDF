@@ -155,6 +155,11 @@ struct DocumentScreen: View {
         )
     }
 
+    /// The note the note sheet is up for, while it is.
+    private var noteDraft: Binding<NoteDraft?> {
+        Binding(get: { model.noteDraft }, set: { model.noteDraft = $0 })
+    }
+
     /// Whether the alert about a change that was not made is up: while the model has one to show.
     private var showsEditFailure: Binding<Bool> {
         Binding(
@@ -237,6 +242,16 @@ struct DocumentScreen: View {
                     if let search = model.search {
                         SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
                     }
+                }
+                // A tap with Note opens its note here: Save adds or changes it (a refusal says why, as
+                // every change's does), Cancel leaves it as it was.
+                .sheet(item: noteDraft) { draft in
+                    NoteEditorSheet(draft: draft, save: { text in
+                        model.noteDraft = nil
+                        Task { await model.saveNote(draft, text: text) }
+                    }, cancel: {
+                        model.noteDraft = nil
+                    })
                 }
         case .locked:
             lockedScreen
@@ -334,29 +349,29 @@ struct DocumentScreen: View {
     }
 
     /// Takes back the last change. Changes stay tappable while one is being made: the model makes
-    /// them in order. Strokes drawn with Draw and waiting count as a change: Undo adds them, then
-    /// takes the drawing back.
+    /// them in order. Strokes drawn with Draw, or text typed in a text box, waiting count as a change:
+    /// Undo adds them, then takes them back.
     private var undoButton: some View {
         Button {
             model.undo()
         } label: {
             Label(Strings.undo, systemImage: "arrow.uturn.backward")
         }
-        .disabled(!canUndo && !model.hasPendingInk)
+        .disabled(!canUndo && !model.hasPendingMarkup)
         // ⌘Z on a hardware keyboard comes here, so strokes waiting are added first, as with a tap.
         .keyboardShortcut("z", modifiers: .command)
         .accessibilityIdentifier("undoButton")
     }
 
-    /// Makes again the change last taken back. Not while strokes drawn with Draw are waiting: they are
-    /// a change after it, and adding them leaves nothing to redo.
+    /// Makes again the change last taken back. Not while strokes drawn with Draw, or text typed in a
+    /// text box, are waiting: they are a change after it, and adding them leaves nothing to redo.
     private var redoButton: some View {
         Button {
             model.redo()
         } label: {
             Label(Strings.redo, systemImage: "arrow.uturn.forward")
         }
-        .disabled(!canRedo || model.hasPendingInk)
+        .disabled(!canRedo || model.hasPendingMarkup)
         .keyboardShortcut("z", modifiers: [.command, .shift])
         .accessibilityIdentifier("redoButton")
     }
