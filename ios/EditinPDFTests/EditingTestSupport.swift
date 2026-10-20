@@ -47,11 +47,63 @@ func isolatedModel(bytes: Data) -> DocumentModel {
 }
 
 /// A signature store in a folder of its own under the temporary folder, with nothing saved: a test that
-/// saves a signature saves it there, never in the app's Application Support.
+/// saves a signature saves it there, never in the app's Application Support. The folder is removed when
+/// the test that made it finishes (`TemporaryFolders`). `isProtectedDataAvailable` as the store's.
 @MainActor
-func isolatedSignatures() -> SignatureStore {
-    SignatureStore(directory: FileManager.default.temporaryDirectory
-        .appending(path: "EditinPDFTests-signatures/\(UUID().uuidString)", directoryHint: .isDirectory))
+func isolatedSignatures(isProtectedDataAvailable: @escaping @MainActor () -> Bool = { true }) -> SignatureStore {
+    let folder = FileManager.default.temporaryDirectory
+        .appending(path: "EditinPDFTests-signatures/\(UUID().uuidString)", directoryHint: .isDirectory)
+    TemporaryFolders.observer.add(folder)
+    return SignatureStore(directory: folder, isProtectedDataAvailable: isProtectedDataAvailable)
+}
+
+/// Removes, as each test finishes, the folders made for it (`add`): it watches the tests run, so a
+/// helper with no test case of its own to tear down with can still clean up after one.
+final class TemporaryFolders: NSObject, XCTestObservation, @unchecked Sendable {
+    /// The one watching, put to watch the first time it is asked for.
+    @MainActor static var observer: TemporaryFolders {
+        if let watching { return watching }
+        let made = TemporaryFolders()
+        XCTestObservationCenter.shared.addTestObserver(made)
+        watching = made
+        return made
+    }
+    @MainActor private static var watching: TemporaryFolders?
+
+    private let lock = NSLock()
+    private var folders: [URL] = []
+
+    /// `folder` is removed when the test running now finishes.
+    func add(_ folder: URL) {
+        lock.withLock { folders.append(folder) }
+    }
+
+    func testCaseDidFinish(_ testCase: XCTestCase) {
+        let made = lock.withLock { () -> [URL] in
+            defer { folders.removeAll() }
+            return folders
+        }
+        for folder in made { try? FileManager.default.removeItem(at: folder) }
+    }
+}
+
+// MARK: Signatures
+
+/// The box of all of `strokes`' points; null for none.
+func strokeBounds(_ strokes: [[CGPoint]]) -> CGRect {
+    let points = strokes.joined()
+    guard let first = points.first else { return .null }
+    return points.reduce(CGRect(origin: first, size: .zero)) { $0.union(CGRect(origin: $1, size: .zero)) }
+}
+
+/// A drawing far past what a signature keeps: a zigzag of 30,000 points, each 100 from the last, then
+/// 1,199 scribbles of 200 points (1,200 strokes, 269,800 points).
+func oversizedDrawing() -> [[CGPoint]] {
+    var strokes: [[CGPoint]] = [(0..<30_000).map { CGPoint(x: Double($0) * 0.02, y: $0 % 2 == 0 ? 0 : 100) }]
+    for i in 0..<1_199 {
+        strokes.append((0..<200).map { CGPoint(x: Double(i % 40) * 15 + Double($0 % 2) * 10, y: Double(i / 40) * 3 + Double($0) * 0.5) })
+    }
+    return strokes
 }
 
 /// The middle of the first glyph on page 0 of the model's document, in view space.

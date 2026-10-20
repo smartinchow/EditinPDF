@@ -125,7 +125,8 @@ struct SignaturePadSheet: View {
 
 /// The canvas of the signature pad: PencilKit, drawn on by a finger or the Apple Pencil with a black
 /// pen, over the pad's paper. It tells `drawing` of each change, and is emptied when `drawing` is.
-private struct SignatureCanvas: UIViewRepresentable {
+/// It takes no stroke after the `SignatureStore.maxStrokes`th: what the pad shows is what is saved.
+struct SignatureCanvas: UIViewRepresentable {
     @Binding var drawing: PKDrawing
 
     func makeUIView(context: Context) -> SignatureCanvasView {
@@ -163,6 +164,8 @@ private struct SignatureCanvas: UIViewRepresentable {
         let drawing: Binding<PKDrawing>
         /// Set while the canvas is emptied for Clear: the pad emptied its drawing already.
         var isClearing = false
+        /// Set while a stroke past the most a signature keeps is taken off again.
+        private var isTrimming = false
 
         init(drawing: Binding<PKDrawing>) {
             self.drawing = drawing
@@ -170,7 +173,14 @@ private struct SignatureCanvas: UIViewRepresentable {
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             // A drawing only moved or shrunk to stay in view is the same signature.
-            guard !isClearing, (canvasView as? SignatureCanvasView)?.isKeepingInView != true else { return }
+            guard !isClearing, !isTrimming, (canvasView as? SignatureCanvasView)?.isKeepingInView != true else { return }
+            // A stroke after the most a signature keeps goes as it is drawn, rather than be dropped
+            // from the signature unseen when it is saved.
+            if canvasView.drawing.strokes.count > SignatureStore.maxStrokes {
+                isTrimming = true
+                canvasView.drawing = PKDrawing(strokes: Array(canvasView.drawing.strokes.prefix(SignatureStore.maxStrokes)))
+                isTrimming = false
+            }
             drawing.wrappedValue = canvasView.drawing
         }
     }

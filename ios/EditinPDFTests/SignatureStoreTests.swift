@@ -15,13 +15,6 @@ final class SignatureStoreTests: XCTestCase {
         return directory
     }
 
-    /// The box of all of `strokes`' points.
-    private func bounds(_ strokes: [[CGPoint]]) -> CGRect {
-        let points = strokes.joined()
-        guard let first = points.first else { return .null }
-        return points.reduce(CGRect(origin: first, size: .zero)) { $0.union(CGRect(origin: $1, size: .zero)) }
-    }
-
     private func assertRect(_ rect: CGRect, equals expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
         for (got, want) in [(rect.minX, expected.minX), (rect.minY, expected.minY), (rect.width, expected.width), (rect.height, expected.height)] {
             XCTAssertEqual(got, want, accuracy: 1e-6, "\(rect) is not \(expected)", file: file, line: line)
@@ -111,12 +104,7 @@ final class SignatureStoreTests: XCTestCase {
     /// (500 strokes, 10,000 points a stroke, 100,000 in all): a long stroke and too many points are
     /// thinned (its ends kept), and strokes after the 500th are left out.
     func testABigDrawingStaysWellInsideTheBridgesCaps() throws {
-        // A zigzag of 30,000 points, each 100 from the last, then 1,199 scribbles of 200 points.
-        var strokes: [[CGPoint]] = [(0..<30_000).map { CGPoint(x: Double($0) * 0.02, y: $0 % 2 == 0 ? 0 : 100) }]
-        for i in 0..<1_199 {
-            strokes.append((0..<200).map { CGPoint(x: Double(i % 40) * 15 + Double($0 % 2) * 10, y: Double(i / 40) * 3 + Double($0) * 0.5) })
-        }
-        let s = try XCTUnwrap(SignatureStore.normalise(strokes))
+        let s = try XCTUnwrap(SignatureStore.normalise(oversizedDrawing()))
         XCTAssertLessThan(SignatureStore.maxStrokePoints, InkGeometry.maxStrokePoints)
         XCTAssertLessThan(SignatureStore.maxPoints, InkGeometry.maxDrawingPoints)
         XCTAssertLessThanOrEqual(SignatureStore.maxStrokes, InkGeometry.maxStrokes)
@@ -146,22 +134,22 @@ final class SignatureStoreTests: XCTestCase {
     func testAPlacementNearAnEdgeIsKeptOnThePage() throws {
         let s = try twoToOne()
         let page = CGSize(width: 612, height: 792)
-        assertRect(bounds(SignatureStore.place(s, centeredAt: CGPoint(x: 600, y: 5), width: 150, pageSize: page)),
+        assertRect(strokeBounds(SignatureStore.place(s, centeredAt: CGPoint(x: 600, y: 5), width: 150, pageSize: page)),
                    equals: CGRect(x: 462, y: 0, width: 150, height: 75))
-        assertRect(bounds(SignatureStore.place(s, centeredAt: CGPoint(x: -50, y: 900), width: 150, pageSize: page)),
+        assertRect(strokeBounds(SignatureStore.place(s, centeredAt: CGPoint(x: -50, y: 900), width: 150, pageSize: page)),
                    equals: CGRect(x: 0, y: 717, width: 150, height: 75))
-        assertRect(bounds(SignatureStore.place(s, centeredAt: CGPoint(x: CGFloat.nan, y: 400), width: 150, pageSize: page)),
+        assertRect(strokeBounds(SignatureStore.place(s, centeredAt: CGPoint(x: CGFloat.nan, y: 400), width: 150, pageSize: page)),
                    equals: CGRect(x: 231, y: 362.5, width: 150, height: 75))
     }
 
     /// On a page narrower or lower than the signature at the width asked for, it is shrunk to fit,
     /// keeping its proportions.
     func testASignatureLargerThanThePageIsShrunkToIt() throws {
-        assertRect(bounds(SignatureStore.place(try twoToOne(), centeredAt: CGPoint(x: 50, y: 50), width: 150, pageSize: CGSize(width: 100, height: 300))),
+        assertRect(strokeBounds(SignatureStore.place(try twoToOne(), centeredAt: CGPoint(x: 50, y: 50), width: 150, pageSize: CGSize(width: 100, height: 300))),
                    equals: CGRect(x: 0, y: 25, width: 100, height: 50))
         let tall = try XCTUnwrap(SignatureStore.normalise([[CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 100)]]))
         XCTAssertEqual(tall.aspect, 0.5, accuracy: 1e-9)
-        assertRect(bounds(SignatureStore.place(tall, centeredAt: CGPoint(x: 100, y: 40), width: 150, pageSize: CGSize(width: 300, height: 80))),
+        assertRect(strokeBounds(SignatureStore.place(tall, centeredAt: CGPoint(x: 100, y: 40), width: 150, pageSize: CGSize(width: 300, height: 80))),
                    equals: CGRect(x: 80, y: 0, width: 40, height: 80))
         XCTAssertTrue(SignatureStore.place(tall, centeredAt: .zero, width: 150, pageSize: .zero).isEmpty, "no page, no place")
         XCTAssertTrue(SignatureStore.place(tall, centeredAt: .zero, width: .nan, pageSize: CGSize(width: 300, height: 80)).isEmpty)
@@ -174,6 +162,7 @@ final class SignatureStoreTests: XCTestCase {
         await m.settle()
         XCTAssertEqual(m.pages[0].rotationDegrees, 90)
         let shown = CGSize(width: m.pages[0].widthPt, height: m.pages[0].heightPt)
+        XCTAssertEqual(shown, CGSize(width: 792, height: 612), "US Letter turned a quarter, as shown")
         // A signature as high as it is wide: its height follows the width, which follows the page's
         // width as shown, not as the file has it.
         let square = try XCTUnwrap(SignatureStore.normalise([[CGPoint(x: 0, y: 0), CGPoint(x: 80, y: 80)]]))
@@ -182,20 +171,29 @@ final class SignatureStoreTests: XCTestCase {
         let middle = CGPoint(x: shown.width / 2, y: shown.height / 2)
         let placed = SignatureStore.place(square, centeredAt: middle, width: width, pageSize: shown)
         let side = min(width, shown.height)
-        assertRect(bounds(placed), equals: CGRect(x: middle.x - side / 2, y: middle.y - side / 2, width: side, height: side))
+        assertRect(strokeBounds(placed), equals: CGRect(x: middle.x - side / 2, y: middle.y - side / 2, width: side, height: side))
         // Near the shown page's bottom-right corner it is kept on the page as shown.
-        let corner = bounds(SignatureStore.place(square, centeredAt: CGPoint(x: shown.width, y: shown.height), width: width, pageSize: shown))
+        let corner = strokeBounds(SignatureStore.place(square, centeredAt: CGPoint(x: shown.width, y: shown.height), width: width, pageSize: shown))
         XCTAssertEqual(corner.maxX, shown.width, accuracy: 1e-6)
         XCTAssertEqual(corner.maxY, shown.height, accuracy: 1e-6)
         // Placed through the model, it comes back from the file where it was put.
         try m.signatures.save(square)
         let tap = CGPoint(x: 200, y: 150)
-        let expected = bounds(try XCTUnwrap(m.signatureStrokes(onPage: 0, centeredAt: tap)))
+        let expected = strokeBounds(try XCTUnwrap(m.signatureStrokes(onPage: 0, centeredAt: tap)))
         let made = await m.addSignature(page: 0, at: tap)
         XCTAssertTrue(made)
         let ink = try XCTUnwrap(m.annotationIndex.annotations(onPage: 0).first)
         XCTAssertEqual(ink.kind, .ink)
         InkGeometryTests.assertBox(ink.rect, isAround: expected, width: SignatureStore.lineWidth)
+        // A tap near the shown page's right edge, past the file's own width (612): kept to the page as
+        // shown, it ends at 792, and comes back from the file there.
+        let nearTheEdge = try XCTUnwrap(m.signatureStrokes(onPage: 0, centeredAt: CGPoint(x: 780, y: 600)))
+        assertRect(strokeBounds(nearTheEdge), equals: CGRect(x: 642, y: 462, width: 150, height: 150))
+        let placedAtTheEdge = await m.addSignature(page: 0, at: CGPoint(x: 780, y: 600))
+        XCTAssertTrue(placedAtTheEdge)
+        let atTheEdge = try XCTUnwrap(m.annotationIndex.annotations(onPage: 0).max { $0.rect.x < $1.rect.x })
+        XCTAssertEqual(atTheEdge.rect.x + atTheEdge.rect.width / 2, 717, accuracy: 0.5)
+        InkGeometryTests.assertBox(atTheEdge.rect, isAround: strokeBounds(nearTheEdge), width: SignatureStore.lineWidth)
     }
 
     // MARK: The file
@@ -254,6 +252,57 @@ final class SignatureStoreTests: XCTestCase {
         // The simulator may not report a protection class; where it does, it is complete.
         let protection = try FileManager.default.attributesOfItem(atPath: file.path)[.protectionKey] as? FileProtectionType
         if let protection { XCTAssertEqual(protection, .complete) }
+    }
+
+    /// A file that is there but cannot be read (as while the device is locked, with its complete
+    /// protection) leaves the signature the store had; a store that never read one has none. A file
+    /// that is gone is no signature.
+    func testAFileThatCannotBeReadKeepsWhatTheStoreHad() throws {
+        let dir = temporaryDirectory()
+        let store = SignatureStore(directory: dir)
+        let s = try twoToOne()
+        try store.save(s)
+        let file = dir.appending(path: SignatureStore.fileName)
+        // Unreadable: no permission to read it, as a protected file is to a locked device.
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+        XCTAssertThrowsError(try Data(contentsOf: file), "the premise: the file cannot be read")
+        store.reload()
+        XCTAssertEqual(store.saved, s, "an unreadable file leaves what the store had")
+        XCTAssertNil(SignatureStore(directory: dir).saved, "a store that never read it has none")
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        try Data("not json".utf8).write(to: file)
+        store.reload()
+        XCTAssertNil(store.saved, "a file that is no signature is none")
+        try store.save(s)
+        try FileManager.default.removeItem(at: file)
+        store.reload()
+        XCTAssertNil(store.saved, "a file that is gone is none")
+    }
+
+    /// The folders a save makes: the ones the store's folder is in as the system makes them (with no
+    /// protection of the store's: Application Support is the app's, for more than this), then the
+    /// store's folder, completely protected. A save into folders that are not there yet makes them.
+    func testOnlyTheStoresOwnFolderIsMadeCompletelyProtected() throws {
+        let dir = SignatureStore.defaultDirectory
+        let folders = SignatureStore.folders(for: dir)
+        XCTAssertEqual(folders.count, 2)
+        XCTAssertEqual(folders.first?.url.standardizedFileURL.path, URL.applicationSupportDirectory.standardizedFileURL.path)
+        XCTAssertNil(folders.first?.protection, "Application Support is made as the system makes it")
+        XCTAssertEqual(folders.last, SignatureStore.Folder(url: dir, protection: .complete))
+        let parent = temporaryDirectory().appending(path: "Application Support", directoryHint: .isDirectory)
+        let nested = parent.appending(path: "Signature", directoryHint: .isDirectory)
+        try SignatureStore(directory: nested).save(try twoToOne())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: nested.appending(path: SignatureStore.fileName).path))
+        // The simulator may not report protection classes; where it does, the parent has none of ours.
+        let parentProtection = try FileManager.default.attributesOfItem(atPath: parent.path)[.protectionKey] as? FileProtectionType
+        XCTAssertNotEqual(parentProtection, .complete, "the folder the store's is in was made completely protected")
+    }
+
+    /// The file is written whole or not at all, with complete protection.
+    func testTheFileIsWrittenAtomicallyWithCompleteProtection() {
+        XCTAssertTrue(SignatureStore.writeOptions.contains(.atomic))
+        XCTAssertTrue(SignatureStore.writeOptions.contains(.completeFileProtection))
     }
 
     /// The app's store is in Application Support, in a folder of its own.

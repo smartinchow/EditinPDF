@@ -1,6 +1,7 @@
 import EditinPDFCore
 import PDFKit
 import PencilKit
+import SwiftUI
 import UIKit
 import XCTest
 @testable import EditinPDF
@@ -45,13 +46,6 @@ final class SigningTests: XCTestCase {
         return CGPoint(x: frame.minX + point.x * scale, y: frame.minY + point.y * scale)
     }
 
-    /// The box of all of `strokes`' points.
-    func bounds(_ strokes: [[CGPoint]]) -> CGRect {
-        let points = strokes.joined()
-        guard let first = points.first else { return .null }
-        return points.reduce(CGRect(origin: first, size: .zero)) { $0.union(CGRect(origin: $1, size: .zero)) }
-    }
-
     // MARK: Picking Sign, the pad
 
     /// With no signature saved, picking Sign opens the pad; with one, it does not, and Sign is picked
@@ -71,6 +65,75 @@ final class SigningTests: XCTestCase {
         XCTAssertFalse(m.showsSignaturePad, "a signature is saved: the next tap places it")
         m.pick(.ink)
         XCTAssertFalse(m.showsSignaturePad)
+    }
+
+    /// While the device is locked the file cannot be read, so "none saved" may only mean "none read":
+    /// picking Sign, or tapping with it, then leaves Sign picked without opening an empty pad. Unlocked,
+    /// the next pick reads the file, and opens the pad only when there is none.
+    func testWhileTheDeviceIsLockedNoEmptyPadOpens() async throws {
+        let device = Device()
+        let store = isolatedSignatures(isProtectedDataAvailable: { device.isUnlocked })
+        let m = DocumentModel(outcome: OpenOutcome(bytes: try fixtureData("sample")), toolStyles: isolatedToolStyles(), signatures: store)
+        await m.settle()
+        m.pick(.signature)
+        XCTAssertEqual(m.tool, .signature, "Sign stays picked")
+        XCTAssertFalse(m.showsSignaturePad, "no empty pad while the file cannot be read")
+        m.askForSignature()
+        XCTAssertFalse(m.showsSignaturePad, "nor for a tap")
+        // Saved meanwhile (another window, before the lock), and read once unlocked: no pad either.
+        try SignatureStore(directory: store.directory).save(try Self.squiggle())
+        device.isUnlocked = true
+        m.pick(.select)
+        m.pick(.signature)
+        XCTAssertEqual(m.signatures.saved, try Self.squiggle(), "picking Sign read the file again")
+        XCTAssertFalse(m.showsSignaturePad)
+        try m.signatures.delete()
+        m.pick(.signature)
+        XCTAssertTrue(m.showsSignaturePad, "unlocked, with none saved, the pad opens")
+    }
+
+    /// Change Signature (Sign's menu) opens the pad; Save there keeps the new signature in place of the
+    /// old, and the next tap places the new one.
+    func testChangeSignatureReplacesTheOneThatIsPlaced() async throws {
+        let (m, _) = try makeModel()
+        await m.settle()
+        let old = try XCTUnwrap(SignatureStore.normalise([[CGPoint(x: 0, y: 0), CGPoint(x: 200, y: 50)]]))   // 4:1
+        let new = try XCTUnwrap(SignatureStore.normalise([[CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 100)]]))  // 1:1
+        try m.signatures.save(old)
+        m.pick(.signature)
+        XCTAssertFalse(m.showsSignaturePad)
+        XCTAssertEqual(strokeBounds(try XCTUnwrap(m.signatureStrokes(onPage: 0, centeredAt: CGPoint(x: 300, y: 300)))).height, 37.5, accuracy: 1e-6)
+        m.changeSignature()
+        XCTAssertTrue(m.showsSignaturePad, "Change Signature opens the pad")
+        XCTAssertTrue(m.saveSignature(new))
+        XCTAssertFalse(m.showsSignaturePad)
+        XCTAssertEqual(SignatureStore(directory: m.signatures.directory).saved, new, "the new one is in the file")
+        let placed = await m.addSignature(page: 0, at: CGPoint(x: 300, y: 300))
+        XCTAssertTrue(placed)
+        let ink = try XCTUnwrap(m.annotationIndex.annotations(onPage: 0).first)
+        InkGeometryTests.assertBox(ink.rect, isAround: CGRect(x: 225, y: 225, width: 150, height: 150), width: SignatureStore.lineWidth)
+    }
+
+    /// The pad takes no stroke after the most a signature keeps: the one past it goes as it is drawn,
+    /// so what the pad shows is what is saved.
+    func testThePadTakesNoStrokePastTheMostASignatureKeeps() throws {
+        let pad = Pad()
+        let coordinator = SignatureCanvas.Coordinator(drawing: Binding(get: { pad.drawing }, set: { pad.drawing = $0 }))
+        let canvas = SignatureCanvasView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        let strokes = (0...SignatureStore.maxStrokes).map { i in
+            InkGeometryTests.stroke([CGPoint(x: 10 + Double(i % 50) * 7, y: 20 + Double(i / 50) * 25), CGPoint(x: 14 + Double(i % 50) * 7, y: 30 + Double(i / 50) * 25)])
+        }
+        canvas.drawing = PKDrawing(strokes: Array(strokes.prefix(SignatureStore.maxStrokes)))
+        coordinator.canvasViewDrawingDidChange(canvas)
+        XCTAssertEqual(pad.drawing.strokes.count, SignatureStore.maxStrokes, "up to the most, every stroke is taken")
+        canvas.drawing = PKDrawing(strokes: strokes)
+        coordinator.canvasViewDrawingDidChange(canvas)
+        XCTAssertEqual(canvas.drawing.strokes.count, SignatureStore.maxStrokes, "the stroke past the most is taken off the pad")
+        XCTAssertEqual(pad.drawing.strokes.count, SignatureStore.maxStrokes)
+        XCTAssertEqual(pad.drawing.strokes.last?.path.first?.location, strokes[SignatureStore.maxStrokes - 1].path.first?.location,
+                       "the strokes drawn first are the ones kept")
+        let signature = try XCTUnwrap(SignaturePadSheet.signature(of: pad.drawing))
+        XCTAssertEqual(signature.strokes.count, SignatureStore.maxStrokes, "what is saved is what is shown")
     }
 
     /// Save keeps the signature and puts the pad away; a save that fails says why and leaves the pad
@@ -170,22 +233,22 @@ final class SigningTests: XCTestCase {
         XCTAssertFalse(markup.takesTap(atContentPoint: try contentPoint(CGPoint(x: 300, y: 795), in: controller)), "the gap between pages")
         XCTAssertFalse(markup.takesTouch(atContentPoint: onPage), "a drag scrolls")
         let expected = try XCTUnwrap(model.signatureStrokes(onPage: 0, centeredAt: tap))
-        XCTAssertEqual(bounds(expected).midX, tap.x, accuracy: 1e-6)
-        XCTAssertEqual(bounds(expected).midY, tap.y, accuracy: 1e-6)
-        XCTAssertEqual(bounds(expected).width, 150, accuracy: 1e-6)
+        XCTAssertEqual(strokeBounds(expected).midX, tap.x, accuracy: 1e-6)
+        XCTAssertEqual(strokeBounds(expected).midY, tap.y, accuracy: 1e-6)
+        XCTAssertEqual(strokeBounds(expected).width, 150, accuracy: 1e-6)
 
         markup.place(atContentPoint: onPage)
         let overlay = try XCTUnwrap(controller.pageView(for: 0)).overlay
         XCTAssertEqual(overlay.signatures.count, 1, "drawn over the page at once")
-        let drawn = bounds(try XCTUnwrap(overlay.signatures.first).strokes)
-        for (got, want) in [(drawn.minX, bounds(expected).minX), (drawn.minY, bounds(expected).minY),
-                            (drawn.width, bounds(expected).width), (drawn.height, bounds(expected).height)] {
+        let drawn = strokeBounds(try XCTUnwrap(overlay.signatures.first).strokes)
+        for (got, want) in [(drawn.minX, strokeBounds(expected).minX), (drawn.minY, strokeBounds(expected).minY),
+                            (drawn.width, strokeBounds(expected).width), (drawn.height, strokeBounds(expected).height)] {
             XCTAssertEqual(got, want, accuracy: 1e-3, "drawn where it is placed")
         }
         await model.settle()
         let ink = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first)
         XCTAssertEqual(ink.kind, .ink)
-        InkGeometryTests.assertBox(ink.rect, isAround: bounds(expected), width: SignatureStore.lineWidth)
+        InkGeometryTests.assertBox(ink.rect, isAround: strokeBounds(expected), width: SignatureStore.lineWidth)
         XCTAssertEqual(undoManager.undoActionName, Strings.actionSign)
         XCTAssertFalse(model.showsSignaturePad)
         try await Task.sleep(for: MarkupInteraction.inkPreviewDuration + .milliseconds(300))
@@ -272,12 +335,8 @@ final class SigningTests: XCTestCase {
 
     /// A signature as big as the store keeps is one change the bridge takes.
     func testTheBiggestSignatureIsOneChangeTheBridgeTakes() async throws {
-        var strokes: [[CGPoint]] = [(0..<30_000).map { CGPoint(x: Double($0) * 0.02, y: $0 % 2 == 0 ? 0 : 100) }]
-        for i in 0..<1_199 {
-            strokes.append((0..<200).map { CGPoint(x: Double(i % 40) * 15 + Double($0 % 2) * 10, y: Double(i / 40) * 3 + Double($0) * 0.5) })
-        }
         let (m, u) = try makeModel()
-        try m.signatures.save(try XCTUnwrap(SignatureStore.normalise(strokes)))
+        try m.signatures.save(try XCTUnwrap(SignatureStore.normalise(oversizedDrawing())))
         let made = await m.addSignature(page: 0, at: CGPoint(x: 300, y: 300))
         XCTAssertTrue(made, String(describing: m.failure))
         XCTAssertEqual(m.annotationIndex.annotations(onPage: 0).count, 1)
@@ -335,4 +394,16 @@ final class SigningTests: XCTestCase {
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
         XCTAssertFalse(undoManager.canUndo)
     }
+}
+
+/// Whether the device is unlocked, as a test says.
+@MainActor
+private final class Device {
+    var isUnlocked = false
+}
+
+/// The pad's drawing, as the canvas tells it.
+@MainActor
+private final class Pad {
+    var drawing = PKDrawing()
 }

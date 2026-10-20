@@ -166,7 +166,7 @@ struct ToolPalette: View {
     private var signatureMenu: some View {
         Menu {
             Button {
-                model.showsSignaturePad = true
+                model.changeSignature()
             } label: {
                 Label(Strings.changeSignature, systemImage: "signature")
             }

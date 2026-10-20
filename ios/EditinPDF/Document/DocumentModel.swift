@@ -97,13 +97,10 @@ final class DocumentModel {
     let signatures: SignatureStore
 
     /// Picks `tool`, as the palette does. Sign picked with no signature saved opens the pad to draw
-    /// one (`showsSignaturePad`), where Sign may be used; with one saved, the next tap places it.
+    /// one (`askForSignature`), where Sign may be used; with one saved, the next tap places it.
     func pick(_ tool: Tool) {
         self.tool = tool
-        guard tool == .signature, canUse(.signature) else { return }
-        // Read again: the file may have been unreadable while the device was locked.
-        signatures.reload()
-        if signatures.saved == nil { showsSignaturePad = true }
+        if tool == .signature, canUse(.signature) { askForSignature() }
     }
 
     /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can
@@ -255,6 +252,22 @@ final class DocumentModel {
     /// Whether the pad the signature is drawn in is up: Sign picked or tapped with none saved opens it,
     /// so does Change Signature; Save (once the signature is kept) and Cancel put it away.
     var showsSignaturePad = false
+
+    /// Sign picked, or a page tapped with Sign, and no signature saved: the pad opens to draw one. Not
+    /// while the device is locked: its file cannot be read then, so "none saved" may only mean "none
+    /// read", and Sign stays picked without the pad (the next pick, unlocked, reads it). The file is
+    /// read again first: it may have been unreadable when the store first read it.
+    func askForSignature() {
+        guard signatures.isProtectedDataAvailable() else { return }
+        signatures.reload()
+        if signatures.saved == nil { showsSignaturePad = true }
+    }
+
+    /// Change Signature, in Sign's menu: the pad opens to draw the signature again; Save keeps the new
+    /// one in place of the old (`saveSignature`), and the next tap places it.
+    func changeSignature() {
+        showsSignaturePad = true
+    }
 
     /// The saved signature as it would be placed on `page`, centred on `point` (view space), at its
     /// default width for the page as shown (`SignatureStore.defaultWidth`, `place`); nil with none saved,

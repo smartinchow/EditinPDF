@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Observation
+import UIKit
 
 /// A signature as it is kept: its strokes, each the points it passes through, from 0 to 1 across and
 /// down a box `aspect` times as wide as it is high. Placed on a page (`SignatureStore.place`), the box
@@ -32,7 +33,8 @@ struct SavedSignature: Codable, Equatable, Sendable {
 /// It is kept on the device only, in a file of the app's own (`signature.json` in `directory`, by
 /// default Application Support/Signature): written whole or not at all, readable only while the device
 /// is unlocked (complete file protection), and in a folder left out of backups. It is never logged and
-/// never sent anywhere. A file that cannot be read as a signature reads as none.
+/// never sent anywhere. A file that cannot be read as a signature (damaged, or not one the store makes)
+/// reads as none; one that cannot be read at all (the device locked) leaves what the store had.
 ///
 /// Observable, so the palette sees at once whether one is saved.
 @MainActor
@@ -61,6 +63,8 @@ final class SignatureStore {
     nonisolated static let lineWidth: Double = 1.5
     /// The name of the file in the store's folder.
     nonisolated static let fileName = "signature.json"
+    /// How the file is written: whole or not at all, and readable only while the device is unlocked.
+    nonisolated static let writeOptions: Data.WritingOptions = [.atomic, .completeFileProtection]
 
     /// Where the app keeps its signature: Application Support/Signature.
     nonisolated static var defaultDirectory: URL {
@@ -75,24 +79,34 @@ final class SignatureStore {
     @ObservationIgnored let directory: URL
     /// The signature saved; nil when there is none, or its file cannot be read as one.
     private(set) var saved: SavedSignature?
+    /// Whether files with complete protection can be read now: not while the device is locked. The
+    /// app's is the system's (`UIApplication.isProtectedDataAvailable`); a test's says what it is told.
+    @ObservationIgnored let isProtectedDataAvailable: @MainActor () -> Bool
 
     enum StoreError: Error {
         /// The signature is not one the store makes (`SavedSignature.isValid`): it is not saved.
         case invalid
     }
 
-    /// The store of the file in `directory`, read now.
-    init(directory: URL) {
+    /// The store of the file in `directory`, read now (none, when it cannot be read).
+    init(directory: URL, isProtectedDataAvailable: @escaping @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }) {
         self.directory = directory
-        saved = Self.read(directory.appending(path: Self.fileName))
+        self.isProtectedDataAvailable = isProtectedDataAvailable
+        if case .signature(let signature) = Self.read(directory.appending(path: Self.fileName)) { saved = signature }
     }
 
     private var fileURL: URL { directory.appending(path: Self.fileName) }
 
     /// Reads the file again: it may not have been readable before (the device locked, with the file's
-    /// protection) or have changed since.
+    /// protection) or have changed since. A file that cannot be read now leaves the signature the store
+    /// had; one that is gone, or is no signature, leaves none.
     func reload() {
-        let read = Self.read(fileURL)
+        let read: SavedSignature?
+        switch Self.read(fileURL) {
+        case .unreadable: return
+        case .none: read = nil
+        case .signature(let signature): read = signature
+        }
         if read != saved { saved = read }
     }
 
@@ -102,14 +116,31 @@ final class SignatureStore {
     func save(_ signature: SavedSignature) throws {
         guard signature.isValid else { throw StoreError.invalid }
         let files = FileManager.default
-        try files.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
+        for folder in Self.folders(for: directory) {
+            let attributes: [FileAttributeKey: Any] = folder.protection.map { [.protectionKey: $0] } ?? [:]
+            try files.createDirectory(at: folder.url, withIntermediateDirectories: true, attributes: attributes)
+        }
         var folder = directory
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         try folder.setResourceValues(values)
         let data = try JSONEncoder().encode(signature)
-        try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        try data.write(to: fileURL, options: Self.writeOptions)
         saved = signature
+    }
+
+    /// A folder `save` makes, if it is not there, and the protection it makes it with (none: the
+    /// system's default).
+    struct Folder: Equatable {
+        let url: URL
+        let protection: FileProtectionType?
+    }
+
+    /// The folders `save` makes for `directory`, in order: the folders it is in, as the system makes
+    /// them (Application Support is the app's, for more than the signature), then `directory` itself,
+    /// completely protected. (Made in one go, the folders it is in would be given its protection too.)
+    nonisolated static func folders(for directory: URL) -> [Folder] {
+        [Folder(url: directory.deletingLastPathComponent(), protection: nil), Folder(url: directory, protection: .complete)]
     }
 
     /// Forgets the saved signature: its file goes. Nothing saved, nothing happens. Signatures already
@@ -123,11 +154,27 @@ final class SignatureStore {
         saved = nil
     }
 
-    /// The signature in `file`; nil when there is none, or it cannot be read as one.
-    private nonisolated static func read(_ file: URL) -> SavedSignature? {
-        guard let data = try? Data(contentsOf: file),
-              let signature = try? JSONDecoder().decode(SavedSignature.self, from: data), signature.isValid else { return nil }
-        return signature
+    /// What reading a file found.
+    private enum Read {
+        /// No signature: no file, or one that is not a signature the store makes.
+        case none
+        /// A file that could not be read (protected while the device is locked, say).
+        case unreadable
+        case signature(SavedSignature)
+    }
+
+    /// What is in `file`.
+    private nonisolated static func read(_ file: URL) -> Read {
+        let data: Data
+        do {
+            data = try Data(contentsOf: file)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return .none
+        } catch {
+            return .unreadable
+        }
+        guard let signature = try? JSONDecoder().decode(SavedSignature.self, from: data), signature.isValid else { return .none }
+        return .signature(signature)
     }
 
     // MARK: Normalising and placing

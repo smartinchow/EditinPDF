@@ -488,7 +488,7 @@ final class MarkupInteraction: NSObject {
     @discardableResult
     func placeSignature(onPage page: Int, at point: CGPoint) -> Task<Bool, Never>? {
         guard model.signatures.saved != nil else {
-            model.showsSignaturePad = true
+            model.askForSignature()
             return nil
         }
         guard let strokes = model.signatureStrokes(onPage: page, centeredAt: point) else { return nil }

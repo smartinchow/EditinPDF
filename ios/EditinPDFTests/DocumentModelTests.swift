@@ -49,7 +49,7 @@ final class DocumentModelTests: XCTestCase {
         let bytes = try fixture()
         // The engine's open is the slow part; the document scene runs it off the main actor.
         let outcome = await Task.detached { OpenOutcome(bytes: bytes) }.value
-        let m = DocumentModel(outcome: outcome)
+        let m = DocumentModel(outcome: outcome, signatures: isolatedSignatures())
         guard case .open = m.state else { return XCTFail("expected open, got \(m.state)") }
         XCTAssertEqual(m.pageCount, 1)
     }
@@ -69,7 +69,7 @@ final class DocumentModelTests: XCTestCase {
     func testTheModelTakesItsPagesFromTheOutcome() throws {
         let document = try PdfDocument.open(bytes: try fixture(), password: nil)
         let pages = [PageInfo(index: 0, widthPt: 100, heightPt: 50, rotationDegrees: 0, label: "i")]
-        let m = DocumentModel(outcome: .open(document, pages: pages))
+        let m = DocumentModel(outcome: .open(document, pages: pages), signatures: isolatedSignatures())
         XCTAssertEqual(m.pages, pages)
         XCTAssertTrue(m.document() === document)
     }
