@@ -112,7 +112,8 @@ final class TextBoxInteraction: NSObject {
         textEditor = nil
         editor.delegate = nil
         model.pendingTextDidChange(false)
-        let text = editor.text ?? ""
+        // Held to the limit again: a character being composed when the box ended was not cut yet.
+        let text = ShapeGeometry.limitedText(editor.text ?? "")
         let committed = ShapeGeometry.committedText(text)
         let changes = editor.isWaiting
         editor.resignFirstResponder()
@@ -168,10 +169,12 @@ final class TextBoxInteraction: NSObject {
 // MARK: - UITextViewDelegate
 
 extension TextBoxInteraction: UITextViewDelegate {
-    /// Text was typed in the box: it grows with it, is kept clear of the keyboard, and the model hears
-    /// whether there is text waiting (the palette's Done). What is typed is never logged.
+    /// Text was typed in the box: it is kept within what a text box takes (`holdToTextLimit`), grows
+    /// with it, is kept clear of the keyboard, and the model hears whether there is text waiting (the
+    /// palette's Done). What is typed is never logged.
     func textViewDidChange(_ textView: UITextView) {
         guard let editor = textView as? InlineTextEditor, editor === textEditor else { return }
+        editor.holdToTextLimit()
         model.pendingTextDidChange(editor.isWaiting)
         layoutTextEditor()
         keyboard.reveal()

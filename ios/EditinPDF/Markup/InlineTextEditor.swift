@@ -105,6 +105,25 @@ final class InlineTextEditor: UITextView {
         textContainerInset = UIEdgeInsets(top: max(0, baseline - (spacing + font.descender)), left: inset, bottom: 0, right: inset)
     }
 
+    /// Cuts what is typed to the most a text box takes (`ShapeGeometry.maxTextLength`), as a form
+    /// field's editor is cut to its field's limit: what goes past it is let go of, so the reader is
+    /// never refused. Not while a character is being composed, which the cut could break up. Cut at the
+    /// end, which keeps the type's look; the box's own undo history is let go of with it, since it
+    /// may name text that is no longer there.
+    func holdToTextLimit() {
+        guard markedTextRange == nil else { return }
+        let typed = text ?? ""
+        let limited = ShapeGeometry.limitedText(typed)
+        guard limited != typed else { return }
+        // `limited` is the start of `typed`, so its length in UTF-16 is where the cut goes.
+        let end = (limited as NSString).length
+        let selected = selectedRange
+        textStorage.deleteCharacters(in: NSRange(location: end, length: textStorage.length - end))
+        let start = min(selected.location, end)
+        selectedRange = NSRange(location: start, length: min(selected.location + selected.length, end) - start)
+        localUndo.removeAllActions()
+    }
+
     /// Takes the tint off, for the picture of the text shown while it is added (over a text box on the
     /// page, the white stays: it hides the text as it was until the page shows the new).
     func showAsAdded() {

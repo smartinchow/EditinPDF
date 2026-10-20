@@ -98,6 +98,104 @@ final class DocumentEditingTests: XCTestCase {
         XCTAssertEqual(m.pages[0].rotationDegrees, 0); XCTAssertEqual(m.revision, 2)
     }
 
+    /// The engine keeps the last 100 changes; the undo manager keeps them all. Undoing past the
+    /// engine's history finds nothing to undo there: that change is taken off quietly, no alert, and
+    /// what can be redone stays.
+    func testUndoingPastTheEnginesHundredChangesIsQuietAndKeepsTheRedos() async throws {
+        let m = isolatedModel(bytes: try blankDocument(widthPt: 200, heightPt: 200))
+        let u = UndoManager()
+        m.undoManager = u
+        u.groupsByEvent = false
+        await m.settle()
+        for _ in 0..<101 {
+            let turned = await change(m, u, [.rotatePages(pages: [0], degrees: 90)])
+            XCTAssertTrue(turned)
+        }
+        XCTAssertEqual(m.revision, 101)
+        for _ in 0..<101 {
+            u.undo()
+            await m.settle()
+        }
+        XCTAssertNil(m.failure, "no alert")
+        XCTAssertFalse(u.canUndo, "the change the engine no longer has is off the undo manager")
+        XCTAssertEqual(m.revision, 201, "100 undone; the last undo changed nothing")
+        XCTAssertEqual(m.pages[0].rotationDegrees, 90, "the oldest turn stays")
+        var redone = 0
+        while u.canRedo, redone < 200 {
+            u.redo()
+            await m.settle()
+            redone += 1
+        }
+        XCTAssertEqual(redone, 100, "every change undone can be redone")
+        XCTAssertNil(m.failure)
+        XCTAssertEqual(m.revision, 301)
+    }
+
+    /// A change that fails half way may have changed the document (`Failed` moves the revision on), so
+    /// the engine's history may no longer match the undo manager's stack: no change is left on it, as
+    /// when an undo fails.
+    func testAChangeThatFailsHalfWayTakesEveryChangeOffTheUndoManager() async throws {
+        let (m, u) = try await makeFailingModel(failing: .setInfo)
+        let turned = await change(m, u, [.rotatePages(pages: [0], degrees: 90)])
+        XCTAssertTrue(turned)
+        XCTAssertTrue(u.canUndo)
+        let titled = await change(m, u, [.setInfo(key: "Title", value: "x")], named: "Set the title")
+        XCTAssertFalse(titled)
+        XCTAssertNotNil(m.failure)
+        XCTAssertEqual(m.revision, 2, "the document was read again at the revision the failure left")
+        XCTAssertFalse(u.canUndo, "no change is left on the undo manager")
+        XCTAssertEqual(m.pages[0].rotationDegrees, 90)
+    }
+
+    /// A signed document whose file is damaged cannot be changed (saving would rewrite it and break its
+    /// signatures): every tool says so in one sentence of ours. Either alone changes nothing.
+    func testASignedDocumentWhoseFileIsDamagedSaysWhyNothingCanBeChanged() async throws {
+        let m = isolatedModel(bytes: handMadePDF(signed: true, damaged: true))
+        await m.settle()
+        let capabilities = try XCTUnwrap(m.capabilities)
+        XCTAssertTrue(capabilities.isSigned && capabilities.rewritesOnSave)
+        XCTAssertFalse(capabilities.canEdit || capabilities.canAnnotate || capabilities.canOrganize || capabilities.canFillForms)
+        XCTAssertEqual(m.signatureLock, Strings.signedDocumentDamaged)
+        for tool in Tool.allCases where tool.annotates {
+            XCTAssertEqual(m.refusal(of: tool), Strings.signedDocumentDamaged, "\(tool)")
+        }
+        XCTAssertNil(m.refusal(of: .select))
+        let filled = await m.fill("signature", with: .text(text: "x"))
+        XCTAssertFalse(filled)
+        XCTAssertEqual(m.failure?.message, Strings.signedDocumentDamaged)
+        XCTAssertTrue(OrganizeController(model: m).organizeIsRefused)
+
+        for (signed, damaged) in [(true, false), (false, true)] {
+            let other = isolatedModel(bytes: handMadePDF(signed: signed, damaged: damaged))
+            await other.settle()
+            XCTAssertEqual(other.capabilities?.rewritesOnSave, damaged)
+            XCTAssertEqual(other.capabilities?.canAnnotate, true, "signed \(signed), damaged \(damaged)")
+            XCTAssertNil(other.signatureLock)
+            XCTAssertNil(other.refusal(of: .ink))
+        }
+    }
+
+    /// What the text box and note editors hold their text to is what the bridge takes: a note of that
+    /// many characters is added; the bridge would refuse one more.
+    func testTheEditorsTextLimitIsTheBridges() async throws {
+        XCTAssertEqual(ShapeGeometry.maxTextLength, Int(maxTextChars()))
+        XCTAssertEqual(ShapeGeometry.maxTextLength, 100_000)
+        let long = String(repeating: "é", count: ShapeGeometry.maxTextLength + 5)
+        let limited = ShapeGeometry.limitedText(long)
+        XCTAssertEqual(limited.unicodeScalars.count, ShapeGeometry.maxTextLength)
+        XCTAssertTrue(long.hasPrefix(limited))
+        // Whole characters: an emoji of several scalars that does not fit is left out whole.
+        let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
+        let edge = String(repeating: "a", count: ShapeGeometry.maxTextLength - 2) + family
+        XCTAssertEqual(ShapeGeometry.limitedText(edge), String(repeating: "a", count: ShapeGeometry.maxTextLength - 2))
+
+        let (m, _) = try makeModel()
+        let added = await m.addNote(page: 0, at: CGPoint(x: 100, y: 100), contents: limited)
+        XCTAssertTrue(added)
+        XCTAssertNil(m.failure)
+        XCTAssertEqual(m.annotationsByPage[0]?.first?.contents?.unicodeScalars.count, ShapeGeometry.maxTextLength)
+    }
+
     // MARK: Beyond the brief's tests
 
     /// Two edits made against the same revision: the second was computed for a document that has
@@ -163,12 +261,25 @@ final class DocumentEditingTests: XCTestCase {
 
     /// An engine undo that fails (here the engine has nothing left to undo, behind the undo
     /// manager's back) says so and empties the undo manager, whose stack no longer matches.
+    /// An undo the engine fails at (here once it has taken the change back, as it can) means its history
+    /// and the undo manager's stack no longer match: the reader is told, and the stack is emptied.
     func testAFailingUndoShowsItAndClearsTheUndoStack() async throws {
+        let (m, u) = try await makeFailingModel(failing: .undo)
+        for _ in 0..<2 { await change(m, u, [.rotatePages(pages: [0], degrees: 90)]) }
+        u.undo(); await m.settle()
+        XCTAssertNotNil(m.failure)
+        XCTAssertFalse(u.canUndo); XCTAssertFalse(u.canRedo)
+        XCTAssertEqual(m.revision, 3, "the document was read again at the revision the failure left")
+    }
+
+    /// An undo the engine has no step for (its history moved without the model here; past its 100
+    /// changes in use) is no failure: only that change goes, quietly.
+    func testAnUndoTheEngineHasNoStepForIsQuiet() async throws {
         let (m, u) = try makeModel()
         await m.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
         _ = try XCTUnwrap(m.document()).undo()
         u.undo(); await m.settle()
-        XCTAssertNotNil(m.failure)
+        XCTAssertNil(m.failure)
         XCTAssertFalse(u.canUndo); XCTAssertFalse(u.canRedo)
     }
 

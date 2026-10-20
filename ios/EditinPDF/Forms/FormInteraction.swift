@@ -219,7 +219,7 @@ final class FormInteraction: NSObject {
         let action = FormFilling.action(for: field, widget: widget)
         guard action != .none else { return }
         guard model.canFillForms else {
-            model.failure = EditFailure(message: Strings.formNotAllowed)
+            model.failure = EditFailure(message: model.signatureLock ?? Strings.formNotAllowed)
             return
         }
         let label = FormFilling.label(of: field, widget: widget)

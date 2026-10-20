@@ -128,3 +128,98 @@ func info(page: Int = 0, index: UInt32, rect: CGRect = CGRect(x: 0, y: 0, width:
 func info(page: Int = 0, index: UInt32, y: CGFloat) -> AnnotationInfo {
     info(page: page, index: index, rect: CGRect(x: 0, y: y, width: 10, height: 10))
 }
+
+// MARK: Hand-made documents
+
+/// A one-page PDF (US Letter) written here, with one form field, `signature`: a signature field that
+/// holds a signature when `signed` (the engine counts the document as signed; the signature is not a
+/// valid one), and an empty text field otherwise. When `damaged`, its `startxref` points past the
+/// end of the file, so the engine rebuilds its cross-reference data as it opens it, and saving
+/// writes the file out in full (`EditCapabilities.rewritesOnSave`).
+func handMadePDF(signed: Bool, damaged: Bool) -> Data {
+    let field = signed
+        ? "/FT /Sig /T (signature) /V << /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 0 0 0] /Contents <00> >>"
+        : "/FT /Tx /T (signature)"
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [4 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /Rect [100 100 300 150] /P 3 0 R \(field) >>",
+    ]
+    var pdf = "%PDF-1.4\n"
+    var offsets: [Int] = []
+    for (number, body) in objects.enumerated() {
+        offsets.append(pdf.utf8.count)
+        pdf += "\(number + 1) 0 obj\n\(body)\nendobj\n"
+    }
+    let table = pdf.utf8.count
+    pdf += "xref\n0 \(objects.count + 1)\n0000000000 65535 f \n"
+    for offset in offsets { pdf += String(format: "%010d 00000 n \n", offset) }
+    let startxref = damaged ? 9_999_999 : table
+    pdf += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(startxref)\n%%EOF\n"
+    return Data(pdf.utf8)
+}
+
+// MARK: A document that fails
+
+/// The engine document `real` is, except for the calls `failing` names, which fail once the engine has
+/// made them, as a change, an undo or a redo can fail half way (`EditError.Failed`: the bridge's
+/// revision has moved on all the same). It shares `real`'s engine document.
+final class FailingDocument: PdfDocument, @unchecked Sendable {
+    /// Which calls fail.
+    enum Failing: Sendable {
+        /// Every `setInfo` change.
+        case setInfo
+        /// Every undo.
+        case undo
+    }
+
+    let failing: Failing
+
+    init(wrapping real: PdfDocument, failing: Failing) {
+        self.failing = failing
+        super.init(unsafeFromHandle: real.uniffiCloneHandle())
+    }
+
+    required init(unsafeFromHandle handle: UInt64) {
+        failing = .setInfo
+        super.init(unsafeFromHandle: handle)
+    }
+
+    override func apply(edit: Edit, baseRevision: UInt64) throws -> EditOutcome {
+        let outcome = try super.apply(edit: edit, baseRevision: baseRevision)
+        if failing == .setInfo, case .setInfo = edit { throw EditError.Failed(message: "failed after the change was made") }
+        return outcome
+    }
+
+    override func undo() throws -> EditOutcome {
+        let outcome = try super.undo()
+        if failing == .undo { throw EditError.Failed(message: "failed after the change was taken back") }
+        return outcome
+    }
+}
+
+/// A model of `<fixture>.pdf` whose engine document fails as `failing` says (`FailingDocument`), with a
+/// fresh `UndoManager` of its own wired in that groups only what the test groups (`groupsByEvent` off).
+@MainActor
+func makeFailingModel(fixture: String = "sample", failing: FailingDocument.Failing) async throws -> (DocumentModel, UndoManager) {
+    let document = FailingDocument(wrapping: try PdfDocument.open(bytes: try fixtureData(fixture), password: nil), failing: failing)
+    let pages = (0..<document.pageCount()).compactMap { document.pageInfo(page: $0) }
+    let model = DocumentModel(outcome: .open(document, pages: pages), toolStyles: isolatedToolStyles(), signatures: isolatedSignatures())
+    let undoManager = UndoManager()
+    undoManager.groupsByEvent = false
+    model.undoManager = undoManager
+    await model.settle()
+    return (model, undoManager)
+}
+
+/// Hands `edits` over as one change in an undo group of its own, as one tap does, and says whether it
+/// was made.
+@MainActor
+@discardableResult
+func change(_ model: DocumentModel, _ undoManager: UndoManager, _ edits: [Edit], named name: String = Strings.actionRotate) async -> Bool {
+    undoManager.beginUndoGrouping()
+    let made = model.enqueue(edits, named: name, touching: nil)
+    undoManager.endUndoGrouping()
+    return await made.value
+}

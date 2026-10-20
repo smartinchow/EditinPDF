@@ -344,6 +344,23 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertTrue(markup.textBoxes.textPreviews.isEmpty)
     }
 
+    /// What is typed or pasted in a text box is held to what the bridge takes (`ShapeGeometry.maxTextLength`):
+    /// what goes past it is let go of, and the text box is added with the rest, never refused.
+    func testATextBoxIsHeldToTheTextLimit() async throws {
+        let (controller, model, _) = await makeController(tool: .textBox)
+        let markup = controller.markupInteraction
+        markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 200), in: controller))
+        let editor = try XCTUnwrap(markup.textBoxes.textEditor)
+        type(String(repeating: "a", count: ShapeGeometry.maxTextLength + 10), into: editor)
+        XCTAssertEqual(editor.text.unicodeScalars.count, ShapeGeometry.maxTextLength)
+        XCTAssertTrue(model.hasPendingText)
+        pick(.select, in: model, controller)
+        await model.settle()
+        XCTAssertNil(model.failure)
+        let box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first)
+        XCTAssertEqual(box.contents?.unicodeScalars.count, ShapeGeometry.maxTextLength)
+    }
+
     /// A tap on the page while a box is being typed in ends it (its text is added) and starts none.
     func testATapWhileTypingEndsTheTextBox() async throws {
         let (controller, model, _) = await makeController(tool: .textBox)

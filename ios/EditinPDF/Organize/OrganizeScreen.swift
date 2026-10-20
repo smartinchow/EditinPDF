@@ -144,7 +144,7 @@ struct OrganizeScreen: View {
     /// Says why nothing can be changed, for a document that does not allow it.
     @ViewBuilder private var notAllowedFooter: some View {
         if controller.organizeIsRefused || (model.isEncrypted && controller.canExtract) {
-            Text(controller.organizeIsRefused ? Strings.organizeNotAllowed : Strings.extractUnprotectedNote)
+            Text(controller.organizeIsRefused ? (model.signatureLock ?? Strings.organizeNotAllowed) : Strings.extractUnprotectedNote)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

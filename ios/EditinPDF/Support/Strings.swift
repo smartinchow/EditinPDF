@@ -211,6 +211,12 @@ enum Strings {
         String(localized: "This document doesn't allow that change.", comment: "Shown when the PDF's security settings or format do not allow the change")
     }
 
+    /// Why nothing in a signed document may be changed: its file is damaged, so saving any change would
+    /// rewrite the whole file and break its signatures. Said in place of each tool's own refusal.
+    static var signedDocumentDamaged: String {
+        String(localized: "This signed document is damaged. Changing it would break its signatures.", comment: "Shown in place of the markup, organize and form refusals for a digitally signed PDF whose file is damaged: saving any change would rewrite the file and break its signatures")
+    }
+
     /// Why a delete was not made: it would have removed every page.
     static var cannotDeleteAllPages: String {
         String(localized: "A document needs at least one page.", comment: "Shown when deleting the chosen pages would leave the PDF without a page")

@@ -98,7 +98,13 @@ enum FormFilling {
     /// more), counted as the engine counts them, in Unicode scalars, and cut between whole characters:
     /// a character that does not fit whole is left out with what follows it.
     static func limited(_ text: String, to maxLength: Int?) -> String {
-        let most = max(0, min(maxLength ?? maxTextLength, maxTextLength))
+        cut(text, toScalars: max(0, min(maxLength ?? maxTextLength, maxTextLength)))
+    }
+
+    /// `text` cut to at most `most` Unicode scalars, between whole characters: a character that does
+    /// not fit whole is left out with what follows it. What every editor's limit cuts with
+    /// (`limited`, `ShapeGeometry.limitedText`).
+    static func cut(_ text: String, toScalars most: Int) -> String {
         guard text.unicodeScalars.count > most else { return text }
         var kept = ""
         var count = 0
@@ -243,7 +249,7 @@ extension DocumentModel {
     /// allow its form to be filled in, and a read-only field, are refused at once, with our sentence.
     @discardableResult
     func enqueueFill(_ field: String, with value: FieldValue) -> Task<Bool, Never> {
-        if capabilities != nil, !canFillForms { return refuse(Strings.formNotAllowed) }
+        if capabilities != nil, !canFillForms { return refuse(signatureLock ?? Strings.formNotAllowed) }
         if let listed = formIndex.field(named: field) {
             if listed.readOnly { return refuse(Strings.editNotAllowed) }
             if FormFilling.holds(fieldAsFilled(listed), value) { return Task { false } }

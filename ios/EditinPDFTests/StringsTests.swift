@@ -103,6 +103,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.redo, "Redo")
         XCTAssertEqual(Strings.editFailed, "That change could not be made.")
         XCTAssertEqual(Strings.editNotAllowed, "This document doesn't allow that change.")
+        XCTAssertEqual(Strings.signedDocumentDamaged, "This signed document is damaged. Changing it would break its signatures.")
         XCTAssertEqual(Strings.cannotDeleteAllPages, "A document needs at least one page.")
         XCTAssertEqual(Strings.documentChangedTryAgain, "The document changed. Try again.")
         XCTAssertEqual(Strings.insertSourceLocked, "That PDF is password-protected. Remove its password and try again.")

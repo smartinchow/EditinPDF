@@ -40,6 +40,16 @@ final class DocumentModel {
     /// though the file opens with none). Pages extracted from it are a new PDF without protection.
     var isEncrypted: Bool { capabilities?.isEncrypted == true }
 
+    /// Why nothing in the document may be changed, when it is because a change would break its
+    /// signatures: it is signed, and its file is damaged, so saving would rewrite it
+    /// (`EditCapabilities.rewritesOnSave`), and the bridge allows no change. What the markup tools,
+    /// Organize and the form say in place of their own refusals; nil otherwise, and while the
+    /// capabilities are not read yet.
+    var signatureLock: String? {
+        guard let capabilities, capabilities.isSigned, capabilities.rewritesOnSave, !capabilities.canEdit else { return nil }
+        return Strings.signedDocumentDamaged
+    }
+
     /// How many pages the document has; 0 unless it is open.
     var pageCount: Int { pages.count }
 
@@ -113,6 +123,7 @@ final class DocumentModel {
     /// are not read yet).
     func refusal(of tool: Tool, onPage page: Int) -> String? {
         guard let capabilities else { return nil }
+        if tool.annotates, let signatureLock { return signatureLock }
         let rotation = pages.indices.contains(page) ? pages[page].rotationDegrees : 0
         return tool.refusal(canAnnotate: capabilities.canAnnotate, pageRotation: rotation)
     }
@@ -733,16 +744,43 @@ final class DocumentModel {
             return true
         case .failure(let error):
             failure = EditFailure(error)
-            undoManager?.removeAllActions(withTarget: token)
+            if Self.mayHaveChanged(after: error) {
+                // The engine may have changed the document all the same (the revision has moved on), so
+                // its history and the undo manager's stack may no longer match: the stack is emptied,
+                // as when an undo or redo fails.
+                takeEveryChangeOffTheUndoManager()
+            } else {
+                undoManager?.removeAllActions(withTarget: token)
+            }
             await refreshIfMoved(document)
             return false
         }
     }
 
+    /// Whether a change the engine refused with `error` may have changed the document all the same:
+    /// `Failed` (the engine failed half way, and the bridge moved the revision on), or an error that is
+    /// not the bridge's at all. Every other refusal leaves the document as it was.
+    private static func mayHaveChanged(after error: Error) -> Bool {
+        guard let error = error as? EditError else { return true }
+        if case .Failed = error { return true }
+        return false
+    }
+
+    /// Takes the entries of every change still known off the undo manager: what it does when its stack
+    /// and the engine's history may no longer match.
+    private func takeEveryChangeOffTheUndoManager() {
+        for change in liveChanges.allObjects { undoManager?.removeAllActions(withTarget: change) }
+    }
+
     /// A queued undo or redo of the change of `token`: nothing for a change the engine refused.
-    /// One the engine cannot make means its history and the undo manager's stack no longer match,
-    /// so the stack is emptied, and the reader told. It redraws the pages the change touched as it was
-    /// made: every change after it has been undone by then, so they are where they were.
+    ///
+    /// The engine keeps only the last 100 changes (`PdfDocument.undo`), so the undo manager can hold
+    /// older ones it has no step for any more: undoing one of those finds nothing to undo. That is no
+    /// failure: that change's entries are taken off, quietly, and the rest of the history (what can be
+    /// redone, above all) stays. Any other undo or redo the engine cannot make means its history and
+    /// the undo manager's stack no longer match, so the stack is emptied, and the reader told. It
+    /// redraws the pages the change touched as it was made: every change after it has been undone by
+    /// then, so they are where they were.
     private func move(_ step: Step, token: EditToken) async {
         guard token.applied, let document = document() else { return }
         let result = await EditQueue.offMain { () throws -> EngineState in
@@ -755,9 +793,13 @@ final class DocumentModel {
         switch result {
         case .success(let state):
             refresh(state, touching: token.pages, shift: .index)
+        case .failure(EditError.NothingToUndo), .failure(EditError.NothingToRedo):
+            // Past the engine's history: this change has no step there any more. The document is as it
+            // was, so there is nothing to read again.
+            undoManager?.removeAllActions(withTarget: token)
         case .failure(let error):
             failure = EditFailure(error)
-            for change in liveChanges.allObjects { undoManager?.removeAllActions(withTarget: change) }
+            takeEveryChangeOffTheUndoManager()
             await refreshIfMoved(document)
         }
     }

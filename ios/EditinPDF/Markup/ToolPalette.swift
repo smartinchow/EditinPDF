@@ -246,7 +246,7 @@ struct ToolPalette: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .accessibilityIdentifier(refusal == Strings.markupNotAllowed ? "markupNotAllowed" : "textBoxNeedsUprightPage")
+                .accessibilityIdentifier(refusal == Strings.textBoxNeedsUprightPage ? "textBoxNeedsUprightPage" : "markupNotAllowed")
         }
     }
 }

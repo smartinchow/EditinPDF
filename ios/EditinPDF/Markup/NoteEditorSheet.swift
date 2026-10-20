@@ -7,6 +7,9 @@ import SwiftUI
 /// the note is saved; a save that is refused leaves it up, with what was written, and says why here,
 /// over the sheet (`failure`).
 ///
+/// What is written is held to the most a note takes (`ShapeGeometry.maxTextLength`): what goes past it
+/// is let go of, so a save is never refused for it.
+///
 /// The text is the reader's, and is never logged.
 struct NoteEditorSheet: View {
     let draft: NoteDraft
@@ -43,6 +46,10 @@ struct NoteEditorSheet: View {
         NavigationStack {
             TextEditor(text: $text)
                 .focused($isWriting)
+                .onChange(of: text) { _, written in
+                    let limited = ShapeGeometry.limitedText(written)
+                    if limited != written { text = limited }
+                }
                 .scrollContentBackground(.hidden)
                 .overlay(alignment: .topLeading) {
                     if text.isEmpty {
@@ -73,7 +80,7 @@ struct NoteEditorSheet: View {
                         Button(Strings.save) {
                             isSaving = true
                             Task {
-                                await save(text)
+                                await save(ShapeGeometry.limitedText(text))
                                 isSaving = false
                             }
                         }

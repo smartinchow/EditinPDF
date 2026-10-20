@@ -1,4 +1,5 @@
 import CoreGraphics
+import EditinPDFCore
 import UIKit
 
 /// A shape being dragged out on a page with a shape tool, in view space (PDF points of the page,
@@ -163,6 +164,18 @@ enum ShapeGeometry {
                                                      options: [.usesLineFragmentOrigin],
                                                      attributes: [.font: font, .paragraphStyle: style], context: nil).height
         return max(1, Int((height / spacing).rounded()))
+    }
+
+    /// The most characters the text of a text box or of a note may have, counted as the bridge counts
+    /// them, in Unicode scalars: the bridge's own cap (`maxTextChars`, 100,000), so that what the
+    /// editors let through is never refused.
+    static let maxTextLength = Int(maxTextChars())
+
+    /// `text` cut to at most `maxTextLength` characters, between whole characters (as a form field's
+    /// text is cut to its limit, `FormFilling.cut`): what the text box and note editors hold what is
+    /// typed or pasted to.
+    static func limitedText(_ text: String) -> String {
+        FormFilling.cut(text, toScalars: maxTextLength)
     }
 
     /// The text a text box is made with from what was typed: without the spaces and new lines after
