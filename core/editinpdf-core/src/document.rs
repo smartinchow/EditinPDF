@@ -296,9 +296,16 @@ pub(crate) fn session() -> Session {
 ///
 /// Where each revision of the file ends is cheap to find, and a rebuilt file has none. Only when
 /// none is found (a rebuilt file, or rarely one whose revisions lack their end marker) is the file
-/// read again to tell which. Anything that goes wrong reading it again counts as a rewrite: for a
-/// signed document that means read-only, the side that keeps its signatures.
-fn rewrites_on_save(doc: &pdfcraft_engine::Document, original: &Arc<Vec<u8>>) -> bool {
+/// read again to tell which, with `password`, the one the document was opened with. (Not the
+/// engine's `doc.password`: that is what the renderer is given, the user password the engine works
+/// out from an owner password for older encryption.) Anything that goes wrong reading it again
+/// counts as a rewrite: for a signed document that means read-only, the side that keeps its
+/// signatures.
+fn rewrites_on_save(
+    doc: &pdfcraft_engine::Document,
+    original: &Arc<Vec<u8>>,
+    password: Option<&str>,
+) -> bool {
     if !doc.editable() {
         return false;
     }
@@ -309,7 +316,6 @@ fn rewrites_on_save(doc: &pdfcraft_engine::Document, original: &Arc<Vec<u8>>) ->
     if !doc.revision_ends().is_empty() {
         return false;
     }
-    let password = doc.password.as_deref();
     panic::catch_unwind(AssertUnwindSafe(|| {
         pdfcraft_cos::Document::open_with_password(working.clone(), password)
             .map_or(true, |cos| cos.revisions().is_empty())
@@ -457,7 +463,10 @@ impl PdfDocument {
         let original = Arc::new(bytes);
         let id = session.open("document.pdf", None, original.clone(), password.as_deref())?;
         let (rewrites, signed) = session.get(id).map_or((false, false), |doc| {
-            (rewrites_on_save(doc, &original), doc.is_signed())
+            (
+                rewrites_on_save(doc, &original, password.as_deref()),
+                doc.is_signed(),
+            )
         });
         let locked = locks_for_signatures(signed, rewrites);
         Ok(Arc::new(Self {

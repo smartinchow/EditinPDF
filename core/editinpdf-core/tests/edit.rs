@@ -4,6 +4,7 @@ mod fixtures;
 mod support;
 
 use editinpdf_core::{Edit, EditError, OpenError, PdfDocument, Point, SaveError, SaveMode};
+use pdfcraft_engine::Algorithm;
 use support::{YELLOW, reopen, text_of};
 
 #[test]
@@ -365,6 +366,36 @@ fn a_signed_document_whose_cross_reference_data_was_rebuilt_is_read_only() {
     assert_eq!(doc.save(SaveMode::Full), Err(SaveError::Signed));
     // Taking pages out into a new PDF changes nothing here.
     assert!(doc.extract_pages(vec![0]).is_ok());
+}
+
+/// A whole file whose revisions' end markers cannot be found is read a second time as it opens, to
+/// tell whether its cross-reference data was rebuilt; that read takes the password the document was
+/// opened with. (An R2-R4 file opened with its owner password is drawn with the user password the
+/// engine works out from it, which is not what was given.) Read with the wrong one, it would count
+/// as rebuilt, and a signed one would be locked for nothing.
+#[test]
+fn the_second_read_at_open_uses_the_password_the_document_was_opened_with() {
+    let plain = fixtures::without_end_markers(fixtures::text_doc(&["Plain"]));
+    let doc = PdfDocument::open(plain, None).unwrap();
+    assert!(
+        !doc.capabilities().rewrites_on_save,
+        "whole: nothing to rebuild"
+    );
+    for algorithm in [Algorithm::Rc4_128, Algorithm::Aes128, Algorithm::Aes256] {
+        let bytes = fixtures::without_end_markers(fixtures::protected_doc(
+            &["Protected"],
+            "user-pw",
+            "owner-pw",
+            algorithm,
+        ));
+        for password in ["user-pw", "owner-pw"] {
+            let doc = PdfDocument::open(bytes.clone(), Some(password.into())).unwrap();
+            assert!(
+                !doc.capabilities().rewrites_on_save,
+                "{algorithm:?} opened with the {password}"
+            );
+        }
+    }
 }
 
 /// An intact signed file is appended to, which keeps its signatures; a full rewrite is refused.

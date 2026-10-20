@@ -570,6 +570,17 @@ pub fn with_damaged_startxref(mut pdf: Vec<u8>) -> Vec<u8> {
     pdf
 }
 
+/// `pdf` with every `%%EOF` marker blotted out (same length, so no offset moves): the file is whole,
+/// but where its revisions end cannot be found, as in the rare file written without them.
+pub fn without_end_markers(mut pdf: Vec<u8>) -> Vec<u8> {
+    let mut at = 0;
+    while let Some(found) = pdf[at..].windows(5).position(|w| w == b"%%EOF") {
+        pdf[at + found + 2..at + found + 5].copy_from_slice(b"END");
+        at += found + 5;
+    }
+    pdf
+}
+
 /// `hand_form_doc` with one signature field, `signature`, holding a signature dictionary: the
 /// engine counts the document as signed. (The signature is not a valid one, which does not change
 /// that.)

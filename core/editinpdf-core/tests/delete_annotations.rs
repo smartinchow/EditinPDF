@@ -221,15 +221,13 @@ fn an_encrypted_documents_comments_are_deleted_too() {
     assert!(doc.annotations().is_empty());
 }
 
-/// What `DeleteAnnotations` is for, pinned as documentation: the engine's own deletes in one step,
-/// addressed by the places the list had before the step, highest first (as the apps used to send an
+/// What `DeleteAnnotations` is for, pinned as documentation: the engine's own deletes, addressed by
+/// the places the list had before the first of them, highest first (as the apps used to send an
 /// eraser stroke), delete the wrong annotation when a comment's pop-up or reply is listed before
-/// another comment deleted in the same step. Each delete takes those out with its comment, which moves
-/// the next one's place. If this starts failing, the engine has changed how it deletes; look again at
-/// `DeleteAnnotations` before changing the test.
-/// Single deletes addressed by the places before the first of them, highest first, hit the wrong
-/// annotation: which is why a step does not take more than one of them on a page, and
-/// `DeleteAnnotations` exists.
+/// another comment deleted with it. Each delete takes those out with its comment, which moves the next
+/// one's place. That is why a step takes no more than one of them on a page (more are refused as
+/// `Invalid`, checked at the end), and why `DeleteAnnotations` exists. If this starts failing, the
+/// engine has changed how it deletes; look again at `DeleteAnnotations` before changing the test.
 #[test]
 fn deletes_by_the_places_before_the_step_highest_first_hit_the_wrong_annotation() {
     // Each delete is its own step here, at the revision the one before it left, with the places as
