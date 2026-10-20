@@ -21,6 +21,10 @@ pdfcraft-engine = { workspace = true }
 pdfcraft-render = { workspace = true }
 # Only for `OrganizeError`, which the engine's `EditError` carries but does not re-export.
 pdfcraft-organize = { workspace = true }
+# The object layer and the engine's own page order, read (never written) to work out where the
+# comments of a multiple delete are (`Edit::DeleteAnnotations`).
+pdfcraft-cos = { workspace = true }
+pdfcraft-annot = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "deny"

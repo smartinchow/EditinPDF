@@ -340,6 +340,10 @@ fn a_step_cannot_both_renumber_pages_and_address_a_comment() {
     ];
     let addressing = [
         Edit::DeleteAnnotation { page: 0, index: 0 },
+        Edit::DeleteAnnotations {
+            page: 0,
+            indices: vec![0],
+        },
         Edit::SetAnnotationContents {
             page: 0,
             index: 0,

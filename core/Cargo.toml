@@ -20,6 +20,7 @@ serde_json = "1"
 pdfcraft-engine = { path = "../upstream/pdfcraft/crates/engine" }
 pdfcraft-render = { path = "../upstream/pdfcraft/crates/render" }
 pdfcraft-annot = { path = "../upstream/pdfcraft/crates/annot" }
+pdfcraft-cos = { path = "../upstream/pdfcraft/crates/cos" }
 pdfcraft-forms = { path = "../upstream/pdfcraft/crates/forms" }
 pdfcraft-organize = { path = "../upstream/pdfcraft/crates/organize" }
 pdfcraft-model = { path = "../upstream/pdfcraft/crates/model" }

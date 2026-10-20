@@ -1,6 +1,6 @@
 //! `PdfDocument`: one open PDF, as the Swift side sees it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -163,9 +163,9 @@ impl PdfDocument {
     /// is never poisoned; on success bumps the revision and retires the renderer pool and text
     /// layers of the old revision, which are dropped after the lock is released.
     ///
-    /// `f` is given the session, the document's id and its pages as they are before the change,
-    /// and returns the change's label. With `base_revision`, the change is refused as `Stale` unless
-    /// the document is still at that revision.
+    /// `f` is given the session and the document's id, and returns the change's label. With
+    /// `base_revision`, the change is refused as `Stale` unless the document is still at that
+    /// revision.
     ///
     /// A failure can come after the engine has already changed the document: undo and redo swap the
     /// state in before they refresh the view data, and do not swap it back when that fails, and a
@@ -175,7 +175,7 @@ impl PdfDocument {
     /// again.
     fn mutate(
         &self,
-        f: impl FnOnce(&mut Session, DocId, &[pdfcraft_render::PageInfo]) -> Result<String, EditError>,
+        f: impl FnOnce(&mut Session, DocId) -> Result<String, EditError>,
         base_revision: Option<u64>,
         may_have_changed: fn(&EditError) -> bool,
     ) -> Result<EditOutcome, EditError> {
@@ -189,15 +189,9 @@ impl PdfDocument {
                 });
             }
             let id = inner.id;
-            let pages = inner
-                .session
-                .get(id)
-                .map(|doc| doc.info.pages.clone())
-                .ok_or_else(|| EditError::Failed {
-                    message: "the document is no longer open".to_owned(),
-                })?;
+            open_doc(&inner.session, id)?;
             let (result, changed) =
-                match panic::catch_unwind(AssertUnwindSafe(|| f(&mut inner.session, id, &pages))) {
+                match panic::catch_unwind(AssertUnwindSafe(|| f(&mut inner.session, id))) {
                     Ok(Ok(label)) => (Ok(label), true),
                     Ok(Err(err)) => {
                         let changed = may_have_changed(&err);
@@ -238,6 +232,43 @@ impl PdfDocument {
     fn read<T>(&self, default: T, f: impl FnOnce(&pdfcraft_engine::Document) -> T) -> T {
         let inner = self.lock();
         inner.session.get(inner.id).map_or(default, f)
+    }
+}
+
+/// The document `id` names in `session`; `Failed` when it is no longer open.
+fn open_doc(session: &Session, id: DocId) -> Result<&pdfcraft_engine::Document, EditError> {
+    session.get(id).ok_or_else(|| EditError::Failed {
+        message: "the document is no longer open".to_owned(),
+    })
+}
+
+/// Whether the edits of one step read the places of a page's comments consistently, refused as
+/// `Invalid` when they do not: `DeleteAnnotations` reads them as the page's list is before the step,
+/// so no other edit of the step may address a comment of its page by its place, which the deletes
+/// would move (or the other edit's change, the deletes'). Adding a comment puts it at the end of the
+/// list, which moves no place, so that goes with it.
+fn annotation_places_check(edits: &[Edit]) -> Result<(), EditError> {
+    let mut addressing: HashMap<u32, usize> = HashMap::new();
+    for page in edits.iter().filter_map(Edit::annotation_page) {
+        *addressing.entry(page).or_default() += 1;
+    }
+    let clash = edits.iter().find_map(|edit| {
+        let Edit::DeleteAnnotations { page, .. } = edit else {
+            return None;
+        };
+        addressing
+            .get(page)
+            .is_some_and(|&count| count > 1)
+            .then_some(*page)
+    });
+    match clash {
+        Some(page) => Err(EditError::Invalid {
+            message: format!(
+                "deleting several comments of page {page} can't be combined with other changes to \
+                 its comments in one step"
+            ),
+        }),
+        None => Ok(()),
     }
 }
 
@@ -494,12 +525,12 @@ impl PdfDocument {
     /// apps should read the document again.
     pub fn apply(&self, edit: Edit, base_revision: u64) -> Result<EditOutcome, EditError> {
         self.mutate(
-            |session, id, pages| {
+            |session, id| {
                 if edit.takes_source() {
                     destination_check(session, id)?;
                 }
                 field_check(session, id, std::slice::from_ref(&edit))?;
-                let edit = edit.to_engine(pages)?;
+                let edit = edit.to_engine(open_doc(session, id)?)?;
                 session.apply(id, edit)?;
                 Ok(undo_label(session, id))
             },
@@ -515,9 +546,11 @@ impl PdfDocument {
     /// changes the pages (turns, deletes, moves or inserts) cannot also carry a change with a
     /// position: that is refused as `Invalid`. Likewise a step that deletes, moves or inserts pages
     /// cannot also delete a comment or change its text, which address the comment by its page as it
-    /// is before the step (turning pages keeps their numbers, so that mix is allowed). Filling in a
-    /// form field addresses it by its name, so it goes with any page change. Otherwise the errors
-    /// are those of `apply`, and a step of more than 10,000 changes is refused as `Invalid`.
+    /// is before the step (turning pages keeps their numbers, so that mix is allowed). A step that
+    /// deletes several comments of a page (`DeleteAnnotations`) cannot also address another comment
+    /// of that page by its place. Filling in a form field addresses it by its name, so it goes with
+    /// any page change. Otherwise the errors are those of `apply`, and a step of more than 10,000
+    /// changes is refused as `Invalid`.
     pub fn apply_all(
         &self,
         label: String,
@@ -545,15 +578,17 @@ impl PdfDocument {
                     .to_owned(),
             });
         }
+        annotation_places_check(&edits)?;
         self.mutate(
-            |session, id, pages| {
+            |session, id| {
                 if edits.iter().any(Edit::takes_source) {
                     destination_check(session, id)?;
                 }
                 field_check(session, id, &edits)?;
+                let doc = open_doc(session, id)?;
                 let edits = edits
                     .iter()
-                    .map(|edit| edit.to_engine(pages))
+                    .map(|edit| edit.to_engine(doc))
                     .collect::<Result<Vec<_>, _>>()?;
                 session.apply(id, pdfcraft_engine::Edit::Batch { label, edits })?;
                 Ok(undo_label(session, id))
@@ -570,7 +605,7 @@ impl PdfDocument {
     /// revision has gone up by one all the same, and the apps should read the document again.
     pub fn undo(&self) -> Result<EditOutcome, EditError> {
         self.mutate(
-            |session, id, _| Ok(session.undo(id)?.as_str().to_owned()),
+            |session, id| Ok(session.undo(id)?.as_str().to_owned()),
             None,
             step_may_have_changed,
         )
@@ -583,7 +618,7 @@ impl PdfDocument {
     /// revision has gone up by one all the same, and the apps should read the document again.
     pub fn redo(&self) -> Result<EditOutcome, EditError> {
         self.mutate(
-            |session, id, _| Ok(session.redo(id)?.as_str().to_owned()),
+            |session, id| Ok(session.redo(id)?.as_str().to_owned()),
             None,
             step_may_have_changed,
         )
@@ -811,7 +846,7 @@ mod tests {
     fn a_change_that_panics_is_a_failure_and_leaves_the_document_usable() {
         let doc = open_pages(&["one", "two"]);
         let err = doc
-            .mutate(|_, _, _| panic!("an engine bug"), Some(0), |_| false)
+            .mutate(|_, _| panic!("an engine bug"), Some(0), |_| false)
             .unwrap_err();
         assert!(matches!(err, EditError::Failed { .. }));
         assert!(!doc.inner.is_poisoned(), "the lock is not poisoned");
@@ -845,7 +880,7 @@ mod tests {
         let pool = current_pool(&doc);
         let err = doc
             .mutate(
-                |session, id, _| {
+                |session, id| {
                     session.apply(id, rotate())?;
                     Err(EditError::Failed {
                         message: "refresh failed".to_owned(),
@@ -866,7 +901,7 @@ mod tests {
         let pool = current_pool(&doc);
         let err = doc
             .mutate(
-                |session, id, _| {
+                |session, id| {
                     session.apply(id, rotate())?;
                     panic!("an engine bug after the change");
                 },

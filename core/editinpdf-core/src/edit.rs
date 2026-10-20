@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use crate::{EditError, Rect, forms, geometry};
+use crate::{EditError, Rect, annotations, forms, geometry};
 
 /// The largest page side a blank page may have, in points: 200 inches, the most a PDF page can
 /// measure (ISO 32000-1, Annex C).
@@ -161,10 +161,20 @@ pub enum Edit {
     /// replies and pop-up.
     ///
     /// Deleting a comment moves the ones after it on the page down the list, and the engine also
-    /// takes out its pop-up and replies, which have places of their own. So when one `apply_all`
-    /// deletes several comments on a page, put the deletes in order of highest `index` first, so
-    /// that each still addresses the comment it was meant for.
+    /// takes out its pop-up and replies, which have places of their own and can be listed before
+    /// it. So no order of these deletes in one step is sure to address the comments meant: to
+    /// delete several comments of a page at once, use `DeleteAnnotations`.
     DeleteAnnotation { page: u32, index: u32 },
+    /// Deletes the comments at `indices` in page `page`'s list (`AnnotationInfo.index`, in any
+    /// order; one given twice is deleted once), each with its replies and pop-up, and nothing else:
+    /// one change, which one undo takes back.
+    ///
+    /// The places are read as the list is before the step, so in `apply_all` no other change in the
+    /// step may address a comment on that page by its place (refused as `Invalid`); comments added
+    /// before it, which go at the end of the list, and changes to other pages may. At least one and
+    /// at most 10,000 places, each one the page's list has; a comment the file locks among them
+    /// refuses the whole change, as `DeleteAnnotation` refuses it.
+    DeleteAnnotations { page: u32, indices: Vec<u32> },
     /// Changes the text of the comment at `index` in the page's list (`AnnotationInfo.index`).
     SetAnnotationContents {
         page: u32,
@@ -242,13 +252,15 @@ pub enum Edit {
 impl Edit {
     /// The engine's edit for this one, once its values are checked.
     ///
-    /// `pages` is the document's pages as they are before the edit, which an edit with a position
-    /// on a page converts against.
+    /// `doc` is the document as it is before the edit: an edit with a position on a page converts
+    /// it against the page as it is then, and `DeleteAnnotations` reads there which comments the
+    /// places it is given are.
     pub(crate) fn to_engine(
         &self,
-        pages: &[pdfcraft_render::PageInfo],
+        doc: &pdfcraft_engine::Document,
     ) -> Result<pdfcraft_engine::Edit, EditError> {
         use pdfcraft_engine::Edit as Engine;
+        let pages = &doc.info.pages;
         Ok(match self {
             Self::RotatePages { pages, degrees } => {
                 if degrees % 90 != 0 {
@@ -363,6 +375,18 @@ impl Edit {
                 page: index_of(pages, *page)?,
                 index: annotation_index(*index)?,
             },
+            Self::DeleteAnnotations { page, indices } => {
+                if indices.is_empty() {
+                    return Err(invalid("there is no comment to delete".to_owned()));
+                }
+                if indices.len() > MAX_STEP_EDITS {
+                    return Err(invalid(format!(
+                        "one change deletes at most {MAX_STEP_EDITS} comments, not {}",
+                        indices.len()
+                    )));
+                }
+                annotations::deletes(doc, index_of(pages, *page)?, indices)?
+            }
             Self::SetAnnotationContents {
                 page,
                 index,
@@ -503,6 +527,7 @@ impl Edit {
             | Self::AddTextMarkup { .. }
             | Self::AddNote { .. }
             | Self::DeleteAnnotation { .. }
+            | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
@@ -527,6 +552,7 @@ impl Edit {
             | Self::AddTextMarkup { .. }
             | Self::AddNote { .. }
             | Self::DeleteAnnotation { .. }
+            | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
@@ -544,6 +570,7 @@ impl Edit {
     pub(crate) fn addresses_annotation(&self) -> bool {
         match self {
             Self::DeleteAnnotation { .. }
+            | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
             | Self::MoveAnnotation { .. } => true,
             Self::RotatePages { .. }
@@ -563,6 +590,31 @@ impl Edit {
         }
     }
 
+    /// The page of the comments the edit addresses by their places in that page's list, when it
+    /// addresses any (as `addresses_annotation` says).
+    pub(crate) fn annotation_page(&self) -> Option<u32> {
+        match self {
+            Self::DeleteAnnotation { page, .. }
+            | Self::DeleteAnnotations { page, .. }
+            | Self::SetAnnotationContents { page, .. }
+            | Self::MoveAnnotation { page, .. } => Some(*page),
+            Self::RotatePages { .. }
+            | Self::DeletePages { .. }
+            | Self::MovePages { .. }
+            | Self::InsertBlankPage { .. }
+            | Self::SetInfo { .. }
+            | Self::InsertPagesFrom { .. }
+            | Self::AddTextMarkup { .. }
+            | Self::AddNote { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. }
+            | Self::SetFieldValue { .. } => None,
+        }
+    }
+
     /// The name of the form field the edit fills in, when it fills one in.
     pub(crate) fn field_name(&self) -> Option<&str> {
         match self {
@@ -576,6 +628,7 @@ impl Edit {
             | Self::AddTextMarkup { .. }
             | Self::AddNote { .. }
             | Self::DeleteAnnotation { .. }
+            | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
@@ -603,6 +656,7 @@ impl Edit {
             | Self::SetInfo { .. }
             | Self::InsertPagesFrom { .. }
             | Self::DeleteAnnotation { .. }
+            | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
             | Self::SetFieldValue { .. } => false,
             // A move's distance as shown is turned with the page into the file's space.
@@ -859,6 +913,14 @@ pub(crate) fn page_side(points: f64) -> Result<f64, EditError> {
 mod tests {
     use super::*;
 
+    /// A one-page document, open in its own session, for edits to be converted against.
+    fn one_page() -> (pdfcraft_engine::Session, pdfcraft_engine::DocId) {
+        let mut session = pdfcraft_engine::Session::new();
+        let bytes = session.create_from_text("fixture", "x").unwrap();
+        let id = session.open("fixture.pdf", None, bytes, None).unwrap();
+        (session, id)
+    }
+
     #[test]
     fn a_source_problem_becomes_the_matching_error() {
         assert_eq!(
@@ -881,12 +943,14 @@ mod tests {
 
     #[test]
     fn turns_and_sizes_are_checked() {
+        let (session, id) = one_page();
+        let doc = session.get(id).unwrap();
         let ok = Edit::RotatePages {
             pages: vec![0, 2],
             degrees: -270,
         };
         assert_eq!(
-            ok.to_engine(&[]).unwrap(),
+            ok.to_engine(doc).unwrap(),
             pdfcraft_engine::Edit::RotatePages {
                 pages: vec![0, 2],
                 degrees: -270
@@ -897,7 +961,7 @@ mod tests {
                 pages: vec![0],
                 degrees,
             };
-            assert!(matches!(bad.to_engine(&[]), Err(EditError::Invalid { .. })));
+            assert!(matches!(bad.to_engine(doc), Err(EditError::Invalid { .. })));
         }
         for side in [0.0, -1.0, f64::NAN, f64::INFINITY, 14_400.5] {
             let bad = Edit::InsertBlankPage {
@@ -905,13 +969,13 @@ mod tests {
                 width_pt: side,
                 height_pt: 100.0,
             };
-            assert!(matches!(bad.to_engine(&[]), Err(EditError::Invalid { .. })));
+            assert!(matches!(bad.to_engine(doc), Err(EditError::Invalid { .. })));
         }
         let largest = Edit::InsertBlankPage {
             at: 1,
             width_pt: 14_400.0,
             height_pt: 1.0,
         };
-        assert!(largest.to_engine(&[]).is_ok());
+        assert!(largest.to_engine(doc).is_ok());
     }
 }

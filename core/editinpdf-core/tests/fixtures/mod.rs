@@ -352,6 +352,36 @@ pub fn hand_form_doc(fields: &[String]) -> Vec<u8> {
     write_pdf(&objects)
 }
 
+/// A one-page document (US Letter, unturned) written by hand, whose page's `/Annots` lists `annots`
+/// in order: the whole dictionaries of objects 4, 5, …, which may refer to one another by those
+/// numbers. The catalog's form lists the objects `fields` names, so that a widget among them is a
+/// field's.
+///
+/// The engine always lists a comment's pop-up and replies after it; files made elsewhere need not, and
+/// this is how the tests get those.
+pub fn hand_annotated_doc(annots: &[&str], fields: &[u32]) -> Vec<u8> {
+    let refs = |numbers: &mut dyn Iterator<Item = u32>| {
+        numbers
+            .map(|n| format!("{n} 0 R"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let listed = (4..).take(annots.len());
+    let mut objects = vec![
+        format!(
+            "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [{}] >> >>",
+            refs(&mut fields.iter().copied())
+        ),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [{}] >>",
+            refs(&mut listed.into_iter())
+        ),
+    ];
+    objects.extend(annots.iter().map(|body| (*body).to_owned()));
+    write_pdf(&objects)
+}
+
 /// `hand_form_doc` with `count` empty text fields, `f0`, `f1`, … all at the same place.
 pub fn many_fields_doc(count: usize) -> Vec<u8> {
     let fields: Vec<String> = (0..count).map(|i| format!("/FT /Tx /T (f{i})")).collect();
