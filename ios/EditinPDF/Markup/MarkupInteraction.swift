@@ -6,8 +6,8 @@ import UIKit.UIGestureRecognizerSubclass
 /// Select, which picks an annotation already there, drags it and offers its menu; Highlight,
 /// Underline and Strikethrough, which mark the text a finger drags across; Draw; the shape tools,
 /// which draw a rectangle, an oval, a line or an arrow where a finger drags; Text Box, which puts a
-/// box to type in where a finger taps; Note, which opens a note there; and the eraser, which deletes
-/// the annotations it touches.
+/// box to type in where a finger taps; Note, which opens a note there; Sign, which places the saved
+/// signature there; and the eraser, which deletes the annotations it touches.
 ///
 /// It belongs to a `PageScrollViewController`, like `SelectionInteraction`, and asks it where a touch
 /// is on a page (`pageLocation(of:)`, `pagePoint(ofContentPoint:onPage:)`), so a touch becomes a point
@@ -56,11 +56,12 @@ import UIKit.UIGestureRecognizerSubclass
 /// where it may be used. Both share this pan and this tap; two fingers scroll and zoom, as for the
 /// others.
 ///
-/// **Text Box and Note** take a tap (`placeTap`), on a page where the tool may be used; a drag
+/// **Text Box, Note and Sign** take a tap (`placeTap`), on a page where the tool may be used; a drag
 /// scrolls. Note opens the note sheet (`DocumentModel.noteDraft`): for the note under the finger, or
 /// a new one there. Text Box puts a box to type in there: `TextBoxInteraction`, which has the box and
 /// the keyboard. A text box is refused on a turned page: its text would read sideways
-/// (`Strings.textBoxNeedsUprightPage`).
+/// (`Strings.textBoxNeedsUprightPage`). Sign places the saved signature there, centred on the tap, as
+/// one change (`placeSignature`); with none saved, the tap opens the pad to draw one.
 ///
 /// Strokes waiting and text being typed are added (`commitPendingInk`, `commitPendingText`, which the
 /// model calls together) whenever a finger goes down anywhere outside the pages (`fingerWentDown`).
@@ -460,8 +461,9 @@ final class MarkupInteraction: NSObject {
 
     /// A tap at `point` (the content view's coordinates): it ends the box being typed in, if there is
     /// one (and starts no other); otherwise, with Select, it selects the annotation under it or none;
-    /// with the eraser, it deletes the one under it; with Text Box, it puts a box to type in there; and
-    /// with Note, it opens the note sheet for the note under it or a new one there.
+    /// with the eraser, it deletes the one under it; with Text Box, it puts a box to type in there;
+    /// with Note, it opens the note sheet for the note under it or a new one there; and with Sign, it
+    /// places the saved signature there.
     func place(atContentPoint point: CGPoint) {
         if textBoxes.textEditor != nil {
             commitPendingText()
@@ -474,7 +476,27 @@ final class MarkupInteraction: NSObject {
             guard let size = pageSize(location.page) else { return }
             textBoxes.beginTextBox(onPage: location.page, at: location.point, pageSize: size)
         case .note: openNote(onPage: location.page, at: location.point)
+        case .signature: placeSignature(onPage: location.page, at: location.point)
         case .select, .highlight, .underline, .strikeout, .ink, .rectangle, .oval, .line, .arrow, .eraser: break
+        }
+    }
+
+    /// Places the saved signature on `page`, centred on `point` (view space), as one change worked out
+    /// against the document as it is now; it is drawn over the page until the page shows it, or goes at
+    /// once when it is refused (stale, say). With no signature saved, the pad opens to draw one, and
+    /// nothing is placed. The task says whether it was placed; nil when nothing was handed over.
+    @discardableResult
+    func placeSignature(onPage page: Int, at point: CGPoint) -> Task<Bool, Never>? {
+        guard model.signatures.saved != nil else {
+            model.showsSignaturePad = true
+            return nil
+        }
+        guard let strokes = model.signatureStrokes(onPage: page, centeredAt: point) else { return nil }
+        let draft = SignatureDraft(strokes: strokes)
+        host?.pageView(for: page)?.overlay.signatures.append(draft)
+        let made = model.enqueueSignature(page: page, strokes: strokes, workedOutAt: model.revision)
+        return Self.settlePreview(of: made) { [weak self] in
+            self?.host?.pageView(for: page)?.overlay.signatures.removeAll { $0 == draft }
         }
     }
 

@@ -83,7 +83,7 @@ enum ShapeGeometry {
             rect(from: start, to: end, pageSize: pageSize).map { .rect($0, oval: tool == .oval) }
         case .line, .arrow:
             line(from: start, to: end, pageSize: pageSize).map { .line(from: $0.0, to: $0.1, arrow: tool == .arrow) }
-        case .select, .highlight, .underline, .strikeout, .ink, .textBox, .note, .eraser:
+        case .select, .highlight, .underline, .strikeout, .ink, .signature, .textBox, .note, .eraser:
             nil
         }
     }

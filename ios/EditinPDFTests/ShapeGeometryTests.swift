@@ -41,7 +41,7 @@ final class ShapeGeometryTests: XCTestCase {
             XCTAssertFalse(tool.drawsShape, "\(tool)")
         }
         XCTAssertEqual(Tool.allCases.filter(\.drawsShape), [.rectangle, .oval, .line, .arrow])
-        XCTAssertEqual(Tool.allCases.filter(\.placesByTap), [.textBox, .note])
+        XCTAssertEqual(Tool.allCases.filter(\.placesByTap), [.signature, .textBox, .note])
     }
 
     /// A text box is as wide as its longest line and 8 points more, 60 at least, and stops at the

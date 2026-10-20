@@ -16,11 +16,14 @@ enum PaletteLayout: Equatable {
 /// Markup mode's tools, and the button that opens the current tool's style: in a bar along the
 /// bottom (the style in a sheet) or a column at the leading edge (the style in a popover). Tools
 /// the document or the page refuses are disabled, and the palette says why. While strokes drawn with
-/// Draw, or text typed in a text box, are waiting, Done stands before the style button.
+/// Draw, or text typed in a text box, are waiting, Done stands before the style button. While Sign is
+/// picked, the style button's place is its menu's: Change Signature, and Delete Signature, which asks
+/// first.
 struct ToolPalette: View {
     @Bindable var model: DocumentModel
     let layout: PaletteLayout
     @State private var showsStyle = false
+    @State private var confirmsSignatureDelete = false
 
     var body: some View {
         switch layout {
@@ -42,7 +45,7 @@ struct ToolPalette: View {
                 }
                 Divider().frame(height: 28)
                 doneDrawingButton
-                styleButton
+                optionsButton
                     .padding(.trailing, 6)
                     .sheet(isPresented: $showsStyle) {
                         styleEditor
@@ -78,7 +81,7 @@ struct ToolPalette: View {
                 .frame(maxHeight: CGFloat(Tool.allCases.count) * 42 + 12)
                 Divider().frame(width: 28)
                 doneDrawingButton
-                styleButton
+                optionsButton
                     .padding(.bottom, 6)
                     .popover(isPresented: $showsStyle, arrowEdge: .leading) {
                         styleEditor
@@ -112,7 +115,7 @@ struct ToolPalette: View {
         ForEach(Tool.allCases, id: \.self) { tool in
             let isCurrent = model.tool == tool
             Button {
-                model.tool = tool
+                model.pick(tool)
             } label: {
                 Label(tool.title, systemImage: tool.systemImage)
                     .labelStyle(.iconOnly)
@@ -146,6 +149,51 @@ struct ToolPalette: View {
             }
             .accessibilityIdentifier("doneDrawingButton")
             .help(Strings.doneDrawing)
+        }
+    }
+
+    /// The style button, or Sign's menu while Sign is picked.
+    @ViewBuilder private var optionsButton: some View {
+        if model.tool == .signature {
+            signatureMenu
+        } else {
+            styleButton
+        }
+    }
+
+    /// Sign's menu: Change Signature opens the pad to draw it again; Delete Signature, there while one
+    /// is saved, forgets it once confirmed.
+    private var signatureMenu: some View {
+        Menu {
+            Button {
+                model.showsSignaturePad = true
+            } label: {
+                Label(Strings.changeSignature, systemImage: "signature")
+            }
+            .accessibilityIdentifier("changeSignatureButton")
+            Button(role: .destructive) {
+                confirmsSignatureDelete = true
+            } label: {
+                Label(Strings.deleteSignature, systemImage: "trash")
+            }
+            .disabled(model.signatures.saved == nil)
+            .accessibilityIdentifier("deleteSignatureButton")
+        } label: {
+            Label(Strings.signatureOptions, systemImage: "ellipsis.circle")
+                .labelStyle(.iconOnly)
+                .font(.title3)
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
+        }
+        .disabled(!model.canUse(.signature))
+        .accessibilityIdentifier("signatureMenuButton")
+        .help(Strings.signatureOptions)
+        // Asked first: Delete Signature, destructive, forgets it; the system's Cancel does not.
+        .confirmationDialog(Strings.deleteSignatureConfirm, isPresented: $confirmsSignatureDelete, titleVisibility: .visible) {
+            Button(Strings.deleteSignature, role: .destructive) { model.deleteSignature() }
+                .accessibilityIdentifier("confirmDeleteSignatureButton")
+        } message: {
+            Text(Strings.deleteSignatureConfirmMessage)
         }
     }
 

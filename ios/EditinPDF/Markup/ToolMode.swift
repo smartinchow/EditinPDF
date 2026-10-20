@@ -5,8 +5,7 @@ import Observation
 /// What a touch on the page does in Markup mode. The model's `tool` is nil while the reader is only
 /// reading; Markup in the toolbar sets it to `.select`, and the palette to any of these.
 enum Tool: String, CaseIterable, Sendable {
-    case select, highlight, underline, strikeout, ink, textBox, note, rectangle, oval, line, arrow, eraser
-    // signature: Task 19.
+    case select, highlight, underline, strikeout, ink, signature, textBox, note, rectangle, oval, line, arrow, eraser
 
     /// The tool's name: the palette button's title (and its VoiceOver label).
     var title: String {
@@ -16,6 +15,7 @@ enum Tool: String, CaseIterable, Sendable {
         case .underline: Strings.underline
         case .strikeout: Strings.strikeout
         case .ink: Strings.toolInk
+        case .signature: Strings.sign
         case .textBox: Strings.toolTextBox
         case .note: Strings.toolNote
         case .rectangle: Strings.toolRectangle
@@ -34,6 +34,7 @@ enum Tool: String, CaseIterable, Sendable {
         case .underline: "underline"
         case .strikeout: "strikethrough"
         case .ink: "scribble"
+        case .signature: "signature"
         case .textBox: "textbox"
         case .note: "note.text"
         case .rectangle: "rectangle"
@@ -46,8 +47,9 @@ enum Tool: String, CaseIterable, Sendable {
 
     /// Whether the tool adds, changes or deletes annotations: everything but Select.
     var annotates: Bool { self != .select }
-    /// Whether the tool has a style to pick (a colour at least): every tool that makes an annotation.
-    var hasStyle: Bool { self != .select && self != .eraser }
+    /// Whether the tool has a style to pick (a colour at least): every tool that makes an annotation,
+    /// but Sign, whose signature is always black and as wide (`SignatureStore.color`, `lineWidth`).
+    var hasStyle: Bool { self != .select && self != .eraser && self != .signature }
     /// Whether the tool draws lines whose width can be picked.
     var usesWidth: Bool { [.ink, .rectangle, .oval, .line, .arrow].contains(self) }
     /// Whether the tool's text has a size to pick.
@@ -56,8 +58,9 @@ enum Tool: String, CaseIterable, Sendable {
     var usesFill: Bool { self == .rectangle || self == .oval }
     /// Whether one finger dragged across the page draws the tool's shape (`ShapeGeometry.draft`).
     var drawsShape: Bool { [.rectangle, .oval, .line, .arrow].contains(self) }
-    /// Whether a tap on the page places what the tool makes: a box to type in, or a note.
-    var placesByTap: Bool { self == .textBox || self == .note }
+    /// Whether a tap on the page places what the tool makes: a box to type in, a note, or the saved
+    /// signature.
+    var placesByTap: Bool { self == .textBox || self == .note || self == .signature }
 
     /// The tool that makes text markup of `kind`: its colour is the one a mark of that kind is made in.
     init(markupKind kind: MarkupKind) {
@@ -116,7 +119,7 @@ struct ToolStyle: Codable, Equatable, Sendable {
         case .underline: RGBA(r: 0, g: 0.4, b: 1)
         case .strikeout, .rectangle, .oval, .line, .arrow: red
         case .note: RGBA(r: 1, g: 0.8, b: 0)
-        case .select, .ink, .textBox, .eraser: black
+        case .select, .ink, .signature, .textBox, .eraser: black
         }
         return ToolStyle(color: color, width: 2, fontSize: 14, fill: false)
     }

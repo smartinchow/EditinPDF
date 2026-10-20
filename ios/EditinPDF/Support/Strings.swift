@@ -167,14 +167,15 @@ enum Strings {
     }
 
     /// The button that puts a prompt or a sheet away without doing anything: the password prompt (the
-    /// document stays locked), the note sheet (the note stays as it was).
+    /// document stays locked), the note sheet (the note stays as it was), the signature pad (the saved
+    /// signature stays as it was).
     static var cancel: String {
-        String(localized: "Cancel", comment: "Button that puts away a prompt or sheet without changing anything: the prompt for a PDF's password (the PDF stays locked), the note editor (the note stays as it was), the sheet of a form field's options (the field stays as it was)")
+        String(localized: "Cancel", comment: "Button that puts away a prompt or sheet without changing anything: the prompt for a PDF's password (the PDF stays locked), the note editor (the note stays as it was), the sheet of a form field's options (the field stays as it was), the signature pad (the saved signature stays as it was)")
     }
 
-    /// The note sheet's button that keeps what was written.
+    /// The button that keeps what was written or drawn: the note sheet's, the signature pad's.
     static var save: String {
-        String(localized: "Save", comment: "Button of the note editor that keeps the note's text")
+        String(localized: "Save", comment: "Button that keeps what was written or drawn: the note editor's (the note's text), the signature pad's (the signature drawn, for placing on pages)")
     }
 
     /// The button of the message about a file that could not be opened; it closes the document.
@@ -283,6 +284,11 @@ enum Strings {
     /// The name Undo and Redo give a filled-in form field.
     static var actionFillField: String {
         String(localized: "Fill Form", comment: "Name of the change in Undo and Redo: a form field was filled in")
+    }
+
+    /// The name Undo and Redo give a signature placed on a page.
+    static var actionSign: String {
+        String(localized: "Add Signature", comment: "Name of the change in Undo and Redo: the saved signature was placed on a page")
     }
 
     // MARK: Forms
@@ -560,6 +566,68 @@ enum Strings {
          String(localized: "Green", comment: "Colour swatch name"),
          String(localized: "Blue", comment: "Colour swatch name"),
          String(localized: "Purple", comment: "Colour swatch name")]
+    }
+
+    // MARK: Signing
+
+    /// The markup tool that places the reader's saved signature.
+    static var sign: String {
+        String(localized: "Sign", comment: "Markup tool that places the reader's saved signature on the page")
+    }
+
+    /// The title of the pad the signature is drawn in.
+    static var signatureTitle: String {
+        String(localized: "Your Signature", comment: "Title of the sheet where the reader draws the signature that the Sign tool places")
+    }
+
+    /// The signature pad's button that wipes what was drawn, to start again.
+    static var clear: String {
+        String(localized: "Clear", comment: "Button of the signature pad that wipes what was drawn, to start again")
+    }
+
+    /// What the signature pad says under the line the signature is drawn on.
+    static var signHere: String {
+        String(localized: "Sign here", comment: "Hint under the line the signature is drawn on, in the signature pad")
+    }
+
+    /// What VoiceOver calls the signature pad's drawing area.
+    static var signatureCanvas: String {
+        String(localized: "Drawing area for your signature", comment: "Accessibility label of the area of the signature pad that is drawn on")
+    }
+
+    /// The button beside the Sign tool that opens its menu (Change Signature, Delete Signature).
+    static var signatureOptions: String {
+        String(localized: "Signature Options", comment: "Markup palette button, while Sign is picked, that opens the menu to change or delete the saved signature")
+    }
+
+    /// The menu item that opens the pad to draw the signature again.
+    static var changeSignature: String {
+        String(localized: "Change Signature", comment: "Menu item of the Sign tool that opens the pad to draw the saved signature again")
+    }
+
+    /// The menu item, and the confirmation's button, that forgets the saved signature.
+    static var deleteSignature: String {
+        String(localized: "Delete Signature", comment: "Menu item of the Sign tool, and the button that confirms it, that forgets the saved signature")
+    }
+
+    /// The question asked before the saved signature is forgotten.
+    static var deleteSignatureConfirm: String {
+        String(localized: "Delete your saved signature?", comment: "Title of the confirmation before the saved signature is forgotten")
+    }
+
+    /// Under that question.
+    static var deleteSignatureConfirmMessage: String {
+        String(localized: "Signatures already placed stay on their pages.", comment: "Message of the confirmation before the saved signature is forgotten: the ones placed on pages are not removed")
+    }
+
+    /// Why the signature drawn was not kept: its file could not be written.
+    static var signatureNotSaved: String {
+        String(localized: "Your signature could not be saved.", comment: "Shown when the signature drawn in the pad could not be written to the device")
+    }
+
+    /// Why the saved signature is still there: its file could not be removed.
+    static var signatureNotDeleted: String {
+        String(localized: "Your signature could not be deleted.", comment: "Shown when the saved signature could not be removed from the device")
     }
 
     // MARK: Comments

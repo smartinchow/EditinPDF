@@ -1,8 +1,9 @@
 import UIKit
 
 /// What is drawn over one page, on top of its tiles: the boxes of the search hits (the hit being
-/// looked at in another colour), for text selection, the selected text, a shape being dragged out
-/// with a Markup tool, and the outline of the annotation selected with Select.
+/// looked at in another colour), for text selection, the selected text, signatures being placed with
+/// Sign, a shape being dragged out with a Markup tool, and the outline of the annotation selected with
+/// Select.
 ///
 /// It is a subview of the page view with the same bounds, and the boxes are given in PDF points
 /// (view space: origin at the top-left, y down), so it draws them `bounds.width / pointSize.width`
@@ -32,6 +33,13 @@ final class PageOverlayView: UIView {
     /// scroll view controller fills it with the page's part of the selection.
     var selection: [CGRect] = [] {
         didSet { if selection != oldValue { update() } }
+    }
+
+    /// Signatures placed with Sign and on their way into the page, their strokes in PDF points: drawn
+    /// as the page will show them (black, `SignatureStore.lineWidth` wide) until it does.
+    /// `MarkupInteraction` adds each, and takes it off once it is on the page or refused.
+    var signatures: [SignatureDraft] = [] {
+        didSet { if signatures != oldValue { update() } }
     }
 
     /// A shape being dragged out with a shape tool, in PDF points, drawn over everything else in
@@ -69,6 +77,14 @@ final class PageOverlayView: UIView {
     let selectionLayer = PageOverlayView.makeLayer(UIColor(red: 0, green: 0.48, blue: 1, alpha: 0.30))
     let highlightLayer = PageOverlayView.makeLayer(UIColor.yellow.withAlphaComponent(0.35))
     let activeLayer = PageOverlayView.makeLayer(UIColor.orange.withAlphaComponent(0.5))
+    let signatureLayer: CAShapeLayer = {
+        let layer = BoxesLayer()
+        layer.lineCap = .round
+        layer.lineJoin = .round
+        layer.fillColor = nil
+        layer.strokeColor = SignatureStore.color.uiColor.cgColor
+        return layer
+    }()
     let draftLayer: CAShapeLayer = {
         let layer = BoxesLayer()
         layer.lineCap = .round
@@ -99,7 +115,7 @@ final class PageOverlayView: UIView {
         isUserInteractionEnabled = false
         // Highlights run to the page's edge at most.
         clipsToBounds = true
-        for layer in [selectionLayer, highlightLayer, activeLayer, draftLayer, annotationOutlineLayer, annotationDotsLayer] {
+        for layer in [selectionLayer, highlightLayer, activeLayer, signatureLayer, draftLayer, annotationOutlineLayer, annotationDotsLayer] {
             self.layer.addSublayer(layer)
         }
     }
@@ -133,8 +149,27 @@ final class PageOverlayView: UIView {
             layer.frame = bounds
             layer.path = Self.path(of: boxes, scale: scale)
         }
+        updateSignatures(scale: scale)
         updateDraft(scale: scale)
         updateSelectedAnnotation(scale: scale)
+    }
+
+    /// Draws `signatures` at `scale`: each stroke through its points, a stroke of one point a dot.
+    private func updateSignatures(scale: CGFloat) {
+        signatureLayer.frame = bounds
+        guard scale > 0, !signatures.isEmpty else {
+            signatureLayer.path = nil
+            return
+        }
+        let path = CGMutablePath()
+        for stroke in signatures.flatMap(\.strokes) {
+            guard let first = stroke.first else { continue }
+            // One point is a dot: the round cap of a line of no length.
+            path.addLines(between: stroke.count > 1 ? stroke : [first, first])
+        }
+        var transform = CGAffineTransform(scaleX: scale, y: scale)
+        signatureLayer.path = path.copy(using: &transform)
+        signatureLayer.lineWidth = max(CGFloat(SignatureStore.lineWidth) * scale, 1 / max(contentScaleFactor, 1))
     }
 
     /// Outlines `selectedAnnotationRect`, moved by `dragOffset`, at `scale`, a dot at each corner.
@@ -209,6 +244,13 @@ final class PageOverlayView: UIView {
         layer.strokeColor = nil
         return layer
     }
+}
+
+/// A signature on its way into its page (`PageOverlayView.signatures`): its strokes, in PDF points.
+/// Each placing is its own, though two be alike.
+struct SignatureDraft: Equatable {
+    let id = UUID()
+    let strokes: [[CGPoint]]
 }
 
 /// How a shape being dragged out is drawn over its page (`PageOverlayView.draft`): its line's colour

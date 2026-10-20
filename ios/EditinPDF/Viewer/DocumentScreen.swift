@@ -182,12 +182,17 @@ struct DocumentScreen: View {
         Binding(get: { model.choiceDraft }, set: { model.choiceDraft = $0 })
     }
 
+    /// Whether the signature pad is up.
+    private var showsSignaturePad: Binding<Bool> {
+        Binding(get: { model.showsSignaturePad }, set: { model.showsSignaturePad = $0 })
+    }
+
     /// Whether the alert about a change that was not made is up: while the model has one to show, and
-    /// neither the note sheet nor the Comments list, which show their own, nor the sheet of a list's
-    /// options, is up.
+    /// neither the note sheet, the signature pad nor the Comments list, which show their own, nor the
+    /// sheet of a list's options, is up.
     private var showsEditFailure: Binding<Bool> {
         Binding(
-            get: { model.failure != nil && model.noteDraft == nil && !showsComments && model.choiceDraft == nil },
+            get: { model.failure != nil && model.noteDraft == nil && !model.showsSignaturePad && !showsComments && model.choiceDraft == nil },
             set: { isShown in if !isShown { model.failure = nil } }
         )
     }
@@ -301,6 +306,15 @@ struct DocumentScreen: View {
                         await model.saveNoteDraft(text: text)
                     }, cancel: {
                         model.noteDraft = nil
+                    })
+                }
+                // Sign picked or tapped with no signature saved, or Change Signature, opens the pad here:
+                // Save keeps what is drawn (the pad goes once it is kept), Cancel leaves the saved one.
+                .sheet(isPresented: showsSignaturePad) {
+                    SignaturePadSheet(failure: editFailure, save: { signature in
+                        model.saveSignature(signature)
+                    }, cancel: {
+                        model.showsSignaturePad = false
                     })
                 }
         case .locked:

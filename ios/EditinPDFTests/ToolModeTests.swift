@@ -43,12 +43,26 @@ final class ToolModeTests: XCTestCase {
     }
 
     func testEveryToolHasATitleAndAnIcon() {
-        XCTAssertEqual(Tool.allCases.count, 12)
+        XCTAssertEqual(Tool.allCases.count, 13)
         for tool in Tool.allCases {
             XCTAssertFalse(tool.title.isEmpty, "\(tool)")
             XCTAssertNotNil(UIImage(systemName: tool.systemImage), "\(tool): no symbol \(tool.systemImage)")
         }
         XCTAssertEqual(Tool.ink.systemImage, "scribble"); XCTAssertEqual(Tool.select.systemImage, "cursorarrow")
+        XCTAssertEqual(Tool.signature.systemImage, "signature"); XCTAssertEqual(Tool.signature.title, "Sign")
+    }
+
+    /// Sign places a saved signature with a tap, always black and 1.5 points wide: it has no style to
+    /// pick, and it is refused where markup is, turned pages included in neither.
+    func testSignPlacesByTapAndHasNoStyle() {
+        XCTAssertTrue(Tool.signature.placesByTap)
+        XCTAssertTrue(Tool.signature.annotates)
+        XCTAssertFalse(Tool.signature.hasStyle); XCTAssertFalse(Tool.signature.usesWidth); XCTAssertFalse(Tool.signature.drawsShape)
+        XCTAssertNil(Tool.signature.markupKind)
+        XCTAssertEqual(Tool.signature.refusal(canAnnotate: false, pageRotation: 0), Strings.markupNotAllowed)
+        XCTAssertNil(Tool.signature.refusal(canAnnotate: true, pageRotation: 90), "a signature is ink: it goes on a turned page too")
+        XCTAssertEqual(SignatureStore.lineWidth, 1.5)
+        XCTAssertEqual(SignatureStore.color, RGBA(r: 0, g: 0, b: 0))
     }
 
     func testWhatEachToolsStyleOffers() {

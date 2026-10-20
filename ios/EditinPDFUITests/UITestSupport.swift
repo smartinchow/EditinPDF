@@ -6,12 +6,12 @@ import XCTest
 extension XCTestCase {
     /// Launches the app with `fixture` staged in its Documents folder, and opens it from the document
     /// browser. Returns the running app.
-    /// The document is staged under `name` when one is given.
-    func launchAndOpen(_ fixture: String, as name: String? = nil) -> XCUIApplication {
+    /// The document is staged under `name` when one is given; `arguments` are added to the launch's.
+    func launchAndOpen(_ fixture: String, as name: String? = nil, arguments: [String] = []) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         // The second pair keeps a document scene from an earlier test from coming back: each test starts at the browser.
-        app.launchArguments = ["-openFixture", fixture, "-ApplePersistenceIgnoreState", "YES"]
+        app.launchArguments = ["-openFixture", fixture, "-ApplePersistenceIgnoreState", "YES"] + arguments
         if let name { app.launchArguments += ["-fixtureName", name] }
         app.launch()
         openFromBrowser(name ?? fixture, in: app)

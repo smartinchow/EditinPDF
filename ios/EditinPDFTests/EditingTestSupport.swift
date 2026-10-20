@@ -17,10 +17,11 @@ private final class FixtureBundleMarker {}
 /// A model of `<fixture>.pdf`, opened, with a fresh `UndoManager` of its own wired in, as the
 /// document scene's would be. The caller keeps the undo manager: the model only holds it weakly. Its
 /// tools' styles are its own (`isolatedToolStyles`): a test that changes one changes no other test's,
-/// nor the app's.
+/// nor the app's. So is its signature store (`isolatedSignatures`), empty.
 @MainActor
 func makeModel(fixture: String = "sample") throws -> (DocumentModel, UndoManager) {
-    let model = DocumentModel(outcome: OpenOutcome(bytes: try fixtureData(fixture)), toolStyles: isolatedToolStyles())
+    let model = DocumentModel(outcome: OpenOutcome(bytes: try fixtureData(fixture)), toolStyles: isolatedToolStyles(),
+                              signatures: isolatedSignatures())
     guard case .open = model.state else { throw FixtureError.notOpen(fixture) }
     let undoManager = UndoManager()
     model.undoManager = undoManager
@@ -38,10 +39,19 @@ func isolatedToolStyles() -> ToolStyleStore {
     return ToolStyleStore(defaults: defaults)
 }
 
-/// A model of `bytes` whose tools' styles are the tests' own (`isolatedToolStyles`), not the app's.
+/// A model of `bytes` whose tools' styles and signature store are the tests' own (`isolatedToolStyles`,
+/// `isolatedSignatures`), not the app's.
 @MainActor
 func isolatedModel(bytes: Data) -> DocumentModel {
-    DocumentModel(outcome: OpenOutcome(bytes: bytes), toolStyles: isolatedToolStyles())
+    DocumentModel(outcome: OpenOutcome(bytes: bytes), toolStyles: isolatedToolStyles(), signatures: isolatedSignatures())
+}
+
+/// A signature store in a folder of its own under the temporary folder, with nothing saved: a test that
+/// saves a signature saves it there, never in the app's Application Support.
+@MainActor
+func isolatedSignatures() -> SignatureStore {
+    SignatureStore(directory: FileManager.default.temporaryDirectory
+        .appending(path: "EditinPDFTests-signatures/\(UUID().uuidString)", directoryHint: .isDirectory))
 }
 
 /// The middle of the first glyph on page 0 of the model's document, in view space.

@@ -529,6 +529,83 @@ final class EditorSmokeTests: XCTestCase {
         attach(app, "comments-empty")
     }
 
+    /// Sign: picked with no signature saved (the launch forgets any), it opens the pad, where one finger
+    /// draws a made-up squiggle and Save keeps it. Each tap on the page then places it: two taps, two
+    /// drawings in the Comments list, and one Undo takes the second back. Delete Signature, in the
+    /// tool's menu, asks first, then forgets it: the next tap opens the pad again.
+    func testSigningPlacesTheSavedSignatureWhereTapped() throws {
+        let app = launchAndOpen("sample.pdf", arguments: ["-forgetSignature"])
+        let indicator = app.staticTexts["pageIndicator"]
+        expect(indicator, toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let sign = app.buttons["tool-signature"]
+        XCTAssertTrue(sign.waitForEnabled(timeout: 5), "Sign is disabled on a document that allows markup")
+        sign.tap()
+        let canvas = app.descendants(matching: .any)["signatureCanvas"]
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5), "picking Sign with no signature saved did not open the pad")
+        let save = app.buttons["signatureSaveButton"]
+        XCTAssertTrue(save.exists, "the pad has no Save")
+        XCTAssertFalse(save.isEnabled, "Save is on with nothing drawn")
+        // Two strokes, one finger each.
+        func point(_ x: CGFloat, _ y: CGFloat) -> XCUICoordinate { canvas.coordinate(withNormalizedOffset: CGVector(dx: x, dy: y)) }
+        point(0.15, 0.65).press(forDuration: 0.05, thenDragTo: point(0.45, 0.3))
+        point(0.45, 0.3).press(forDuration: 0.05, thenDragTo: point(0.85, 0.6))
+        XCTAssertTrue(save.waitForEnabled(timeout: 5), "Save is still off after drawing")
+        attach(app, "sign-pad")
+        // On its side the pad is still there to sign on, with what was drawn.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        sleep(1)
+        XCTAssertTrue(canvas.isHittable, "the pad is not there on its side")
+        XCTAssertGreaterThan(canvas.frame.width, canvas.frame.height, "on its side the pad is wider than it is high")
+        XCTAssertTrue(save.isEnabled, "turning the phone lost the drawing")
+        attach(app, "sign-pad-landscape")
+        XCUIDevice.shared.orientation = .portrait
+        sleep(1)
+        save.tap()
+        XCTAssertTrue(canvas.waitForNonExistence(timeout: 5), "Save did not put the pad away")
+
+        let undo = app.buttons["undoButton"]
+        pagePoint(CGPoint(x: 200, y: 300), pageWidth: 612, in: app).tap()
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "the first tap placed nothing")
+        pagePoint(CGPoint(x: 400, y: 520), pageWidth: 612, in: app).tap()
+        sleep(2)
+        XCTAssertEqual(indicator.label, "1 / 3", "a tap moved the pages")
+        XCTAssertFalse(canvas.exists, "a tap with a signature saved opened the pad")
+        attach(app, "sign-placed")
+        XCTAssertEqual(drawingsListed(in: app), 2, "two taps, two signatures")
+        XCTAssertTrue(tapToolbarButton("undoButton", titled: "Undo", in: app), "no Undo button")
+        sleep(1)
+        XCTAssertEqual(drawingsListed(in: app), 1, "one Undo took back one signature")
+
+        // Delete Signature asks first, then forgets the signature.
+        let options = app.buttons["signatureMenuButton"]
+        XCTAssertTrue(options.waitForExistence(timeout: 5), "Sign has no menu")
+        options.tap()
+        let delete = menuItem("Delete Signature", in: app)
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), "the menu offers no Delete Signature")
+        delete.tap()
+        let confirm = app.buttons.matching(NSPredicate(format: "label == %@", "Delete Signature")).firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "deleting the signature was not confirmed first")
+        attach(app, "sign-delete-confirm")
+        confirm.tap()
+        pagePoint(CGPoint(x: 300, y: 650), pageWidth: 612, in: app).tap()
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5), "with the signature deleted, a tap did not open the pad")
+        app.buttons["signatureCancelButton"].tap()
+        XCTAssertTrue(canvas.waitForNonExistence(timeout: 5), "Cancel did not put the pad away")
+        XCTAssertEqual(drawingsListed(in: app), 1, "deleting the saved signature took one off the page")
+    }
+
+    /// How many drawings the Comments list has: opened, counted, and put away.
+    private func drawingsListed(in app: XCUIApplication) -> Int {
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-' AND label CONTAINS 'Drawing'"))
+        _ = rows.firstMatch.waitForExistence(timeout: 5)
+        let count = rows.count
+        app.buttons["commentsDoneButton"].tap()
+        _ = rows.firstMatch.waitForNonExistence(timeout: 5)
+        return count
+    }
+
     /// Select: a tap on a rectangle selects it (its menu offers Delete); one finger dragged from it
     /// moves it there, instead of scrolling; a tap and Delete take it off the page, and Undo brings it
     /// back.

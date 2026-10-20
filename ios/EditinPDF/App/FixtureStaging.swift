@@ -17,6 +17,9 @@ enum FixtureStaging {
     /// Optional, after `-openFixture`: the name the document is staged under instead of its own, such
     /// as a long one, for a test that needs the title to take up the navigation bar.
     static let nameArgument = "-fixtureName"
+    /// Launched with this, the app forgets the signature an earlier run saved (`SignatureStore`), so a
+    /// test of Sign starts with none.
+    static let forgetSignatureArgument = "-forgetSignature"
 
     enum StagingError: Error {
         /// The name is empty or has a path in it: only the name of a bundled file is accepted.

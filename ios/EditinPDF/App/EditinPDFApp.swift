@@ -7,6 +7,10 @@ struct EditinPDFApp: App {
         #if DEBUG
         // UI tests ask for a sample document to be put in the Documents folder (see FixtureStaging).
         FixtureStaging.stageRequestedFixture()
+        // And for the signature saved by an earlier run to be forgotten, so Sign starts with none.
+        if ProcessInfo.processInfo.arguments.contains(FixtureStaging.forgetSignatureArgument) {
+            try? SignatureStore.shared.delete()
+        }
         #endif
     }
 

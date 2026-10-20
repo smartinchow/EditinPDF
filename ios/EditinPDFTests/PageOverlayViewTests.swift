@@ -158,10 +158,10 @@ final class PageOverlayViewTests: XCTestCase {
     func testTheActiveBoxIsOnTop() throws {
         let overlay = makeOverlay()
         let layers = try XCTUnwrap(overlay.layer.sublayers)
-        // A shape being dragged out with a Markup tool is drawn over them all, and the outline of the
-        // selected annotation over that.
-        XCTAssertEqual(layers, [overlay.selectionLayer, overlay.highlightLayer, overlay.activeLayer, overlay.draftLayer,
-                                overlay.annotationOutlineLayer, overlay.annotationDotsLayer])
+        // Signatures being added and a shape being dragged out with a Markup tool are drawn over them
+        // all, and the outline of the selected annotation over those.
+        XCTAssertEqual(layers, [overlay.selectionLayer, overlay.highlightLayer, overlay.activeLayer, overlay.signatureLayer,
+                                overlay.draftLayer, overlay.annotationOutlineLayer, overlay.annotationDotsLayer])
     }
 
     /// The selected annotation is outlined just outside its box, with a dot at each corner, at the

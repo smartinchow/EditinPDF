@@ -118,6 +118,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.actionMoveAnnotation, "Move Markup")
         XCTAssertEqual(Strings.actionEditAnnotation, "Edit Markup")
         XCTAssertEqual(Strings.actionFillField, "Fill Form")
+        XCTAssertEqual(Strings.actionSign, "Add Signature")
     }
 
     func testOrganizeStrings() {
@@ -185,5 +186,23 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.fieldUnchecked, "unchecked")
         XCTAssertEqual(Strings.radioButtonLabel(field: "size", option: "L"), "size, L")
         XCTAssertEqual(Strings.actionFillField, "Fill Form")
+    }
+
+    func testSignWording() {
+        XCTAssertEqual(Strings.sign, "Sign")
+        XCTAssertEqual(Strings.signatureTitle, "Your Signature")
+        XCTAssertEqual(Strings.clear, "Clear")
+        XCTAssertEqual(Strings.changeSignature, "Change Signature")
+        XCTAssertEqual(Strings.deleteSignature, "Delete Signature")
+        XCTAssertEqual(Strings.signatureOptions, "Signature Options")
+        XCTAssertEqual(Strings.signHere, "Sign here")
+        XCTAssertEqual(Strings.signatureCanvas, "Drawing area for your signature")
+        XCTAssertEqual(Strings.deleteSignatureConfirm, "Delete your saved signature?")
+        XCTAssertEqual(Strings.deleteSignatureConfirmMessage, "Signatures already placed stay on their pages.")
+        XCTAssertEqual(Strings.signatureNotSaved, "Your signature could not be saved.")
+        XCTAssertEqual(Strings.signatureNotDeleted, "Your signature could not be deleted.")
+        XCTAssertEqual(Strings.actionSign, "Add Signature")
+        XCTAssertEqual(Strings.save, "Save")
+        XCTAssertEqual(Strings.cancel, "Cancel")
     }
 }

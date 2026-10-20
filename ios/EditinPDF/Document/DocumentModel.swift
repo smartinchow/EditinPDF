@@ -93,6 +93,18 @@ final class DocumentModel {
     }
     /// Each tool's colour and size, kept between documents and launches.
     let toolStyles: ToolStyleStore
+    /// The reader's signature, which Sign places: the app's, shared by every document.
+    let signatures: SignatureStore
+
+    /// Picks `tool`, as the palette does. Sign picked with no signature saved opens the pad to draw
+    /// one (`showsSignaturePad`), where Sign may be used; with one saved, the next tap places it.
+    func pick(_ tool: Tool) {
+        self.tool = tool
+        guard tool == .signature, canUse(.signature) else { return }
+        // Read again: the file may have been unreadable while the device was locked.
+        signatures.reload()
+        if signatures.saved == nil { showsSignaturePad = true }
+    }
 
     /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can
     /// be (and while the document's permissions are not read yet).
@@ -236,6 +248,69 @@ final class DocumentModel {
                         color: style.color.rgbColor, width: width)
         }
         return enqueue(edits, named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+    }
+
+    // MARK: Signing
+
+    /// Whether the pad the signature is drawn in is up: Sign picked or tapped with none saved opens it,
+    /// so does Change Signature; Save (once the signature is kept) and Cancel put it away.
+    var showsSignaturePad = false
+
+    /// The saved signature as it would be placed on `page`, centred on `point` (view space), at its
+    /// default width for the page as shown (`SignatureStore.defaultWidth`, `place`); nil with none saved,
+    /// or for a page the document does not have.
+    func signatureStrokes(onPage page: Int, centeredAt point: CGPoint) -> [[CGPoint]]? {
+        guard let saved = signatures.saved, pages.indices.contains(page) else { return nil }
+        let size = CGSize(width: pages[page].widthPt, height: pages[page].heightPt)
+        let strokes = SignatureStore.place(saved, centeredAt: point, width: SignatureStore.defaultWidth(pageSize: size), pageSize: size)
+        return strokes.isEmpty ? nil : strokes
+    }
+
+    /// Places the saved signature on `page`, centred on `point` (view space; see `enqueueSignature`),
+    /// and says whether it was placed. Nothing happens with none saved.
+    @discardableResult
+    func addSignature(page: Int, at point: CGPoint) async -> Bool {
+        guard let strokes = signatureStrokes(onPage: page, centeredAt: point) else { return false }
+        return await enqueueSignature(page: page, strokes: strokes).value
+    }
+
+    /// Adds `strokes` (view space: PDF points of `page`) as a signature, black and
+    /// `SignatureStore.lineWidth` wide: one change named `Strings.actionSign`, which one undo takes back,
+    /// handed over at once. In the file it is ink, which Select moves and the eraser deletes like any
+    /// drawing. `revision` as for `enqueueShape`: one worked out before a turn of its page is refused as
+    /// stale. Where markup is refused, so is this, with the reason. The strokes are what
+    /// `signatureStrokes` gives: within what the bridge takes for one drawing.
+    @discardableResult
+    func enqueueSignature(page: Int, strokes: [[CGPoint]], workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
+        if let refusal = refusal(of: .signature, onPage: page) { return refuse(refusal) }
+        guard let pageNumber = UInt32(exactly: page), !strokes.isEmpty else { return Task { false } }
+        let edit = Edit.addSignature(page: pageNumber, strokes: strokes.map { $0.map { Point(x: Double($0.x), y: Double($0.y)) } },
+                                     color: SignatureStore.color.rgbColor, width: SignatureStore.lineWidth)
+        return enqueue([edit], named: Strings.actionSign, touching: [page], workedOutAt: revision)
+    }
+
+    /// The pad's Save: keeps `signature` in place of any saved, and puts the pad away. When it cannot be
+    /// written, `failure` says so and the pad stays up, with what was drawn. Says whether it was kept.
+    @discardableResult
+    func saveSignature(_ signature: SavedSignature) -> Bool {
+        do {
+            try signatures.save(signature)
+        } catch {
+            failure = EditFailure(message: Strings.signatureNotSaved)
+            return false
+        }
+        showsSignaturePad = false
+        return true
+    }
+
+    /// Delete Signature, once confirmed: forgets the saved signature (those placed stay on their
+    /// pages). When its file cannot be removed, `failure` says so.
+    func deleteSignature() {
+        do {
+            try signatures.delete()
+        } catch {
+            failure = EditFailure(message: Strings.signatureNotDeleted)
+        }
     }
 
     // MARK: Text boxes, notes and shapes
@@ -439,10 +514,12 @@ final class DocumentModel {
     let engine: EngineHandle
 
     /// `engine` is the file's handle; a model with no file of its own (a test's) gets a handle of its own.
-    /// `toolStyles` defaults to the styles kept in the standard user defaults.
-    init(outcome: OpenOutcome, engine: EngineHandle = EngineHandle(), toolStyles: ToolStyleStore? = nil) {
+    /// `toolStyles` defaults to the styles kept in the standard user defaults, and `signatures` to the
+    /// app's store (`SignatureStore.shared`).
+    init(outcome: OpenOutcome, engine: EngineHandle = EngineHandle(), toolStyles: ToolStyleStore? = nil, signatures: SignatureStore? = nil) {
         self.engine = engine
         self.toolStyles = toolStyles ?? ToolStyleStore()
+        self.signatures = signatures ?? .shared
         (state, pages) = Self.resolve(outcome)
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
