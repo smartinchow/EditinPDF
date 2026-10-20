@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The screen for one document: its pages, once it is open, with Undo and Redo at the leading end of
-/// the toolbar and the Markup, search, thumbnails and Organize Pages buttons at the trailing end (and, while text is selected,
+/// the toolbar and the Markup, search, Comments, thumbnails and Organize Pages buttons at the trailing end (and, while text is selected,
 /// a Copy button before them), and the page indicator (and, while a search has hits, the bar to move
 /// between them) over the pages. In Markup mode the tool palette stands over the pages too: above
 /// the page indicator on a compact width, at the leading edge on a regular one. The pages and the thumbnails follow every change, undo and redo.
@@ -25,6 +25,8 @@ struct DocumentScreen: View {
     /// Whether the search sheet is up. The search itself is the model's, so it is the same one each
     /// time the sheet opens.
     @State private var showsSearch = false
+    /// Whether the Comments list is up.
+    @State private var showsComments = false
     /// Set to show the thumbnails sheet, and cleared when it closes.
     @State private var thumbnailsSheet: ThumbnailsPresentation?
     /// Set to show Organize Pages, and cleared when it closes.
@@ -166,10 +168,10 @@ struct DocumentScreen: View {
     }
 
     /// Whether the alert about a change that was not made is up: while the model has one to show, and
-    /// the note sheet, which shows its own, is not up.
+    /// neither the note sheet nor the Comments list, which show their own, is up.
     private var showsEditFailure: Binding<Bool> {
         Binding(
-            get: { model.failure != nil && model.noteDraft == nil },
+            get: { model.failure != nil && model.noteDraft == nil && !showsComments },
             set: { isShown in if !isShown { model.failure = nil } }
         )
     }
@@ -187,7 +189,8 @@ struct DocumentScreen: View {
                            activeHighlight: model.search?.activeHighlight,
                            selection: model.selection?.pageRects,
                            lastChange: model.lastChange,
-                           tool: model.tool)
+                           tool: model.tool,
+                           selectedAnnotation: model.selectedAnnotationPlace)
                 .ignoresSafeArea()
                 // An overlay, not a bar: the scroll view's insets do not change when it appears.
                 .overlay(alignment: .bottom) {
@@ -224,6 +227,7 @@ struct DocumentScreen: View {
                         copyButton
                         markupButton
                         searchButton
+                        commentsButton
                         thumbnailsButton
                         organizeButton
                     }
@@ -248,6 +252,10 @@ struct DocumentScreen: View {
                     if let search = model.search {
                         SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
                     }
+                }
+                // The comments, page by page: a tap jumps to one and selects it, a swipe deletes it.
+                .sheet(isPresented: $showsComments) {
+                    CommentsSheet(model: model, failure: editFailure) { row in jump(to: row) }
                 }
                 // A tap with Note opens its note here: Save adds or changes it, and the sheet goes once it
                 // has; a refusal says why over the sheet, which stays with what was written. Cancel leaves
@@ -390,6 +398,27 @@ struct DocumentScreen: View {
         }
         .disabled(model.pageCount == 0)
         .accessibilityIdentifier("searchButton")
+    }
+
+    /// Opens the list of the document's comments and markup.
+    private var commentsButton: some View {
+        Button {
+            showsComments = true
+        } label: {
+            Label(Strings.comments, systemImage: "text.bubble")
+        }
+        .disabled(model.pageCount == 0)
+        .accessibilityIdentifier("commentsButton")
+    }
+
+    /// What a tap on a row of the Comments list does: the list goes, Markup's Select is picked, and the
+    /// annotation is selected and brought into view (its page to the top, then its box into view).
+    private func jump(to row: CommentRow) {
+        showsComments = false
+        if model.tool != .select { model.tool = .select }
+        model.selectedAnnotation = row.id
+        scrollTarget = row.page
+        revealRect = PageRect(page: row.page, rect: row.rect)
     }
 
     private var thumbnailsButton: some View {

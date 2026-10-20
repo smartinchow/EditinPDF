@@ -3,9 +3,11 @@ import UIKit
 import UIKit.UIGestureRecognizerSubclass
 
 /// What a finger on the pages does in Markup mode, for the tools that act on the page by touch:
-/// Highlight, Underline and Strikethrough, which mark the text a finger drags across; Draw; the shape
-/// tools, which draw a rectangle, an oval, a line or an arrow where a finger drags; Text Box, which
-/// puts a box to type in where a finger taps; and Note, which opens a note there.
+/// Select, which picks an annotation already there, drags it and offers its menu; Highlight,
+/// Underline and Strikethrough, which mark the text a finger drags across; Draw; the shape tools,
+/// which draw a rectangle, an oval, a line or an arrow where a finger drags; Text Box, which puts a
+/// box to type in where a finger taps; Note, which opens a note there; and the eraser, which deletes
+/// the annotations it touches.
 ///
 /// It belongs to a `PageScrollViewController`, like `SelectionInteraction`, and asks it where a touch
 /// is on a page (`pageLocation(of:)`, `pagePoint(ofContentPoint:onPage:)`), so a touch becomes a point
@@ -48,6 +50,12 @@ import UIKit.UIGestureRecognizerSubclass
 /// scroll and zoom, as for the text tools. The shape is worked out against the revision the drag
 /// began on, and drawn solid until the page shows it; refused (stale, say), it goes at once.
 ///
+/// **Select** (`AnnotationSelectInteraction`) takes a tap on an annotation, or anywhere while one is
+/// selected, and one finger that goes down on the selected annotation, which it drags; elsewhere one
+/// finger scrolls. **The eraser** (`EraserInteraction`) takes one finger, and a tap, anywhere on a page
+/// where it may be used. Both share this pan and this tap; two fingers scroll and zoom, as for the
+/// others.
+///
 /// **Text Box and Note** take a tap (`placeTap`), on a page where the tool may be used; a drag
 /// scrolls. Note opens the note sheet (`DocumentModel.noteDraft`): for the note under the finger, or
 /// a new one there. Text Box puts a box to type in there: `TextBoxInteraction`, which has the box and
@@ -76,6 +84,10 @@ final class MarkupInteraction: NSObject {
     let drawing: InkInteraction
     /// Text Box: the box being typed in, and the keyboard over it.
     let textBoxes: TextBoxInteraction
+    /// Select: the annotation picked, dragged, and its menu.
+    let selecting: AnnotationSelectInteraction
+    /// The eraser: its strokes and taps.
+    let eraser: EraserInteraction
     /// Hears of every finger going down in the screen's window, without taking it: see
     /// `fingerWentDown`. The scroll view's controller puts it on its window while it is on screen.
     let fingersDown = FingerDownObserver()
@@ -140,6 +152,8 @@ final class MarkupInteraction: NSObject {
         self.model = model
         drawing = InkInteraction(host: host, model: model)
         textBoxes = TextBoxInteraction(host: host, model: model)
+        selecting = AnnotationSelectInteraction(host: host, model: model, textBoxes: textBoxes)
+        eraser = EraserInteraction(host: host, model: model)
         super.init()
     }
 
@@ -159,6 +173,7 @@ final class MarkupInteraction: NSObject {
         placeTap.delegate = self
         host.contentView.addGestureRecognizer(placeTap)
         textBoxes.install()
+        selecting.install()
         model.inkHolder = self
         toolDidChange()
     }
@@ -175,11 +190,13 @@ final class MarkupInteraction: NSObject {
         return (tool, kind)
     }
 
-    /// Whether a finger going down at `point` (the content view's coordinates) drags: out a shape, when
-    /// a shape tool is picked and may be used on the page under it; out text to mark, when a text markup
-    /// tool is picked and may be used, and the point is on the page's text (or the page's text is not
-    /// read yet: see `isNearText`). Otherwise the finger scrolls.
+    /// Whether a finger going down at `point` (the content view's coordinates) drags: the selected
+    /// annotation, with Select, when the point is on it; an eraser stroke; out a shape, when a shape
+    /// tool is picked and may be used on the page under it; out text to mark, when a text markup tool
+    /// is picked and may be used, and the point is on the page's text (or the page's text is not read
+    /// yet: see `isNearText`). Otherwise the finger scrolls.
     func takesTouch(atContentPoint point: CGPoint) -> Bool {
+        if selecting.takesTouch(atContentPoint: point) || eraser.takesTouch(atContentPoint: point) { return true }
         guard let location = host?.pageLocation(of: point) else { return false }
         if shapeTool(onPage: location.page) != nil { return true }
         guard textTool(onPage: location.page) != nil else { return false }
@@ -255,21 +272,39 @@ final class MarkupInteraction: NSObject {
         case .began:
             // The pan begins once the finger has moved a little: the drag starts where it went down.
             let start = panStart()
-            if beginShape(atContentPoint: start) {
+            if selecting.beginMove(atContentPoint: start) {
+                selecting.move(toContentPoint: location)
+            } else if eraser.begin(atContentPoint: start) {
+                eraser.move(toContentPoint: location)
+            } else if beginShape(atContentPoint: start) {
                 moveShape(toContentPoint: location)
             } else {
                 begin(atContentPoint: start)
                 move(toContentPoint: location)
             }
         case .changed:
-            if shapeDrag != nil { moveShape(toContentPoint: location) } else { move(toContentPoint: location) }
+            if selecting.isMoving {
+                selecting.move(toContentPoint: location)
+            } else if eraser.isErasing {
+                eraser.move(toContentPoint: location)
+            } else if shapeDrag != nil {
+                moveShape(toContentPoint: location)
+            } else {
+                move(toContentPoint: location)
+            }
         case .ended:
-            if shapeDrag != nil {
+            if selecting.isMoving {
+                selecting.endMove(atContentPoint: location)
+            } else if eraser.isErasing {
+                eraser.end(atContentPoint: location)
+            } else if shapeDrag != nil {
                 endShape(atContentPoint: location)
             } else {
                 Task { await self.end(atContentPoint: location) }
             }
         case .cancelled, .failed:
+            selecting.cancelMove()
+            eraser.cancel()
             cancelShape()
             cancel()
         default:
@@ -414,22 +449,25 @@ final class MarkupInteraction: NSObject {
     }
 
     /// Whether a tap at `point` (the content view's coordinates) is the markup's: while a box is being
-    /// typed in, any tap on the pages (it ends the box); otherwise one on a page where Text Box or Note
-    /// is picked and may be used.
+    /// typed in, any tap on the pages (it ends the box); otherwise Select's (`AnnotationSelectInteraction
+    /// .takesTap`), the eraser's, or one on a page where Text Box or Note is picked and may be used.
     func takesTap(atContentPoint point: CGPoint) -> Bool {
         if textBoxes.textEditor != nil { return true }
+        if selecting.takesTap(atContentPoint: point) || eraser.takesTap(atContentPoint: point) { return true }
         guard let location = host?.pageLocation(of: point) else { return false }
         return placeTool(onPage: location.page) != nil
     }
 
     /// A tap at `point` (the content view's coordinates): it ends the box being typed in, if there is
-    /// one (and starts no other); otherwise, with Text Box, it puts a box to type in there, and with
-    /// Note, it opens the note sheet for the note under it or a new one there.
+    /// one (and starts no other); otherwise, with Select, it selects the annotation under it or none;
+    /// with the eraser, it deletes the one under it; with Text Box, it puts a box to type in there; and
+    /// with Note, it opens the note sheet for the note under it or a new one there.
     func place(atContentPoint point: CGPoint) {
         if textBoxes.textEditor != nil {
             commitPendingText()
             return
         }
+        if selecting.tap(atContentPoint: point) || eraser.tap(atContentPoint: point) != nil { return }
         guard let location = host?.pageLocation(of: point), let tool = placeTool(onPage: location.page) else { return }
         switch tool {
         case .textBox:
@@ -445,9 +483,7 @@ final class MarkupInteraction: NSObject {
     private func openNote(onPage page: Int, at point: CGPoint) {
         guard let size = pageSize(page) else { return }
         if let note = model.annotationIndex.hit(page: page, at: point, slop: hitSlop(onPage: page), matching: { $0.kind == .note }) {
-            model.noteDraft = NoteDraft(page: page, point: CGPoint(x: note.rect.x, y: note.rect.y),
-                                        existing: AnnotationRef(page: page, index: note.index), text: note.contents ?? "",
-                                        revision: model.revision)
+            model.editNote(note)
         } else {
             model.noteDraft = NoteDraft(page: page, point: ShapeGeometry.noteBox(at: point, pageSize: size), existing: nil,
                                         text: "", revision: model.revision)
@@ -481,23 +517,28 @@ final class MarkupInteraction: NSObject {
     }
 
     /// The tool changed (`PageScrollViewController.markupTool`): the box being typed in, if any, is
-    /// ended (the model has ended it too), a shape being dragged out with another tool is dropped, and
-    /// Draw sets up its gestures and its canvas for the new tool (`InkInteraction.toolDidChange`).
+    /// ended (the model has ended it too), a shape being dragged out with another tool is dropped, so are
+    /// an annotation being dragged and an eraser stroke, and Draw sets up its gestures and its canvas for
+    /// the new tool (`InkInteraction.toolDidChange`).
     func toolDidChange() {
         guard host != nil else { return }
         textBoxes.commitPendingText()
         if let drag = shapeDrag, drag.tool != model.tool { cancelShape() }
+        selecting.toolDidChange()
+        if model.tool != .eraser { eraser.cancel() }
         drawing.toolDidChange()
     }
 
     /// The pages are about to be laid out again (a new width, a change to their number, size or
     /// rotation): the strokes waiting and the text being typed are added, worked out for the layout
-    /// they were made on, and the canvas, the box typed in, a shape being dragged out and the pictures
-    /// go with that layout.
+    /// they were made on, and the canvas, the box typed in, a shape or an annotation being dragged, an
+    /// eraser stroke, the selection's menu and the pictures go with that layout.
     func layoutWillChange() {
         drawing.layoutWillChange()
         textBoxes.layoutWillChange()
         cancelShape()
+        selecting.layoutWillChange()
+        eraser.cancel()
     }
 
     // MARK: Hitting annotations

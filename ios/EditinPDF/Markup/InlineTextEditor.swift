@@ -10,6 +10,10 @@ import UIKit
 /// Its text is only on its way to the document: typing is registered on its own undo manager, never
 /// on the scene's, where it would come between the document's changes and dirty the document. It is
 /// the reader's text, and is never logged.
+///
+/// It also changes the text of a text box on the page (`existing`, Select's Edit): it is put over that
+/// box, with its text, on white, so the text as it was does not show through; it keeps the box's width
+/// (the engine wraps the new text in it) and grows down as the text does.
 final class InlineTextEditor: UITextView {
     /// The box's own undo manager: what is typed is undone here, not in the document's history.
     private let localUndo = UndoManager()
@@ -30,22 +34,39 @@ final class InlineTextEditor: UITextView {
     let pageSize: CGSize
     /// How many points on screen a PDF point is at the layout it was last given; 0 before the first.
     private(set) var screenScale: CGFloat = 0
+    /// The text box on the page whose text this changes; nil for a new text box.
+    let existing: AnnotationRef?
+    /// The text that text box had when this was put over it; empty for a new one.
+    let originalText: String
+    /// That text box's box (view space), when this changes one.
+    let existingBox: CGRect?
 
-    init(page: Int, origin: CGPoint, revision: UInt64, style: ToolStyle, pageSize: CGSize) {
+    init(page: Int, origin: CGPoint, revision: UInt64, style: ToolStyle, pageSize: CGSize,
+         existing: AnnotationRef? = nil, originalText: String = "", existingBox: CGRect? = nil) {
         self.page = page
         self.origin = origin
         self.revision = revision
         self.style = style
         self.fontSize = CGFloat(ShapeGeometry.fontSize(style.fontSize))
         self.pageSize = pageSize
+        self.existing = existing
+        self.originalText = originalText
+        self.existingBox = existingBox
         super.init(frame: .zero, textContainer: nil)
         // It grows with its text (`MarkupInteraction.layoutTextEditor`), and never scrolls itself: the
         // pages do.
         isScrollEnabled = false
         scrollsToTop = false
         textContainer.lineFragmentPadding = 0
-        // A tint shows where the box is while it is typed in; it goes when the text is added.
-        backgroundColor = UIColor.systemBlue.withAlphaComponent(0.08)
+        // A tint shows where the box is while it is typed in; it goes when the text is added. Over a text
+        // box on the page, white hides the text as it was, and a line shows the box.
+        if existing == nil {
+            backgroundColor = UIColor.systemBlue.withAlphaComponent(0.08)
+        } else {
+            backgroundColor = .white
+            layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.5).cgColor
+            layer.borderWidth = 1
+        }
         // Text on white paper, in the colour picked, whatever the appearance.
         overrideUserInterfaceStyle = .light
         accessibilityLabel = Strings.toolTextBox
@@ -84,9 +105,32 @@ final class InlineTextEditor: UITextView {
         textContainerInset = UIEdgeInsets(top: max(0, baseline - (spacing + font.descender)), left: inset, bottom: 0, right: inset)
     }
 
-    /// Takes the tint off, for the picture of the text shown while it is added.
+    /// Takes the tint off, for the picture of the text shown while it is added (over a text box on the
+    /// page, the white stays: it hides the text as it was until the page shows the new).
     func showAsAdded() {
-        backgroundColor = .clear
+        if existing == nil { backgroundColor = .clear }
+        layer.borderWidth = 0
+    }
+
+    /// The box the text box will have, in view space: for a new one, `ShapeGeometry.textBoxRect` of
+    /// what is typed; over one on the page, that box's width, and as tall as what is typed wrapped in
+    /// it, the box's own height at least.
+    var box: CGRect {
+        let text = self.text ?? ""
+        guard let existingBox else {
+            return ShapeGeometry.textBoxRect(at: origin, text: text, fontSize: fontSize, pageSize: pageSize)
+        }
+        let fitted = ShapeGeometry.textBoxRect(at: origin, text: text, fontSize: fontSize,
+                                               pageSize: CGSize(width: origin.x + existingBox.width, height: pageSize.height))
+        return CGRect(x: origin.x, y: origin.y, width: existingBox.width, height: max(existingBox.height, fitted.height))
+    }
+
+    /// Whether what is typed would change the page: for a new text box, anything but spaces and new
+    /// lines; over one on the page, text other than it had (spaces and new lines after the last
+    /// character aside).
+    var isWaiting: Bool {
+        let typed = ShapeGeometry.committedText(text ?? "")
+        return existing == nil ? !typed.isEmpty : typed != ShapeGeometry.committedText(originalText)
     }
 }
 

@@ -1,3 +1,4 @@
+import EditinPDFCore
 import UIKit
 
 /// **Text Box**: the box a text box is typed in (`InlineTextEditor`), from the tap that puts it on a
@@ -12,6 +13,10 @@ import UIKit
 /// changes, and at every moment strokes waiting are added (`DocumentModel.commitPendingInk` adds both:
 /// a finger outside the pages, any other change, Undo and Redo, the scene leaving the screen, a new
 /// layout). Nothing typed adds nothing. What is typed is the reader's, and is never logged.
+///
+/// The same box changes the text of a text box already on the page (`beginEditing`, Select's Edit): put
+/// over it, with its text, it ends the same ways, and its text replaces the text box's, in place; all
+/// of it taken away deletes the text box, and left as it was, nothing changes.
 @MainActor
 final class TextBoxInteraction: NSObject {
     private weak var host: PageScrollViewController?
@@ -46,10 +51,35 @@ final class TextBoxInteraction: NSObject {
     /// from the page's edges as far as its least width and its first line need), in Text Box's style,
     /// and brings up the keyboard.
     func beginTextBox(onPage page: Int, at point: CGPoint, pageSize size: CGSize) {
-        guard let host else { return }
+        guard host != nil else { return }
         let style = model.toolStyles[.textBox]
         let origin = ShapeGeometry.textBoxOrigin(at: point, fontSize: CGFloat(ShapeGeometry.fontSize(style.fontSize)), pageSize: size)
-        let editor = InlineTextEditor(page: page, origin: origin, revision: model.revision, style: style, pageSize: size)
+        show(InlineTextEditor(page: page, origin: origin, revision: model.revision, style: style, pageSize: size))
+    }
+
+    /// Puts the box to type in over `info`, a text box on a page shown upright, with its text, in its
+    /// colour (Text Box's when it has none) at Text Box's size, and brings up the keyboard; the box
+    /// being typed in before, if any, is ended first. Says whether it is there: not for another kind,
+    /// nor on a turned page, where the text would be typed sideways.
+    @discardableResult
+    func beginEditing(_ info: AnnotationInfo) -> Bool {
+        let page = Int(info.page)
+        guard info.kind == .textBox, model.pages.indices.contains(page), model.pages[page].rotationDegrees % 360 == 0 else { return false }
+        commitPendingText()
+        var style = model.toolStyles[.textBox]
+        if let color = info.color { style.color = RGBA(r: color.red, g: color.green, b: color.blue) }
+        let size = CGSize(width: model.pages[page].widthPt, height: model.pages[page].heightPt)
+        let editor = InlineTextEditor(page: page, origin: CGPoint(x: info.rect.x, y: info.rect.y), revision: model.revision, style: style,
+                                      pageSize: size, existing: AnnotationRef(page: page, index: info.index),
+                                      originalText: info.contents ?? "", existingBox: info.box)
+        editor.text = info.contents ?? ""
+        show(editor)
+        return true
+    }
+
+    /// Puts `editor` in the scroll view over its place, and brings up the keyboard.
+    private func show(_ editor: InlineTextEditor) {
+        guard let host else { return }
         editor.delegate = self
         host.scrollView.addSubview(editor)
         textEditor = editor
@@ -62,8 +92,7 @@ final class TextBoxInteraction: NSObject {
     /// zooms, and it is called as the text grows.
     func layoutTextEditor() {
         guard let host, let editor = textEditor else { return }
-        let box = ShapeGeometry.textBoxRect(at: editor.origin, text: editor.text ?? "", fontSize: editor.fontSize, pageSize: editor.pageSize)
-        guard let frame = host.scrollViewRect(of: box, onPage: editor.page) else { return }
+        guard let frame = host.scrollViewRect(of: editor.box, onPage: editor.page) else { return }
         editor.show(atScreenScale: host.screenScale(ofPage: editor.page))
         if editor.frame != frame { editor.frame = frame }
     }
@@ -73,6 +102,9 @@ final class TextBoxInteraction: NSObject {
     /// revision the box was put there at. A picture of the text stays over the page meanwhile: once it
     /// is made, until the page has been drawn again with it; when it is refused (stale, say), it goes
     /// at once. The task says whether it was made; nil with no box.
+    ///
+    /// Over a text box on the page, its text, changed, replaces the text box's (all of it taken away,
+    /// the text box is deleted); unchanged, nothing is handed over, and the task is nil.
     @discardableResult
     func commitPendingText() -> Task<Bool, Never>? {
         guard let editor = textEditor else { return nil }
@@ -82,11 +114,20 @@ final class TextBoxInteraction: NSObject {
         editor.delegate = nil
         model.pendingTextDidChange(false)
         let text = editor.text ?? ""
+        let committed = ShapeGeometry.committedText(text)
+        let changes = editor.isWaiting
         editor.resignFirstResponder()
-        let preview = ShapeGeometry.committedText(text).isEmpty ? nil : showPreview(of: editor)
+        let preview = committed.isEmpty || !changes ? nil : showPreview(of: editor)
         editor.removeFromSuperview()
         keyboardInsetDidChange()
-        let made = model.enqueueTextBox(page: editor.page, at: editor.origin, text: text, workedOutAt: editor.revision, style: editor.style)
+        let made: Task<Bool, Never>
+        if let existing = editor.existing {
+            guard changes else { return nil }
+            made = committed.isEmpty ? model.enqueueDelete(existing, workedOutAt: editor.revision)
+                : model.enqueueContents(of: existing, to: committed, workedOutAt: editor.revision)
+        } else {
+            made = model.enqueueTextBox(page: editor.page, at: editor.origin, text: text, workedOutAt: editor.revision, style: editor.style)
+        }
         return MarkupInteraction.settlePreview(of: made) { [weak self] in self?.removeTextPreview(preview) }
     }
 
@@ -108,7 +149,7 @@ final class TextBoxInteraction: NSObject {
         let image = UIGraphicsImageRenderer(bounds: editor.bounds, format: format).image { context in
             editor.layer.render(in: context.cgContext)
         }
-        let box = ShapeGeometry.textBoxRect(at: editor.origin, text: editor.text ?? "", fontSize: editor.fontSize, pageSize: editor.pageSize)
+        let box = editor.box
         let view = UIImageView(image: image)
         view.frame = CGRect(x: place.frame.minX + box.minX * place.scale, y: place.frame.minY + box.minY * place.scale,
                             width: box.width * place.scale, height: box.height * place.scale)
@@ -195,7 +236,7 @@ extension TextBoxInteraction: UITextViewDelegate {
     /// whether there is text waiting (the palette's Done). What is typed is never logged.
     func textViewDidChange(_ textView: UITextView) {
         guard let editor = textView as? InlineTextEditor, editor === textEditor else { return }
-        model.pendingTextDidChange(!ShapeGeometry.committedText(editor.text ?? "").isEmpty)
+        model.pendingTextDidChange(editor.isWaiting)
         layoutTextEditor()
         revealTextEditor()
     }

@@ -163,4 +163,15 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.save, "Save")
         XCTAssertEqual(Strings.cancel, "Cancel")
     }
+
+    func testCommentsWording() {
+        XCTAssertEqual(Strings.comments, "Comments")
+        XCTAssertEqual(Strings.noComments, "No comments yet")
+        XCTAssertEqual(Strings.edit, "Edit")
+        XCTAssertEqual(Strings.commentsPage(3), "Page 3")
+        XCTAssertEqual(Strings.annotationKindName(.note), "Note")
+        XCTAssertEqual(Strings.annotationKindName(.textBox), "Text")
+        XCTAssertEqual(Strings.annotationKindName(.ink), "Drawing")
+        XCTAssertEqual(Strings.annotationKindName(.other(subtype: "Polygon")), "Comment")
+    }
 }

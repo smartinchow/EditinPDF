@@ -158,8 +158,47 @@ final class PageOverlayViewTests: XCTestCase {
     func testTheActiveBoxIsOnTop() throws {
         let overlay = makeOverlay()
         let layers = try XCTUnwrap(overlay.layer.sublayers)
-        // A shape being dragged out with a Markup tool is drawn over them all.
-        XCTAssertEqual(layers, [overlay.selectionLayer, overlay.highlightLayer, overlay.activeLayer, overlay.draftLayer])
+        // A shape being dragged out with a Markup tool is drawn over them all, and the outline of the
+        // selected annotation over that.
+        XCTAssertEqual(layers, [overlay.selectionLayer, overlay.highlightLayer, overlay.activeLayer, overlay.draftLayer,
+                                overlay.annotationOutlineLayer, overlay.annotationDotsLayer])
+    }
+
+    /// The selected annotation is outlined just outside its box, with a dot at each corner, at the
+    /// overlay's scale; while it is dragged, outline and dots are moved by the drag's offset (PDF points).
+    func testTheSelectedAnnotationIsOutlinedWithADotAtEachCorner() throws {
+        let overlay = makeOverlay()
+        XCTAssertNil(overlay.annotationOutlineLayer.path)
+        XCTAssertNil(overlay.annotationDotsLayer.path)
+        overlay.selectedAnnotationRect = CGRect(x: 100, y: 200, width: 60, height: 40)
+        // 50, 100, 30 x 20 in the overlay's points.
+        let outline = try XCTUnwrap(overlay.annotationOutlineLayer.path).boundingBoxOfPath
+        XCTAssertEqual(outline.midX, 65, accuracy: 0.01)
+        XCTAssertEqual(outline.midY, 110, accuracy: 0.01)
+        XCTAssertGreaterThan(outline.width, 30)
+        XCTAssertLessThan(outline.width, 40)
+        XCTAssertGreaterThan(outline.height, 20)
+        XCTAssertNil(overlay.annotationOutlineLayer.fillColor)
+        XCTAssertNotNil(overlay.annotationOutlineLayer.strokeColor)
+        let dots = try XCTUnwrap(overlay.annotationDotsLayer.path)
+        XCTAssertEqual(subpathCount(of: dots), 4)
+        XCTAssertEqual(dots.boundingBoxOfPath.midX, 65, accuracy: 0.01)
+        XCTAssertGreaterThan(dots.boundingBoxOfPath.width, outline.width, "the dots stand on the outline's corners")
+        overlay.dragOffset = CGSize(width: 20, height: -10)
+        let moved = try XCTUnwrap(overlay.annotationOutlineLayer.path).boundingBoxOfPath
+        XCTAssertEqual(moved.midX, 75, accuracy: 0.01)
+        XCTAssertEqual(moved.midY, 105, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(overlay.annotationDotsLayer.path).boundingBoxOfPath.midX, 75, accuracy: 0.01)
+        overlay.selectedAnnotationRect = nil
+        XCTAssertNil(overlay.annotationOutlineLayer.path)
+        XCTAssertNil(overlay.annotationDotsLayer.path)
+    }
+
+    /// How many subpaths `path` has: one for each move to a point.
+    private func subpathCount(of path: CGPath) -> Int {
+        var count = 0
+        path.applyWithBlock { if $0.pointee.type == .moveToPoint { count += 1 } }
+        return count
     }
 
     /// Drawn over the page, but the page's gestures (Task 10's selection, the scroll view's own) are

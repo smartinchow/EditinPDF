@@ -1,3 +1,4 @@
+import EditinPDFCore
 import Foundation
 
 /// Every sentence a person reads in the app, in one place: the wording is reviewed here, and
@@ -311,9 +312,10 @@ enum Strings {
         String(localized: "Rotate Right", comment: "Organize button that turns the selected pages a quarter turn clockwise")
     }
 
-    /// The Organize button that removes the selected pages, and the confirmation's button.
+    /// The button that removes something: the selected pages in Organize (and the confirmation's
+    /// button), the selected markup (its menu), a comment in the Comments list (its swipe).
     static var delete: String {
-        String(localized: "Delete", comment: "Organize button that removes the selected pages; also the button that confirms it")
+        String(localized: "Delete", comment: "Button that removes something: the selected pages in Organize (also the button that confirms it), the selected markup on a page, a comment in the list of comments")
     }
 
     /// The Organize button that adds an empty page after the selection.
@@ -513,5 +515,47 @@ enum Strings {
          String(localized: "Green", comment: "Colour swatch name"),
          String(localized: "Blue", comment: "Colour swatch name"),
          String(localized: "Purple", comment: "Colour swatch name")]
+    }
+
+    // MARK: Comments
+
+    /// The name of the list of the document's comments: the toolbar button that opens it, and its title.
+    static var comments: String {
+        String(localized: "Comments", comment: "Toolbar button and sheet title for the list of the document's comments and markup")
+    }
+
+    /// What the list of comments says when the document has none.
+    static var noComments: String {
+        String(localized: "No comments yet", comment: "Shown in the list of comments when the document has no comments or markup")
+    }
+
+    /// The menu item over the selected markup that changes its text (a note's, a text box's).
+    static var edit: String {
+        String(localized: "Edit", comment: "Menu item over the selected note or text box that changes its text")
+    }
+
+    /// The heading over the comments of one page in the list of comments; `page` counts from 1. Its
+    /// own key: the thumbnails' "Page n" may be translated otherwise.
+    static func commentsPage(_ page: Int) -> String {
+        String(localized: "commentsPage", defaultValue: "Page \(page)", comment: "Heading over the comments of one page in the list of comments: the page number")
+    }
+
+    /// What a kind of annotation is called in the list of comments. Each its own key: a tool may be
+    /// named alike and translated otherwise.
+    static func annotationKindName(_ kind: AnnotationKind) -> String {
+        switch kind {
+        case .note: String(localized: "annotationKind.note", defaultValue: "Note", comment: "A sticky note, as named in the list of comments")
+        case .highlight: String(localized: "annotationKind.highlight", defaultValue: "Highlight", comment: "Highlighted text, as named in the list of comments")
+        case .underline: String(localized: "annotationKind.underline", defaultValue: "Underline", comment: "Underlined text, as named in the list of comments")
+        case .strikeOut: String(localized: "annotationKind.strikeOut", defaultValue: "Strikethrough", comment: "Struck-through text, as named in the list of comments")
+        case .squiggly: String(localized: "annotationKind.squiggly", defaultValue: "Squiggly", comment: "Text with a squiggly underline, as named in the list of comments")
+        case .ink: String(localized: "annotationKind.ink", defaultValue: "Drawing", comment: "A freehand drawing, as named in the list of comments")
+        case .textBox: String(localized: "annotationKind.textBox", defaultValue: "Text", comment: "A box of typed text on the page, as named in the list of comments")
+        case .rectangle: String(localized: "annotationKind.rectangle", defaultValue: "Rectangle", comment: "A rectangle drawn on the page, as named in the list of comments")
+        case .oval: String(localized: "annotationKind.oval", defaultValue: "Oval", comment: "An oval drawn on the page, as named in the list of comments")
+        case .line: String(localized: "annotationKind.line", defaultValue: "Line", comment: "A line or an arrow drawn on the page, as named in the list of comments")
+        case .stamp: String(localized: "annotationKind.stamp", defaultValue: "Stamp", comment: "A stamp on the page, as named in the list of comments")
+        case .other: String(localized: "annotationKind.other", defaultValue: "Comment", comment: "Any other kind of annotation, as named in the list of comments")
+        }
     }
 }

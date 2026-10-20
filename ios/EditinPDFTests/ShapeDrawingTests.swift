@@ -78,7 +78,9 @@ final class ShapeDrawingTests: XCTestCase {
             XCTAssertTrue(markup.takesTap(atContentPoint: onPage), "\(tool)")
             XCTAssertFalse(markup.takesTap(atContentPoint: gap), "\(tool) in the gap")
         }
-        for tool in [nil, Tool.select, .ink, .eraser] {
+        // (The eraser's tap deletes what is under it, and Select's picks it: `AnnotationEditingTests`.
+        // With nothing there and nothing selected, Select takes no tap.)
+        for tool in [nil, Tool.ink, .select] {
             pick(tool, in: model, controller)
             XCTAssertFalse(markup.takesTap(atContentPoint: onPage), "\(String(describing: tool))")
             XCTAssertFalse(markup.beginShape(atContentPoint: onPage), "\(String(describing: tool))")

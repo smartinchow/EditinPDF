@@ -134,7 +134,9 @@ final class TextMarkupTests: XCTestCase {
         let markup = controller.markupInteraction
         let onText = try contentPoint(ofGlyph: 0, page: 0, in: model)
         XCTAssertFalse(markup.takesTouch(atContentPoint: onText), "reading")
-        for tool in [Tool.select, .ink, .eraser] {
+        // (Select drags only the annotation it has selected, and the eraser erases anywhere on a page:
+        // `AnnotationEditingTests`.)
+        for tool in [Tool.select, .ink] {
             model.tool = tool
             XCTAssertFalse(markup.takesTouch(atContentPoint: onText), "\(tool)")
         }

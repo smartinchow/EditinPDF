@@ -497,6 +497,88 @@ final class EditorSmokeTests: XCTestCase {
 
     /// Whether the screen around `point` (a 9-point square) has ink on it: any pixel well away from
     /// white.
+    /// A highlight dragged across "Page one" is listed in Comments, one row under its page; Done puts
+    /// the list away, and after Undo the list says there are none.
+    func testHighlightThenCommentsListThenUndo() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        let undo = app.buttons["undoButton"]
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let highlight = app.buttons["tool-highlight"]
+        XCTAssertTrue(highlight.waitForEnabled(timeout: 5), "Highlight is disabled on a document that allows markup")
+        highlight.tap()
+        let line = textLine(in: app, page: app.scrollViews["pageScrollView"].firstMatch)
+        line.start.press(forDuration: 0.05, thenDragTo: line.end)
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "dragging with Highlight marked nothing")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-'"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the highlight is not listed")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertTrue(rows.firstMatch.identifier.hasPrefix("commentRow-0-"), "listed on another page: \(rows.firstMatch.identifier)")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Page 1")).firstMatch.exists, "no heading for its page")
+        XCTAssertTrue(rows.firstMatch.label.contains("Highlight"), "the row reads \"\(rows.firstMatch.label)\"")
+        attach(app, "comments-list")
+        app.buttons["commentsDoneButton"].tap()
+        XCTAssertTrue(rows.firstMatch.waitForNonExistence(timeout: 5), "Done did not put the list away")
+        XCTAssertTrue(tapToolbarButton("undoButton", titled: "Undo", in: app), "no Undo button")
+        let undone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == false"), object: undo)
+        XCTAssertEqual(XCTWaiter().wait(for: [undone], timeout: 5), .completed, "Undo left something to undo")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        XCTAssertTrue(app.staticTexts["No comments yet"].waitForExistence(timeout: 5), "the list does not say it is empty")
+        XCTAssertEqual(rows.count, 0)
+        attach(app, "comments-empty")
+    }
+
+    /// Select: a tap on a rectangle selects it (its menu offers Delete); one finger dragged from it
+    /// moves it there, instead of scrolling; a tap and Delete take it off the page, and Undo brings it
+    /// back.
+    func testSelectingARectangleMovesItAndItsMenuDeletesIt() throws {
+        let app = launchAndOpen("sample.pdf")
+        let indicator = app.staticTexts["pageIndicator"]
+        expect(indicator, toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let undo = app.buttons["undoButton"]
+        let rectangle = app.buttons["tool-rectangle"]
+        XCTAssertTrue(rectangle.waitForEnabled(timeout: 5))
+        rectangle.tap()
+        pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 420), pageWidth: 612, in: app))
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "no rectangle was added")
+        sleep(1)
+        let leftEdge = CGPoint(x: 151, y: 360), movedLeftEdge = CGPoint(x: 151, y: 460)
+        XCTAssertTrue(try isInked(around: pagePoint(leftEdge, pageWidth: 612, in: app).screenPoint, in: app), "the rectangle is not there")
+        app.buttons["tool-select"].tap()
+        pagePoint(CGPoint(x: 300, y: 360), pageWidth: 612, in: app).tap()
+        XCTAssertTrue(menuItem("Delete", in: app).waitForExistence(timeout: 5), "the selected rectangle's menu offers no Delete")
+        attach(app, "select-menu")
+        // Dragged 100 points down the page.
+        pagePoint(CGPoint(x: 300, y: 360), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 300, y: 460), pageWidth: 612, in: app))
+        sleep(2)
+        XCTAssertEqual(indicator.label, "1 / 3", "the drag scrolled")
+        XCTAssertFalse(try isInked(around: pagePoint(leftEdge, pageWidth: 612, in: app).screenPoint, in: app), "the rectangle stayed where it was")
+        XCTAssertTrue(try isInked(around: pagePoint(movedLeftEdge, pageWidth: 612, in: app).screenPoint, in: app),
+                      "the rectangle is not where it was dragged")
+        attach(app, "select-moved")
+        pagePoint(CGPoint(x: 300, y: 460), pageWidth: 612, in: app).tap()
+        let delete = menuItem("Delete", in: app)
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), "no Delete for the moved rectangle")
+        delete.tap()
+        sleep(2)
+        XCTAssertFalse(try isInked(around: pagePoint(movedLeftEdge, pageWidth: 612, in: app).screenPoint, in: app), "Delete left the rectangle")
+        undo.tap()
+        sleep(2)
+        XCTAssertTrue(try isInked(around: pagePoint(movedLeftEdge, pageWidth: 612, in: app).screenPoint, in: app),
+                      "Undo did not bring the rectangle back")
+    }
+
+    /// An item of the edit menu titled `title`: the system shows them as menu items or as buttons.
+    private func menuItem(_ title: String, in app: XCUIApplication) -> XCUIElement {
+        let types = [XCUIElement.ElementType.menuItem, .button].map { NSNumber(value: $0.rawValue) }
+        return app.descendants(matching: .any)
+            .matching(NSPredicate(format: "elementType IN %@ AND label == %@", types, title)).firstMatch
+    }
+
     private func isInked(around point: CGPoint, in app: XCUIApplication) throws -> Bool {
         let image = try XCTUnwrap(app.screenshot().image.cgImage)
         let scale = CGFloat(image.width) / app.frame.width

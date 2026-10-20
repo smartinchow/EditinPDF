@@ -63,8 +63,8 @@ final class DocumentModel {
     private(set) var lastChange: PageChange?
     /// A change that was not made, for the screen to show as an alert; the screen clears it.
     var failure: EditFailure?
-    /// The annotation the reader has picked. Every change clears it: its index may name another
-    /// annotation afterwards.
+    /// The annotation the reader has picked (Select, the Comments list). Every change clears it: its
+    /// index may name another annotation afterwards. See `AnnotationEditing.swift`.
     var selectedAnnotation: AnnotationRef?
 
     // MARK: Markup
@@ -72,9 +72,13 @@ final class DocumentModel {
     /// What a touch on the page does: nil while the reader is only reading (touches scroll, zoom and
     /// select text); Markup in the toolbar sets `.select`, and the palette any other tool. Strokes drawn
     /// with Draw and text typed in a text box, not added yet, are added as soon as it changes
-    /// (`commitPendingInk`).
+    /// (`commitPendingInk`). The annotation selected with Select is let go of with any other tool.
     var tool: Tool? {
-        didSet { if tool != oldValue { commitPendingInk() } }
+        didSet {
+            guard tool != oldValue else { return }
+            commitPendingInk()
+            if tool != .select { selectedAnnotation = nil }
+        }
     }
     /// Each tool's colour and size, kept between documents and launches.
     let toolStyles: ToolStyleStore
@@ -321,10 +325,7 @@ final class DocumentModel {
             return await enqueueNote(page: draft.page, at: draft.point, contents: text, workedOutAt: draft.revision).value
         }
         guard text != draft.text else { return false }
-        if let refusal = refusal(of: .note, onPage: existing.page) { return await refuse(refusal).value }
-        guard let pageNumber = UInt32(exactly: existing.page) else { return false }
-        let edit = Edit.setAnnotationContents(page: pageNumber, index: existing.index, contents: text)
-        return await enqueue([edit], named: Strings.actionEditAnnotation, touching: [existing.page], workedOutAt: draft.revision).value
+        return await enqueueContents(of: existing, to: text, workedOutAt: draft.revision).value
     }
 
     /// The note sheet's Save: saves the note the sheet is open for (`noteDraft`) with `text`
@@ -340,14 +341,14 @@ final class DocumentModel {
     }
 
     /// Tells the reader why a change is not made (`message`, one of our sentences), and makes none.
-    private func refuse(_ message: String) -> Task<Bool, Never> {
+    func refuse(_ message: String) -> Task<Bool, Never> {
         failure = EditFailure(message: message)
         return Task { false }
     }
 
     /// Tells the reader a change is not made, as the engine's refusal of it would (`EditError.Invalid`,
     /// whose `why` goes to the private log: it never has the reader's text in it), and makes none.
-    private func refuseInvalid(_ why: String) -> Task<Bool, Never> {
+    func refuseInvalid(_ why: String) -> Task<Bool, Never> {
         failure = EditFailure(EditError.Invalid(message: why))
         return Task { false }
     }

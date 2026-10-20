@@ -62,6 +62,9 @@ struct PageScrollView: UIViewControllerRepresentable {
     /// The Markup tool picked (`DocumentModel.tool`), passed in, as `lastChange` is, so that the
     /// controller hears when it changes.
     var tool: Tool?
+    /// The annotation selected with Select, or picked in the Comments list: its page and its box there
+    /// (`DocumentModel.selectedAnnotationPlace`), passed in for its page to outline it.
+    var selectedAnnotation: PageRect?
 
     /// The screen is going: strokes drawn with Draw and waiting are added (the canvas goes with it).
     static func dismantleUIViewController(_ controller: PageScrollViewController, coordinator: ()) {
@@ -80,6 +83,7 @@ struct PageScrollView: UIViewControllerRepresentable {
         // A change the controller has followed already is ignored, so handing the same one over with
         // every update is harmless.
         if let lastChange { controller.apply(lastChange) }
+        controller.selectedAnnotation = selectedAnnotation
         guard scrollTarget != nil || revealRect != nil else { return }
         let target = scrollTarget
         let reveal = revealRect
@@ -91,6 +95,8 @@ struct PageScrollView: UIViewControllerRepresentable {
             if let target { controller.scroll(to: target) }
             // After the jump, so that the page is where it belongs and the box is only moved into view.
             if let reveal { controller.reveal(reveal) }
+            // An annotation picked in the Comments list is in view now: its menu can come up over it.
+            controller.markupInteraction.selecting.selectionDidChange()
             targetRequest.wrappedValue = nil
             revealRequest.wrappedValue = nil
         }
@@ -139,6 +145,21 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
             guard !Self.isSame(oldValue, selection) else { return }
             for view in pageViews.values { applyOverlay(to: view) }
             selectionInteraction.selectionDidChange()
+        }
+    }
+
+    /// The annotation selected with Select: its page and its box there, in PDF points, outlined on
+    /// that page's overlay. A page view is given it when it is made as well as when it changes, as the
+    /// search hits are. Its menu comes and goes with it (`AnnotationSelectInteraction.selectionDidChange`),
+    /// and a drag of the one before is over: its outline is drawn where it is again.
+    var selectedAnnotation: PageRect? {
+        didSet {
+            guard selectedAnnotation != oldValue else { return }
+            for view in pageViews.values {
+                view.overlay.dragOffset = .zero
+                applyOverlay(to: view)
+            }
+            markupInteraction.selecting.selectionDidChange()
         }
     }
 
@@ -399,10 +420,12 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         selectionInteraction.viewportWillChange()
+        markupInteraction.selecting.viewportWillChange()
     }
 
     func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
         selectionInteraction.viewportWillChange()
+        markupInteraction.selecting.viewportWillChange()
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -547,8 +570,10 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         for view in pageViews.values { applyOverlay(to: view) }
     }
 
-    /// Gives `view` the boxes of its own page: the search hits and the selected text.
+    /// Gives `view` the boxes of its own page: the search hits, the selected text and the selected
+    /// annotation.
     private func applyOverlay(to view: PageView) {
+        view.overlay.selectedAnnotationRect = selectedAnnotation.flatMap { $0.page == view.page ? $0.rect : nil }
         view.overlay.highlights = highlightsByPage[view.page] ?? []
         if let active = activeHighlight, active.page == view.page {
             view.overlay.activeHighlights = active.rects

@@ -1,8 +1,8 @@
 import UIKit
 
 /// What is drawn over one page, on top of its tiles: the boxes of the search hits (the hit being
-/// looked at in another colour), for text selection, the selected text, and a shape being dragged out
-/// with a Markup tool.
+/// looked at in another colour), for text selection, the selected text, a shape being dragged out
+/// with a Markup tool, and the outline of the annotation selected with Select.
 ///
 /// It is a subview of the page view with the same bounds, and the boxes are given in PDF points
 /// (view space: origin at the top-left, y down), so it draws them `bounds.width / pointSize.width`
@@ -47,6 +47,24 @@ final class PageOverlayView: UIView {
         didSet { if draftStyle != oldValue { update() } }
     }
 
+    /// The box of the annotation selected with Select, in PDF points, outlined just outside it with a
+    /// dot at each corner, over everything else; nil when none on this page is.
+    var selectedAnnotationRect: CGRect? {
+        didSet { if selectedAnnotationRect != oldValue { update() } }
+    }
+
+    /// How far the selected annotation is being dragged, in PDF points (across and down the page as
+    /// shown): its outline is drawn that far from its box, following the finger. Zero when it is not
+    /// being dragged.
+    var dragOffset: CGSize = .zero {
+        didSet { if dragOffset != oldValue { update() } }
+    }
+
+    /// How far outside the selected annotation's box its outline runs, and how big the dots at its
+    /// corners are (their radius), in the overlay's points.
+    static let outlineMargin: CGFloat = 3
+    static let outlineDotRadius: CGFloat = 4
+
     // Bottom to top. Internal, for tests: they read what is drawn from the layers.
     let selectionLayer = PageOverlayView.makeLayer(UIColor(red: 0, green: 0.48, blue: 1, alpha: 0.30))
     let highlightLayer = PageOverlayView.makeLayer(UIColor.yellow.withAlphaComponent(0.35))
@@ -55,6 +73,20 @@ final class PageOverlayView: UIView {
         let layer = BoxesLayer()
         layer.lineCap = .round
         layer.lineJoin = .round
+        return layer
+    }()
+    let annotationOutlineLayer: CAShapeLayer = {
+        let layer = BoxesLayer()
+        layer.fillColor = nil
+        layer.strokeColor = UIColor.systemBlue.cgColor
+        layer.lineWidth = 1.5
+        return layer
+    }()
+    let annotationDotsLayer: CAShapeLayer = {
+        let layer = BoxesLayer()
+        layer.fillColor = UIColor.systemBlue.cgColor
+        layer.strokeColor = UIColor.white.cgColor
+        layer.lineWidth = 1.5
         return layer
     }()
 
@@ -67,7 +99,9 @@ final class PageOverlayView: UIView {
         isUserInteractionEnabled = false
         // Highlights run to the page's edge at most.
         clipsToBounds = true
-        for layer in [selectionLayer, highlightLayer, activeLayer, draftLayer] { self.layer.addSublayer(layer) }
+        for layer in [selectionLayer, highlightLayer, activeLayer, draftLayer, annotationOutlineLayer, annotationDotsLayer] {
+            self.layer.addSublayer(layer)
+        }
     }
 
     @available(*, unavailable)
@@ -100,6 +134,29 @@ final class PageOverlayView: UIView {
             layer.path = Self.path(of: boxes, scale: scale)
         }
         updateDraft(scale: scale)
+        updateSelectedAnnotation(scale: scale)
+    }
+
+    /// Outlines `selectedAnnotationRect`, moved by `dragOffset`, at `scale`, a dot at each corner.
+    private func updateSelectedAnnotation(scale: CGFloat) {
+        annotationOutlineLayer.frame = bounds
+        annotationDotsLayer.frame = bounds
+        let box = selectedAnnotationRect?.offsetBy(dx: dragOffset.width, dy: dragOffset.height)
+        guard let box, scale > 0, [box.minX, box.minY, box.width, box.height].allSatisfy(\.isFinite) else {
+            annotationOutlineLayer.path = nil
+            annotationDotsLayer.path = nil
+            return
+        }
+        let shown = CGRect(x: box.minX * scale, y: box.minY * scale, width: box.width * scale, height: box.height * scale)
+            .insetBy(dx: -Self.outlineMargin, dy: -Self.outlineMargin)
+        annotationOutlineLayer.path = CGPath(rect: shown, transform: nil)
+        let dots = CGMutablePath()
+        let r = Self.outlineDotRadius
+        for corner in [CGPoint(x: shown.minX, y: shown.minY), CGPoint(x: shown.maxX, y: shown.minY),
+                       CGPoint(x: shown.minX, y: shown.maxY), CGPoint(x: shown.maxX, y: shown.maxY)] {
+            dots.addEllipse(in: CGRect(x: corner.x - r, y: corner.y - r, width: 2 * r, height: 2 * r))
+        }
+        annotationDotsLayer.path = dots
     }
 
     /// Draws `draft` at `scale` in `draftStyle`: a rectangle's or an oval's line inside its box, as the
