@@ -317,6 +317,29 @@ final class TextMarkupTests: XCTestCase {
         XCTAssertFalse(markup.gestureRecognizer(controller.selectionInteraction.longPress, shouldReceive: touch), "not its recognizer")
     }
 
+    /// The same delegate, for a touch on text: a page whose line starts at its top left corner, where a
+    /// touch that never went down is.
+    func testTheDelegateAnswersForText() async throws {
+        let bytes = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            context.beginPage()
+            ("Corner" as NSString).draw(at: .zero, withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+        }
+        let model = DocumentModel(bytes: bytes)
+        let controller = PageScrollViewController(model: model)
+        controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
+        controller.view.layoutIfNeeded()
+        await model.settle()
+        let markup = controller.markupInteraction
+        let touch = UITouch()
+        model.tool = .strikeout
+        await markup.loadText(onPage: 0)
+        XCTAssertEqual(markup.isNearText(.zero, onPage: 0), true)
+        XCTAssertTrue(markup.gestureRecognizer(markup.pan, shouldReceive: touch), "on text: the pan takes it")
+        XCTAssertTrue(markup.gestureRecognizerShouldBegin(markup.pan), "and begins")
+        model.tool = .select
+        XCTAssertFalse(markup.gestureRecognizer(markup.pan, shouldReceive: touch), "Select: not the pan's")
+    }
+
     // MARK: Reading the pages' text (fix round 2)
 
     /// Pages asked for one after the other in quick succession (a fling) are not all read: only those
@@ -400,6 +423,31 @@ final class TextMarkupTests: XCTestCase {
         XCTAssertNil(text.boxes(onPage: 0), "the late read was the first to go")
     }
 
+    /// A page whose text the engine cannot read is read once for a revision of the document, not over
+    /// and over: it counts as a page without text (a finger there scrolls), the other pages wanted are
+    /// still read, and it is read again once the document changes.
+    func testAPageThatCannotBeReadIsReadOncePerRevision() async {
+        let log = ReadLog()
+        let revision = RevisionBox()
+        let text = PageTextBoxes(revision: { revision.value }) { page, _ in
+            log.add(page)
+            return page == 3 ? nil : [CGRect(x: 0, y: 0, width: 1, height: 1)]
+        }
+        text.want([3, 4])
+        await text.settle()
+        XCTAssertEqual(log.pages, [3, 4], "the unreadable page once, and the next one wanted")
+        XCTAssertEqual(text.boxes(onPage: 3), [], "no text to touch: a finger there scrolls")
+        text.want([3, 4])
+        text.request(3)
+        await text.settle()
+        XCTAssertEqual(log.pages, [3, 4], "not read again at the same revision")
+        revision.value = 2
+        XCTAssertNil(text.boxes(onPage: 3), "a new revision: not known")
+        text.want([3])
+        await text.settle()
+        XCTAssertEqual(log.pages, [3, 4, 3], "read again, once")
+    }
+
     // MARK: Two fingers (fix round 2)
 
     /// The pan counts every finger on the screen, not only its own: a second one down fails it.
@@ -477,4 +525,10 @@ final class ReadLog: @unchecked Sendable {
 
     func add(_ page: Int) { lock.withLock { read.append(page) } }
     var pages: [Int] { lock.withLock { read } }
+}
+
+/// A revision of the document that a test moves on.
+@MainActor
+final class RevisionBox {
+    var value: UInt64 = 1
 }

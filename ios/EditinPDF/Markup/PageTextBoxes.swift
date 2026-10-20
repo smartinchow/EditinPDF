@@ -19,6 +19,9 @@ import Foundation
 ///   are kept.
 /// - Everything read is of one revision of the document: boxes of an older one are dropped, and a read
 ///   that comes back after the document changed is not kept.
+/// - A page whose text cannot be read is read **once** for a revision: it counts as a page without text
+///   (a finger there scrolls) until the document changes, and is not asked for again meanwhile, so it
+///   never holds the reading up, nor takes the engine's time over and over.
 @MainActor
 final class PageTextBoxes {
     /// Reads the glyph boxes of a page (counting from 0) at a revision of the document, off the main
@@ -33,7 +36,9 @@ final class PageTextBoxes {
     private var boxes: [Int: [CGRect]] = [:]
     /// The pages in `boxes`, the one used longest ago first.
     private var used: [Int] = []
-    /// The revision `boxes` were read at; nil when there are none.
+    /// The pages whose text could not be read at `revision`: not read again until it changes.
+    private var unreadable: Set<Int> = []
+    /// The revision `boxes` and `unreadable` are of; nil when there are none.
     private var revision: UInt64?
     /// The pages to read, most wanted first.
     private(set) var wanted: [Int] = []
@@ -52,6 +57,7 @@ final class PageTextBoxes {
     /// (yet).
     func boxes(onPage page: Int) -> [CGRect]? {
         dropIfStale()
+        if unreadable.contains(page) { return [] }
         guard let found = boxes[page] else { return nil }
         use(page)
         return found
@@ -101,7 +107,7 @@ final class PageTextBoxes {
     private func startNext() {
         guard reading == nil else { return }
         dropIfStale()
-        guard let page = wanted.first(where: { boxes[$0] == nil }) else { return }
+        guard let page = wanted.first(where: { boxes[$0] == nil && !unreadable.contains($0) }) else { return }
         let revision = currentRevision()
         let read = read
         reading = Task { [weak self] in
@@ -115,9 +121,15 @@ final class PageTextBoxes {
 
     private func keep(_ found: [CGRect]?, ofPage page: Int, at revision: UInt64) {
         // The document may have changed while the page was read.
-        guard let found, currentRevision() == revision else { return }
+        guard currentRevision() == revision else { return }
         dropIfStale()
         self.revision = revision
+        guard let found else {
+            // Not read again at this revision (the reader also says nil when the engine's document had
+            // moved on from it, which the model's revision follows in a moment: then this is dropped).
+            unreadable.insert(page)
+            return
+        }
         boxes[page] = found
         used.removeAll { $0 == page }
         if wanted.contains(page) {
@@ -133,6 +145,7 @@ final class PageTextBoxes {
         guard let revision, revision != currentRevision() else { return }
         boxes.removeAll()
         used.removeAll()
+        unreadable.removeAll()
         self.revision = nil
     }
 
