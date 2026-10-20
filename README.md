@@ -2,12 +2,10 @@
 
 A free, native iOS app for reading, organizing and annotating PDFs — fully offline, no account, no telemetry.
 
-**Status: milestone M1, the viewer (pre-release).** Nothing is on the App Store yet, and the app only reads PDFs
-so far.
+**Status: pre-release, in TestFlight.** The viewer (M1) and page organizing with autosave (M2) work; mark-up
+and forms (M3) are being built. Nothing is on the App Store yet.
 
-<!-- CI badge: enable it once the GitHub repository exists (the workflow is .github/workflows/ci.yml).
 [![CI](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml/badge.svg)](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml)
--->
 
 EditinPDF is based on [PdfCraft](https://github.com/storytold/pdfcraft) by the ArtCraft team, an open-source
 PDF engine written in pure Rust. EditinPDF is an independent project and is not affiliated with or endorsed by
@@ -17,8 +15,7 @@ the ArtCraft team or Adobe Inc.
 
 ## What works today
 
-The viewer opens PDFs read-only, on iPhone and iPad (iOS 17 and later; so far tested on the iOS 26.5 simulator
-only, see below):
+On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators, including iPhone Duo):
 
 - **Open** a PDF from the Files document browser. A password-protected file asks for its password; a file that
   is not a readable PDF says so and closes.
@@ -27,12 +24,17 @@ only, see below):
 - **Thumbnails**: a sheet of page thumbnails; tap one to jump to that page.
 - **Search** for text: hits are highlighted on the pages, and you can step through them or pick one from the list.
 - **Select and copy** text: long-press a word, drag the handles to extend the selection, then Copy.
+- **Organize pages**: select several pages, drag to reorder, rotate, delete, insert a blank page, insert the
+  pages of another PDF, and extract pages to a new PDF to share or save.
+- **Undo and redo** every change; changes **save automatically** back to the original file, as an incremental
+  update that keeps the original bytes. A new blank document can be started from the file browser.
+- **Mark up** (in progress): a Markup mode with a tool palette, and highlight, underline and strikethrough over
+  text.
 
-Still to come: organizing pages (M2), annotations and forms (M3), and the app icon, Licenses screen and
-TestFlight build (M4). The privacy manifest ships already: no tracking and no data collected.
+Still to come: drawing, text boxes, notes, shapes, a comments list and form filling (M3), then the Licenses
+screen and App Store release (M4). The privacy manifest ships already: no tracking and no data collected.
 
-Tested on the iOS 26.5 simulator only: the app is built for iOS 17 and later, but iOS 17 and 18 are untested
-(Xcode 27 offers no iOS 17 simulator runtime to download), and nothing has run on a physical device yet.
+iOS 17 and 18 are untested (Xcode 27 offers no simulator runtime for them).
 
 ## Building
 
