@@ -531,11 +531,20 @@ extension MarkupInteraction: PKCanvasViewDelegate {
 extension MarkupInteraction: PendingInkHolder {}
 
 /// A gesture recognizer that only listens: it hears of each finger going down where it is attached
-/// (the window), says on which view (`fingerWentDown`), and fails at once, so it never takes a touch,
-/// delays one, or keeps another recognizer from recognizing.
+/// (the window) and says on which view (`fingerWentDown`). It never recognizes, so it never takes a
+/// touch, delays one, or keeps another recognizer from recognizing; and no other one recognizing stops
+/// it (`canBePrevented`).
+///
+/// It stays listening while any finger it heard of is down, and fails only once they have all lifted:
+/// a recognizer that has failed hears nothing more until every touch has ended, and the back button
+/// tapped while a palm, a finger or the Pencil rests on the page must still be heard.
 final class FingerDownObserver: UIGestureRecognizer {
     /// Told the view each finger that goes down landed on.
     var fingerWentDown: ((UIView?) -> Void)?
+    /// The fingers heard of that have not lifted yet.
+    private var held = Set<ObjectIdentifier>()
+    /// How many fingers it heard of are still down.
+    var heldCount: Int { held.count }
 
     init() {
         super.init(target: nil, action: nil)
@@ -545,9 +554,34 @@ final class FingerDownObserver: UIGestureRecognizer {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        for touch in touches { fingerWentDown?(touch.view) }
-        state = .failed
+        for touch in touches { touchWentDown(touch, on: touch.view) }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        for touch in touches { touchLifted(touch) }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        for touch in touches { touchLifted(touch) }
+    }
+
+    override func reset() {
+        super.reset()
+        held.removeAll()
+    }
+
+    /// `touch` went down on `view`: reported, and held until it lifts.
+    func touchWentDown(_ touch: UITouch, on view: UIView?) {
+        held.insert(ObjectIdentifier(touch))
+        fingerWentDown?(view)
+    }
+
+    /// `touch` lifted (or was cancelled): once none is held, the recognizer is done with these touches.
+    func touchLifted(_ touch: UITouch) {
+        held.remove(ObjectIdentifier(touch))
+        if held.isEmpty, state == .possible { state = .failed }
     }
 
     override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 }

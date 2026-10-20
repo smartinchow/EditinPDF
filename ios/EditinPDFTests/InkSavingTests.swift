@@ -112,6 +112,43 @@ final class InkSavingTests: XCTestCase {
         XCTAssertFalse(observer.canPrevent(controller.scrollView.panGestureRecognizer))
     }
 
+    /// A finger going down while another is already held (a palm on the page, the Pencil drawing) is
+    /// still reported: the observer stays listening until every finger it heard of has lifted, and only
+    /// then fails, ready for the next touches.
+    func testAFingerDownWhileAnotherIsHeldIsStillReported() {
+        let observer = FingerDownObserver()
+        var reported: [UIView?] = []
+        observer.fingerWentDown = { reported.append($0) }
+        let page = UIView(), back = UIView()
+        let palm = UITouch(), tap = UITouch()
+        observer.touchWentDown(palm, on: page)
+        XCTAssertEqual(observer.state, .possible, "still listening")
+        observer.touchWentDown(tap, on: back)
+        XCTAssertEqual(reported.count, 2, "the second finger is heard though the first is down")
+        XCTAssertTrue(reported.last ?? nil === back)
+        observer.touchLifted(tap)
+        XCTAssertEqual(observer.state, .possible, "a finger is still held")
+        XCTAssertEqual(observer.heldCount, 1)
+        // Every finger lifted: it fails, done with these touches. (Outside a real touch sequence UIKit
+        // puts a failed recognizer straight back to possible, so its state cannot be read here.)
+        observer.touchLifted(palm)
+        XCTAssertEqual(observer.heldCount, 0)
+        XCTAssertFalse(observer.canBePrevented(by: UIPanGestureRecognizer()), "another gesture recognizing does not stop it listening")
+    }
+
+    /// A save whose wait for a change runs out still writes (what the engine has), and says so in the
+    /// log, not to the reader.
+    func testASaveWhoseWaitRunsOutStillWrites() async throws {
+        let file = PDFFileDocument(bytes: try fixtureData("hello"))
+        let snapshot = try file.snapshot(contentType: .pdf)
+        file.engine.editWillStart()          // one that never arrives
+        defer { file.engine.editDidFinish() }
+        let started = Date()
+        let bytes = try await Task.detached { try file.savedBytes(of: snapshot) }.value
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), PDFFileDocument.editWait - 0.1, "it waited")
+        XCTAssertEqual(bytes, try fixtureData("hello"), "and wrote the document as the engine had it")
+    }
+
     /// The strokes are also added when the screen goes, whatever took it away.
     func testTheStrokesAreAddedWhenTheScreenGoes() async throws {
         let (controller, model) = await makeController()
