@@ -231,13 +231,13 @@ final class TextMarkupTests: XCTestCase {
     /// The white of a page, well away from "Page 1" at its top left, in the content view's coordinates.
     let whiteOfPage0 = CGPoint(x: 300, y: 300)
 
-    /// One finger that goes down on the white of a page scrolls: the markup pan takes no touch there
-    /// (and, asked as it would begin, does not begin), and a drag from there marks nothing.
+    /// One finger that goes down on the white of a page scrolls: the markup pan takes no touch there,
+    /// and a drag from there marks nothing. (The delegate's own answers: `testTheDelegateAnswersFor…`.)
     func testADragThatStartsOnTheWhiteOfAPageScrollsAndMarksNothing() async throws {
         let (controller, model) = await makeController()
         model.tool = .highlight
         let markup = controller.markupInteraction
-        await markup.loadText(onPage: 0)?.value
+        await markup.loadText(onPage: 0)
         XCTAssertEqual(markup.isNearText(CGPoint(x: 300 / scale, y: 300 / scale), onPage: 0), false)
         XCTAssertFalse(markup.takesTouch(atContentPoint: whiteOfPage0), "the scroll view has it")
         markup.begin(atContentPoint: whiteOfPage0)
@@ -253,7 +253,7 @@ final class TextMarkupTests: XCTestCase {
         let (controller, model) = await makeController()
         model.tool = .highlight
         let markup = controller.markupInteraction
-        await markup.loadText(onPage: 0)?.value
+        await markup.loadText(onPage: 0)
         let start = try contentPoint(ofGlyph: 0, page: 0, in: model)
         XCTAssertTrue(markup.takesTouch(atContentPoint: start))
         markup.begin(atContentPoint: start)
@@ -268,7 +268,7 @@ final class TextMarkupTests: XCTestCase {
         let (controller, model) = await makeController()
         model.tool = .underline
         let markup = controller.markupInteraction
-        await markup.loadText(onPage: 0)?.value
+        await markup.loadText(onPage: 0)
         let glyph = try XCTUnwrap(try XCTUnwrap(model.document()).pageText(page: 0).glyphs.first).rect
         let slop = markup.hitSlop(onPage: 0)
         XCTAssertEqual(markup.isNearText(CGPoint(x: glyph.x - slop * 0.9, y: glyph.y + glyph.height / 2), onPage: 0), true)
@@ -284,7 +284,7 @@ final class TextMarkupTests: XCTestCase {
         XCTAssertNil(markup.isNearText(CGPoint(x: 400, y: 400), onPage: 1), "not read yet; this asks for it")
         XCTAssertTrue(markup.takesTouch(atContentPoint: CGPoint(x: 300, y: 530 + 300)))
         // The reading asked for above, still on its way.
-        await markup.loadText(onPage: 1)?.value
+        await markup.text.settle()
         XCTAssertEqual(markup.isNearText(CGPoint(x: 400, y: 400), onPage: 1), false)
         XCTAssertFalse(markup.takesTouch(atContentPoint: CGPoint(x: 300, y: 530 + 300)))
     }
@@ -294,10 +294,122 @@ final class TextMarkupTests: XCTestCase {
         let (controller, model) = await makeController()
         model.tool = .highlight
         let markup = controller.markupInteraction
-        await markup.loadText(onPage: 0)?.value
+        await markup.loadText(onPage: 0)
         XCTAssertNotNil(markup.isNearText(CGPoint(x: 10, y: 10), onPage: 0))
         await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
         XCTAssertNil(markup.isNearText(CGPoint(x: 10, y: 10), onPage: 0), "the boxes of the old revision are dropped")
+    }
+
+    /// The pan's delegate, asked directly. A touch that never went down, and a recognizer with no touch,
+    /// are at the content view's origin: the top left corner of page 0, white.
+    func testTheDelegateAnswersForTheWhiteOfAPage() async throws {
+        let (controller, model) = await makeController()
+        let markup = controller.markupInteraction
+        let touch = UITouch()
+        XCTAssertEqual(touch.location(in: controller.contentView), .zero)
+        XCTAssertFalse(markup.gestureRecognizer(markup.pan, shouldReceive: touch), "reading: the scroll view has it")
+        XCTAssertFalse(markup.gestureRecognizerShouldBegin(markup.pan))
+        model.tool = .highlight
+        XCTAssertTrue(markup.gestureRecognizer(markup.pan, shouldReceive: touch), "the page's text is not read yet: taken")
+        await markup.text.settle()
+        XCTAssertFalse(markup.gestureRecognizer(markup.pan, shouldReceive: touch), "read: white, so the scroll view has it")
+        XCTAssertFalse(markup.gestureRecognizerShouldBegin(markup.pan), "nor does the pan begin there")
+        XCTAssertFalse(markup.gestureRecognizer(controller.selectionInteraction.longPress, shouldReceive: touch), "not its recognizer")
+    }
+
+    // MARK: Reading the pages' text (fix round 2)
+
+    /// Pages asked for one after the other in quick succession (a fling) are not all read: only those
+    /// still wanted when a read starts.
+    func testPagesScrolledPastQuicklyAreNotRead() async {
+        let log = ReadLog()
+        let text = PageTextBoxes(revision: { 1 }) { page, _ in log.add(page); return [] }
+        for page in 0...20 { text.want([page]) }
+        await text.settle()
+        XCTAssertEqual(log.pages, [20])
+        XCTAssertNotNil(text.boxes(onPage: 20))
+    }
+
+    /// The same through the scroll view's calls: the markup interaction asks for the pages in view as
+    /// they go by, and only the last are read.
+    func testTheScrollViewsRequestsReadOnlyThePagesInViewAtTheEnd() async throws {
+        let (controller, model) = await makeController(pages: 30)
+        let markup = controller.markupInteraction
+        let log = ReadLog()
+        markup.text = PageTextBoxes(revision: { [weak model] in model?.revision ?? 0 }) { page, _ in log.add(page); return [] }
+        model.tool = .underline
+        for first in 0...20 { markup.prefetchText(onPages: first..<(first + 2)) }
+        await markup.text.settle()
+        XCTAssertEqual(Set(log.pages), [20, 21])
+    }
+
+    /// At most `pagesKept` pages are read ahead, nearest the middle of the view first.
+    func testAtMostEightPagesAreReadAheadNearestTheMiddleFirst() async throws {
+        let (controller, model) = await makeController(pages: 30)
+        let markup = controller.markupInteraction
+        let log = ReadLog()
+        markup.text = PageTextBoxes(revision: { [weak model] in model?.revision ?? 0 }) { page, _ in log.add(page); return [] }
+        model.tool = .highlight
+        markup.prefetchText(onPages: 0..<21)
+        XCTAssertEqual(markup.text.wanted.count, PageTextBoxes.pagesKept)
+        XCTAssertEqual(markup.text.wanted.first, 10, "the middle of the view first")
+        XCTAssertEqual(Set(markup.text.wanted), Set(6...13))
+        await markup.text.settle()
+        XCTAssertEqual(log.pages.count, PageTextBoxes.pagesKept)
+        XCTAssertEqual(log.pages.first, 10)
+    }
+
+    /// Nothing is read ahead for a tool that does not mark text, or one that may not be used.
+    func testNothingIsReadAheadWithoutAUsableTextTool() async throws {
+        let model = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(3))
+        let controller = PageScrollViewController(model: model)
+        controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
+        controller.view.layoutIfNeeded()
+        let markup = controller.markupInteraction
+        model.tool = .highlight
+        markup.prefetchText(onPages: 0..<2)
+        XCTAssertEqual(markup.text.wanted, [], "the document's permissions are not read yet: refused")
+        await model.settle()
+        markup.prefetchText(onPages: 0..<2)
+        XCTAssertEqual(Set(markup.text.wanted), [0, 1])
+        model.tool = .ink
+        markup.prefetchText(onPages: 0..<2)
+        XCTAssertEqual(markup.text.wanted, [], "not a text tool: what was not started is not read")
+    }
+
+    /// A read that comes back for a page scrolled past is kept as the one used longest ago: it never
+    /// pushes out the boxes of a page in view.
+    func testALateReadDoesNotPushOutThePagesInView() async throws {
+        let log = ReadLog()
+        let gate = DispatchSemaphore(value: 0)
+        let text = PageTextBoxes(revision: { 1 }) { page, _ in
+            log.add(page)
+            if page == 0 { _ = gate.wait(timeout: .now() + 5) }
+            return [CGRect(x: 0, y: 0, width: 1, height: 1)]
+        }
+        let inView = Array(1...PageTextBoxes.pagesKept)
+        text.want(inView)
+        await text.settle()
+        text.want([0])
+        for _ in 0..<1000 where !log.pages.contains(0) { try await Task.sleep(for: .milliseconds(2)) }
+        XCTAssertTrue(log.pages.contains(0), "page 0 is being read")
+        text.want(inView)
+        gate.signal()
+        await text.settle()
+        for page in inView { XCTAssertNotNil(text.boxes(onPage: page), "page \(page) was pushed out") }
+        XCTAssertNil(text.boxes(onPage: 0), "the late read was the first to go")
+    }
+
+    // MARK: Two fingers (fix round 2)
+
+    /// The pan counts every finger on the screen, not only its own: a second one down fails it.
+    func testASecondFingerAnywhereCounts() {
+        XCTAssertFalse(MarkupPanGestureRecognizer.isMoreThanOneFinger([.began]))
+        XCTAssertFalse(MarkupPanGestureRecognizer.isMoreThanOneFinger([.moved]))
+        XCTAssertTrue(MarkupPanGestureRecognizer.isMoreThanOneFinger([.moved, .began]), "a second finger elsewhere")
+        XCTAssertTrue(MarkupPanGestureRecognizer.isMoreThanOneFinger([.moved, .stationary]))
+        XCTAssertFalse(MarkupPanGestureRecognizer.isMoreThanOneFinger([.moved, .ended]), "a finger that has come up")
+        XCTAssertFalse(MarkupPanGestureRecognizer.isMoreThanOneFinger([.moved, .cancelled]))
     }
 
     // MARK: Lines (Minor 1)
@@ -356,4 +468,13 @@ final class TextMarkupTests: XCTestCase {
         XCTAssertTrue(ok)
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).first?.kind, .highlight)
     }
+}
+
+/// The pages a reader was asked for, in order, from any thread.
+final class ReadLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var read: [Int] = []
+
+    func add(_ page: Int) { lock.withLock { read.append(page) } }
+    var pages: [Int] { lock.withLock { read } }
 }

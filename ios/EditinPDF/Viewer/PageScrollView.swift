@@ -35,6 +35,9 @@ struct PageScrollView: UIViewControllerRepresentable {
     /// controller to lay them out again or redraw them. Passed in, not read from `model` here, so that
     /// the screen's body reads it and SwiftUI updates the controller each time it changes.
     var lastChange: PageChange?
+    /// The Markup tool picked (`DocumentModel.tool`), passed in, as `lastChange` is, so that the
+    /// controller hears when it changes.
+    var tool: Tool?
 
     func makeUIViewController(context: Context) -> PageScrollViewController {
         PageScrollViewController(model: model)
@@ -44,6 +47,7 @@ struct PageScrollView: UIViewControllerRepresentable {
         controller.highlightsByPage = highlights
         controller.activeHighlight = activeHighlight
         controller.selection = selection
+        controller.markupTool = tool
         // A change the controller has followed already is ignored, so handing the same one over with
         // every update is harmless.
         if let lastChange { controller.apply(lastChange) }
@@ -110,6 +114,11 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     }
 
     let model: DocumentModel
+    /// The Markup tool picked: when it changes, the text of the pages in view is asked for, for a tool
+    /// that marks text (`MarkupInteraction.prefetchText`).
+    var markupTool: Tool? {
+        didSet { if markupTool != oldValue { prefetchMarkupText() } }
+    }
     /// The long press, the tap, the handles and the menu of text selection.
     private(set) lazy var selectionInteraction = SelectionInteraction(host: self)
     /// What a finger does with a Markup tool picked: drags out text to highlight, underline or strike
@@ -266,6 +275,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         for (page, view) in pageViews where touched?.contains(page) ?? true {
             view.redraw()
         }
+        // The text read for the old revision is dropped: read it again for the pages in view.
+        prefetchMarkupText()
     }
 
     /// Whether `a` and `b` are as many pages, each the same size and turned the same way.
@@ -461,6 +472,12 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         selectionInteraction.layoutHandles()
         // With a text tool picked, whether a finger is on text is known before it goes down.
         markupInteraction.prefetchText(onPages: inView)
+    }
+
+    /// Asks for the text of the pages in view, for a tool that marks text: see `update()`.
+    private func prefetchMarkupText() {
+        guard let layout else { return }
+        markupInteraction.prefetchText(onPages: layout.visiblePages(in: scrollView.convert(scrollView.bounds, to: contentView)))
     }
 
     private func applyHighlightsToPageViews() {

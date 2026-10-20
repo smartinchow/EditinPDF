@@ -18,13 +18,15 @@ import UIKit.UIGestureRecognizerSubclass
 ///   fail, so that drag never scrolls. Anywhere else (the white of a page, the gap between pages, or
 ///   another tool, or none, or a tool that is refused) this pan takes no touch, or fails as it would
 ///   begin, and the scroll view scrolls: one finger scrolls a page from anywhere but its text.
-/// - Whether a point is on text is decided at once, on the main actor, from the page's glyph boxes,
-///   which are read off the main actor the first time a page is touched or scrolled into view with a
-///   text tool picked (`isNearText`). Until they have been read, a touch on the page is taken as on
-///   text, as if the page were all text: it marks if it began on a word, and does not scroll.
-/// - Two fingers always scroll and zoom: a second finger before the drag has begun fails it
-///   (`MarkupPanGestureRecognizer`), and the scroll view's pan and pinch take over. A second finger
-///   after it has begun is ignored: the drag goes on with the first.
+/// - Whether a point is on text is decided at once, on the main actor, from the page's glyph boxes
+///   (`isNearText`), which are read off the main actor (`PageTextBoxes`, which throttles the reading)
+///   for the pages in view while a text tool is picked, and for a page a finger goes down on. Until
+///   they have been read, a touch on the page is taken as on text, as if the page were all text: it
+///   marks if it began on a word, and does not scroll.
+/// - Two fingers always scroll and zoom: a second finger before the drag has begun fails it, wherever
+///   it went down (`MarkupPanGestureRecognizer` counts every finger on the screen, and the pan takes
+///   any touch while it has a finger already, so that it hears of it at once), and the scroll view's pan and
+///   pinch take over. A second finger after it has begun is ignored: the drag goes on with the first.
 /// - The selection's long press is off while any tool that annotates is picked
 ///   (`SelectionInteraction.isLongPressAllowed`): the tool has the finger. With Select, or in reading
 ///   mode, it selects as before, and its menu offers the marks.
@@ -48,17 +50,14 @@ final class MarkupInteraction: NSObject {
     /// next one.
     private var strokeCount = 0
 
-    /// The glyph boxes (view space) of the pages read so far, at `textRevision`: what `isNearText`
-    /// looks at. Dropped when the document changes.
-    private var textBoxes: [Int: [CGRect]] = [:]
-    /// The pages in `textBoxes`, the one used longest ago first.
-    private var textUsed: [Int] = []
-    /// The pages whose glyph boxes are being read, and the reading.
-    private var textLoading: [Int: Task<Void, Never>] = [:]
-    /// The model's revision `textBoxes` were read at.
-    private var textRevision: UInt64?
-    /// How many pages' glyph boxes are kept.
-    static let textPagesKept = 8
+    /// The glyph boxes of the pages, read off the main actor: what `isNearText` looks at. A test may
+    /// put another in its place, whose reader it sees.
+    lazy var text: PageTextBoxes = {
+        let document = model.document()
+        return PageTextBoxes(revision: { [weak model] in model?.revision ?? 0 }) { page, revision in
+            document.flatMap { PageTextBoxes.glyphBoxes(of: $0, page: page, at: revision) }
+        }
+    }()
 
     /// A drag of a text markup tool.
     private struct Stroke {
@@ -108,78 +107,37 @@ final class MarkupInteraction: NSObject {
     // MARK: The pages' text
 
     /// Whether `point` (view space, PDF points of `page`) is within `screenHitSlop` points on screen of
-    /// one of the page's glyphs. Nil while the page's glyph boxes are not read yet: they are asked for,
-    /// off the main actor, and the next touch knows.
+    /// one of the page's glyphs. Nil while the page's glyph boxes are not read yet: they are asked for
+    /// before any other page's, and the next touch knows.
     func isNearText(_ point: CGPoint, onPage page: Int) -> Bool? {
-        guard let boxes = cachedTextBoxes(onPage: page) else {
-            loadText(onPage: page)
+        guard let boxes = text.boxes(onPage: page) else {
+            text.request(page)
             return nil
         }
         let slop = hitSlop(onPage: page)
         return boxes.contains { $0.insetBy(dx: -slop, dy: -slop).contains(point) }
     }
 
-    /// Reads the glyph boxes of `pages` ahead of a touch, while a text tool is picked: the scroll view
-    /// asks for the pages it shows.
+    /// Asks for the glyph boxes of the pages in view (`pages`) ahead of a touch: those a text tool may
+    /// be used on, nearest the middle of the view first, at most `PageTextBoxes.pagesKept`; in place of
+    /// those asked for before, so a page scrolled past is not read. With no text tool picked, nothing
+    /// is asked for, and what was asked for and not started is not read. The scroll view calls it as it
+    /// scrolls, when the document changes and when the tool does.
     func prefetchText(onPages pages: Range<Int>) {
-        guard model.tool?.markupKind != nil else { return }
-        for page in pages { loadText(onPage: page) }
+        guard model.tool?.markupKind != nil else {
+            text.want([])
+            return
+        }
+        let middle = Double(pages.lowerBound + pages.upperBound - 1) / 2
+        let nearestFirst = pages.sorted { (abs(Double($0) - middle), $0) < (abs(Double($1) - middle), $1) }
+        text.want(nearestFirst.filter { textTool(onPage: $0) != nil })
     }
 
-    /// Reads the glyph boxes of `page` off the main actor, unless they are read already. Returns the
-    /// reading, or the one already on its way, for tests to wait on; nil when there is nothing to read.
-    @discardableResult
-    func loadText(onPage page: Int) -> Task<Void, Never>? {
-        guard cachedTextBoxes(onPage: page) == nil else { return nil }
-        if let reading = textLoading[page] { return reading }
-        guard let document = model.document(), let index = UInt32(exactly: page) else { return nil }
-        let revision = model.revision
-        let reading = Task { [weak self] in
-            let boxes = await Task.detached(priority: .userInitiated) { Self.glyphBoxes(of: document, page: index, at: revision) }.value
-            guard let self else { return }
-            self.textLoading[page] = nil
-            // Boxes of another revision of the document than the model's are not kept: the next touch
-            // reads them again.
-            guard let boxes, self.model.revision == revision, self.textRevision == nil || self.textRevision == revision else { return }
-            self.textRevision = revision
-            self.textBoxes[page] = boxes
-            self.useText(page)
-        }
-        textLoading[page] = reading
-        return reading
-    }
-
-    /// The boxes of `page`'s glyphs, as the engine has them at `revision`; nil when the page cannot be
-    /// read, or the document is at another revision before or after.
-    nonisolated private static func glyphBoxes(of document: PdfDocument, page: UInt32, at revision: UInt64) -> [CGRect]? {
-        guard document.revision() == revision, let text = try? document.pageText(page: page),
-              document.revision() == revision else { return nil }
-        return text.glyphs.compactMap { glyph in
-            let r = glyph.rect
-            guard r.x.isFinite, r.y.isFinite, r.width.isFinite, r.height.isFinite, r.width >= 0, r.height >= 0 else { return nil }
-            return CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
-        }
-    }
-
-    /// The glyph boxes of `page` if they have been read at the model's revision; those of an older one
-    /// are dropped first.
-    private func cachedTextBoxes(onPage page: Int) -> [CGRect]? {
-        if let textRevision, textRevision != model.revision {
-            textBoxes.removeAll()
-            textUsed.removeAll()
-            self.textRevision = nil
-        }
-        guard let boxes = textBoxes[page] else { return nil }
-        useText(page)
-        return boxes
-    }
-
-    private func useText(_ page: Int) {
-        textUsed.removeAll { $0 == page }
-        textUsed.append(page)
-        while textUsed.count > Self.textPagesKept {
-            textBoxes[textUsed.removeFirst()] = nil
-        }
+    /// Reads the glyph boxes of `page` before any other's, and returns once nothing more is being read.
+    /// For tests.
+    func loadText(onPage page: Int) async {
+        text.request(page)
+        await text.settle()
     }
 
     // MARK: The drag
@@ -279,8 +237,19 @@ final class MarkupInteraction: NSObject {
 // MARK: - UIGestureRecognizerDelegate
 
 extension MarkupInteraction: UIGestureRecognizerDelegate {
+    /// Whether the pan already has a finger: the touch being offered is a second one. (A first finger
+    /// the pan did not take, on the white of the page, is counted by the pan itself, which sees every
+    /// finger on the screen: `MarkupPanGestureRecognizer`. The scroll view's recognizers are not asked
+    /// here: whether they count the touch being offered already is not said.)
+    private var isAnotherFingerDown: Bool {
+        pan.numberOfTouches > 0
+    }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard gestureRecognizer === pan, let host else { return false }
+        // With another finger down, the pan takes the touch, wherever it is, to hear of the second finger
+        // and fail (`MarkupPanGestureRecognizer`): two fingers scroll and zoom.
+        if isAnotherFingerDown { return true }
         // A pan that takes no touch is not waited for: the scroll view scrolls at once.
         return takesTouch(atContentPoint: touch.location(in: host.contentView))
     }
@@ -296,14 +265,31 @@ extension MarkupInteraction: UIGestureRecognizerDelegate {
 }
 
 /// A one-finger pan that fails when a second finger goes down before it has begun, so that two fingers
-/// scroll and zoom however quickly the second follows the first. Once it has begun, more fingers are
-/// ignored.
+/// scroll and zoom however quickly the second follows the first. Every finger on the screen counts
+/// (`event.allTouches`), not only those this pan was given: a second finger that went down where the
+/// pan takes no touch (the white of the page, outside the pages) fails it too, at the latest when the
+/// first finger moves. Once it has begun, more fingers are ignored.
 final class MarkupPanGestureRecognizer: UIPanGestureRecognizer {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        if state == .possible, (event.touches(for: self)?.count ?? touches.count) > 1 {
-            state = .failed
-            return
-        }
+        if failsOnSecondFinger(event) { return }
         super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if failsOnSecondFinger(event) { return }
+        super.touchesMoved(touches, with: event)
+    }
+
+    /// Fails the pan, and says so, when it has not begun and more than one finger is down.
+    private func failsOnSecondFinger(_ event: UIEvent) -> Bool {
+        guard state == .possible, Self.isMoreThanOneFinger((event.allTouches ?? []).map(\.phase)) else { return false }
+        state = .failed
+        return true
+    }
+
+    /// Whether touches in these `phases` are more than one finger down: those that have ended or been
+    /// cancelled are not down.
+    nonisolated static func isMoreThanOneFinger(_ phases: [UITouch.Phase]) -> Bool {
+        phases.filter { $0 != .ended && $0 != .cancelled }.count > 1
     }
 }

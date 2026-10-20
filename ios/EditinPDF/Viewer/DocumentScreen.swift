@@ -164,7 +164,8 @@ struct DocumentScreen: View {
                            highlights: model.search?.highlightsByPage ?? [:],
                            activeHighlight: model.search?.activeHighlight,
                            selection: model.selection?.pageRects,
-                           lastChange: model.lastChange)
+                           lastChange: model.lastChange,
+                           tool: model.tool)
                 .ignoresSafeArea()
                 // An overlay, not a bar: the scroll view's insets do not change when it appears.
                 .overlay(alignment: .bottom) {

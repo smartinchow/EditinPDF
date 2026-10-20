@@ -66,6 +66,7 @@
 		BC40D99CCADBEE1084766945 /* SelectionWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 411BC18CF1E9EE12989DBBA8 /* SelectionWorker.swift */; };
 		BF1122270EA2EB45C3748482 /* PageScrollViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */; };
 		C25B3F488C382CD146BCD02B /* GlyphLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = C29853682BBB082F8EADB99E /* GlyphLines.swift */; };
+		C4C92C50FA9E7A23EDAC301E /* PageTextBoxes.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */; };
 		CCB77BF3B4FF9C314EB48C14 /* PageTiledLayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B6658CE4C759BBD49389820 /* PageTiledLayerTests.swift */; };
 		CCE3C91A30F2B370A1EF8A87 /* PageGridViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64BCBAB8B30BAE34F4674FE /* PageGridViewController.swift */; };
 		CE2196BB96862118185A87D0 /* SearchControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99DB16EDA82D406E4E0BC98F /* SearchControllerTests.swift */; };
@@ -175,6 +176,7 @@
 		B586A0723E56ED0039E2CA16 /* PageScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageScrollView.swift; sourceTree = "<group>"; };
 		B7AEE25132378BBD7977FCA8 /* SelectionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionController.swift; sourceTree = "<group>"; };
 		B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageScrollViewControllerTests.swift; sourceTree = "<group>"; };
+		BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTextBoxes.swift; sourceTree = "<group>"; };
 		BD94C82B0C570CCAA23791C4 /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		BF165FC973AC8E834A0479C1 /* MarkupInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkupInteraction.swift; sourceTree = "<group>"; };
 		C1B1F544650AF31086A3A94C /* FixtureStagingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureStagingTests.swift; sourceTree = "<group>"; };
@@ -371,6 +373,7 @@
 			children = (
 				3CDF6776F0D3EB05CFEC0B1E /* AnnotationIndex.swift */,
 				BF165FC973AC8E834A0479C1 /* MarkupInteraction.swift */,
+				BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */,
 				71D3B0AB0D03422F8570F999 /* ToolMode.swift */,
 				28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */,
 			);
@@ -662,6 +665,7 @@
 				44A73211ABDC1BBE74FB2108 /* PageLayout.swift in Sources */,
 				4329C52C72D97A892B2805F2 /* PageOverlayView.swift in Sources */,
 				E8ED2A5E3B6BF007B0422ACD /* PageScrollView.swift in Sources */,
+				C4C92C50FA9E7A23EDAC301E /* PageTextBoxes.swift in Sources */,
 				ED2429DBC555D071C1A6D240 /* PageView.swift in Sources */,
 				81FEACF2C87CE14E4F179712 /* PasswordSheet.swift in Sources */,
 				DF88232DFAC22C3AA133EA5B /* ReadingPosition.swift in Sources */,

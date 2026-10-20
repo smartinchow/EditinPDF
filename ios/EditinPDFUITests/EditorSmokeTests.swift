@@ -119,6 +119,37 @@ final class EditorSmokeTests: XCTestCase {
         attach(app, "text-markup-menu-done")
     }
 
+    /// Two fingers zoom with a text tool picked, as in reading mode, and mark nothing: the top of the
+    /// first page, where its line is, looks different once zoomed in on the middle of the view.
+    func testPinchingZoomsWithATextToolPicked() throws {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let highlight = app.buttons["tool-highlight"]
+        XCTAssertTrue(highlight.waitForEnabled(timeout: 5))
+        highlight.tap()
+        let scrollView = app.scrollViews["pageScrollView"].firstMatch
+        let line = textLine(in: app, page: scrollView)
+        // Around the line: from a little before it to a little after, a line's height above and below.
+        let around = CGRect(x: line.start.screenPoint.x - 20, y: line.start.screenPoint.y - 20,
+                            width: line.end.screenPoint.x - line.start.screenPoint.x + 40, height: 40)
+        let before = try pixels(of: around, in: app)
+        scrollView.pinch(withScale: 3, velocity: 2)
+        sleep(1)
+        attach(app, "text-markup-pinched")
+        XCTAssertNotEqual(try pixels(of: around, in: app), before, "the pinch did not zoom")
+        XCTAssertFalse(app.buttons["undoButton"].isEnabled, "the pinch marked something")
+    }
+
+    /// The pixels of `rect` (points on the screen) in a screenshot of `app`.
+    private func pixels(of rect: CGRect, in app: XCUIApplication) throws -> Data {
+        let image = app.screenshot().image
+        let scale = image.scale
+        let cropped = try XCTUnwrap(image.cgImage?.cropping(to: CGRect(x: rect.minX * scale, y: rect.minY * scale,
+                                                                       width: rect.width * scale, height: rect.height * scale)))
+        return try XCTUnwrap(UIImage(cgImage: cropped).pngData())
+    }
+
     /// On a page turned by `/Rotate 90` the line runs down the page: a drag down it marks it there.
     func testDraggingDownTheTextOfATurnedPageMarksIt() {
         let app = launchAndOpen("rotated.pdf")
