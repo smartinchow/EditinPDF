@@ -15,7 +15,8 @@ enum PaletteLayout: Equatable {
 
 /// Markup mode's tools, and the button that opens the current tool's style: in a bar along the
 /// bottom (the style in a sheet) or a column at the leading edge (the style in a popover). Tools
-/// the document or the page refuses are disabled, and the palette says why.
+/// the document or the page refuses are disabled, and the palette says why. While strokes drawn with
+/// Draw are waiting, Done stands before the style button.
 struct ToolPalette: View {
     @Bindable var model: DocumentModel
     let layout: PaletteLayout
@@ -40,6 +41,7 @@ struct ToolPalette: View {
                         .padding(.horizontal, 6)
                 }
                 Divider().frame(height: 28)
+                doneDrawingButton
                 styleButton
                     .padding(.trailing, 6)
                     .sheet(isPresented: $showsStyle) {
@@ -74,6 +76,7 @@ struct ToolPalette: View {
                 // As tall as the tools when there is room for them, and scrolling when there is not.
                 .frame(maxHeight: CGFloat(Tool.allCases.count) * 42 + 12)
                 Divider().frame(width: 28)
+                doneDrawingButton
                 styleButton
                     .padding(.bottom, 6)
                     .popover(isPresented: $showsStyle, arrowEdge: .leading) {
@@ -117,6 +120,25 @@ struct ToolPalette: View {
             .accessibilityIdentifier("tool-\(tool.rawValue)")
             .accessibilityAddTraits(isCurrent ? .isSelected : [])
             .help(tool.title)
+        }
+    }
+
+    /// Adds the strokes drawn with Draw to the page, as one drawing; there only while some are waiting.
+    @ViewBuilder private var doneDrawingButton: some View {
+        if model.hasPendingInk {
+            Button {
+                model.commitPendingInk()
+            } label: {
+                Label(Strings.doneDrawing, systemImage: "checkmark")
+                    .labelStyle(.iconOnly)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("doneDrawingButton")
+            .help(Strings.doneDrawing)
         }
     }
 

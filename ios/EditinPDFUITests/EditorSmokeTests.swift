@@ -168,6 +168,108 @@ final class EditorSmokeTests: XCTestCase {
         attach(app, "rotated-highlight")
     }
 
+    /// Draw: one finger draws on the page instead of scrolling it; the strokes wait on the page, with
+    /// Done in the palette and Undo on, and are added as one drawing that stays where it was drawn;
+    /// Undo takes the whole drawing back. Two fingers zoom, and a drawing made zoomed in lands where
+    /// it was drawn too.
+    func testDrawingWithAFingerAddsInkThatUndoTakesBack() throws {
+        let app = launchAndOpen("sample.pdf")
+        let indicator = app.staticTexts["pageIndicator"]
+        expect(indicator, toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5), "Draw is disabled on a document that allows markup")
+        ink.tap()
+        let undo = app.buttons["undoButton"], redo = app.buttons["redoButton"], done = app.buttons["doneDrawingButton"]
+        XCTAssertFalse(undo.isEnabled, "nothing to undo yet")
+        XCTAssertFalse(done.exists, "no Done before anything is drawn")
+
+        // Two strokes across the white of the first page, one finger each: they draw, not scroll.
+        let first = (pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app), pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
+        let second = (pagePoint(CGPoint(x: 150, y: 360), pageWidth: 612, in: app), pagePoint(CGPoint(x: 450, y: 420), pageWidth: 612, in: app))
+        first.0.press(forDuration: 0.05, thenDragTo: first.1)
+        second.0.press(forDuration: 0.05, thenDragTo: second.1)
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "no Done after drawing")
+        XCTAssertEqual(indicator.label, "1 / 3", "one finger scrolled")
+        XCTAssertTrue(undo.isEnabled, "Undo is on while strokes wait")
+        XCTAssertFalse(redo.isEnabled, "Redo is off while strokes wait")
+        let midway = pagePoint(CGPoint(x: 300, y: 300), pageWidth: 612, in: app).screenPoint
+        XCTAssertTrue(try isInked(around: midway, in: app), "the stroke is not on the canvas")
+        attach(app, "ink-pending")
+
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5), "Done stayed after the strokes were added")
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "adding the drawing left nothing to undo")
+        sleep(2)
+        XCTAssertTrue(try isInked(around: midway, in: app), "the drawing did not stay where it was drawn")
+        attach(app, "ink-added")
+
+        undo.tap()
+        XCTAssertTrue(redo.waitForEnabled(timeout: 5), "Undo took nothing back")
+        sleep(2)
+        XCTAssertFalse(try isInked(around: midway, in: app), "Undo left the drawing")
+        XCTAssertFalse(undo.isEnabled, "the whole drawing was one change")
+
+        // Zoomed in three times, a stroke under the finger stays under it once added.
+        let scrollView = app.scrollViews["pageScrollView"].firstMatch
+        scrollView.pinch(withScale: 3, velocity: 2)
+        sleep(1)
+        let start = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+        let end = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn zoomed in")
+        let centre = scrollView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).screenPoint
+        attach(app, "ink-zoomed-pending")
+        done.tap()
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5))
+        sleep(2)
+        XCTAssertTrue(try isInked(around: centre, in: app), "the drawing made zoomed in moved")
+        attach(app, "ink-zoomed-added")
+    }
+
+    /// On a page turned by `/Rotate 90`, a drawing stays where it was drawn.
+    func testDrawingOnATurnedPageStaysWhereItWasDrawn() throws {
+        let app = launchAndOpen("rotated.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5))
+        ink.tap()
+        // The page is shown landscape (792 x 612 points), fitted to the width.
+        let start = pagePoint(CGPoint(x: 200, y: 250), pageWidth: 792, in: app)
+        let end = pagePoint(CGPoint(x: 600, y: 250), pageWidth: 792, in: app)
+        start.press(forDuration: 0.05, thenDragTo: end)
+        let done = app.buttons["doneDrawingButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
+        done.tap()
+        XCTAssertTrue(app.buttons["undoButton"].waitForEnabled(timeout: 5), "the drawing was not added")
+        sleep(2)
+        XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 400, y: 250), pageWidth: 792, in: app).screenPoint, in: app),
+                      "the drawing did not stay where it was drawn")
+        attach(app, "ink-rotated")
+    }
+
+    /// Whether the screen around `point` (a 9-point square) has ink on it: any pixel well away from
+    /// white.
+    private func isInked(around point: CGPoint, in app: XCUIApplication) throws -> Bool {
+        let image = try XCTUnwrap(app.screenshot().image.cgImage)
+        let scale = CGFloat(image.width) / app.frame.width
+        let box = CGRect(x: (point.x - 4.5) * scale, y: (point.y - 4.5) * scale, width: 9 * scale, height: 9 * scale).integral
+        let cropped = try XCTUnwrap(image.cropping(to: box))
+        let width = cropped.width, height = cropped.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        XCTAssertTrue(drawn)
+        return stride(from: 0, to: pixels.count, by: 4).contains { i in
+            Int(pixels[i]) + Int(pixels[i + 1]) + Int(pixels[i + 2]) < 3 * 160
+        }
+    }
+
     /// The first line of `sample.pdf`'s first page ("Page one", at 72 points from the page's left and
     /// about 79 from its top): where a drag across it starts and ends.
     private func textLine(in app: XCUIApplication, page: XCUIElement) -> (start: XCUICoordinate, end: XCUICoordinate) {

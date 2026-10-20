@@ -16,6 +16,30 @@ struct PageRect: Equatable {
     let rect: CGRect
 }
 
+/// The view that zooms, holding the page views. Before it looks for the view under a finger going
+/// down, it says where the finger lands (`touchWillLand`), when it is the first on the screen, so that
+/// Draw's canvas can be put there first and take the finger (`MarkupInteraction.prepareToDraw`).
+final class PageContentView: UIView {
+    /// Told where a first finger is landing, in this view's coordinates.
+    var touchWillLand: ((CGPoint) -> Void)?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // Only for a finger going down, not for a pointer hovering or a lookup with no event.
+        if let event, event.type == .touches, self.point(inside: point, with: event),
+           Self.isFirstFinger(otherTouches: (event.allTouches ?? []).map { ($0.view != nil, $0.phase) }) {
+            touchWillLand?(point)
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    /// Whether a touch being placed is the first finger on the screen: none of the event's other
+    /// touches, those already placed on a view (`isPlaced`), is still down. The touch being placed is
+    /// not placed yet, whether or not the event counts it already.
+    nonisolated static func isFirstFinger(otherTouches: [(isPlaced: Bool, phase: UITouch.Phase)]) -> Bool {
+        !otherTouches.contains { $0.isPlaced && $0.phase != .ended && $0.phase != .cancelled }
+    }
+}
+
 /// The open document's pages, one below the other, scrolling and zooming.
 struct PageScrollView: UIViewControllerRepresentable {
     let model: DocumentModel
@@ -87,8 +111,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     static let endTolerance: CGFloat = 1
 
     let scrollView = UIScrollView()
-    /// The view that zooms. It holds the page views, laid out at zoom 1.
-    let contentView = UIView()
+    /// The view that zooms. It holds the page views, laid out at zoom 1, and Draw's canvas over one.
+    let contentView = PageContentView()
 
     /// The boxes to highlight on each page, in PDF points: the hits of a search. A page view is given
     /// its page's boxes when it is made as well as when they change, so they are still there when a
@@ -115,9 +139,14 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
 
     let model: DocumentModel
     /// The Markup tool picked: when it changes, the text of the pages in view is asked for, for a tool
-    /// that marks text (`MarkupInteraction.prefetchText`).
+    /// that marks text (`MarkupInteraction.prefetchText`), and the gestures are set up for it: with
+    /// Draw, one finger draws and two scroll (`MarkupInteraction.toolDidChange`).
     var markupTool: Tool? {
-        didSet { if markupTool != oldValue { prefetchMarkupText() } }
+        didSet {
+            guard markupTool != oldValue else { return }
+            markupInteraction.toolDidChange()
+            prefetchMarkupText()
+        }
     }
     /// The long press, the tap, the handles and the menu of text selection.
     private(set) lazy var selectionInteraction = SelectionInteraction(host: self)
@@ -323,6 +352,14 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
                       width: rect.width * scale, height: rect.height * scale)
     }
 
+    /// Where `page` is in the content view's coordinates (layout points at zoom 1), and how many of
+    /// them a PDF point of it is: what Draw's canvas over it covers. Nil before there is a layout, or
+    /// for a page the document does not have.
+    func layoutPlace(ofPage page: Int) -> (frame: CGRect, scale: CGFloat)? {
+        guard let layout, (0..<layout.pageCount).contains(page), layout.scale(of: page) > 0 else { return nil }
+        return (layout.frame(of: page), layout.scale(of: page))
+    }
+
     /// How many points of the scroll view a PDF point of `page` is, at the zoom the view is at: 0
     /// before there is a layout, or for a page the document does not have.
     func screenScale(ofPage page: Int) -> CGFloat {
@@ -371,6 +408,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// the text was on screen; the handles themselves are put at the selection's new place.
     private func relayout(fitWidth: CGFloat, placing placement: Placement) {
         selectionInteraction.layoutWillChange()
+        // Strokes drawn with Draw are added for the layout they were drawn on, before it goes.
+        markupInteraction.layoutWillChange()
         let position = lastPosition
         // Read before the zoom changes, which moves the current page.
         let currentPage = model.currentPage
@@ -459,7 +498,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
             let view = PageView(page: page, document: document, pointSize: CGSize(width: info.widthPt, height: info.heightPt))
             view.frame = layout.frame(of: page)
             applyOverlay(to: view)
-            contentView.addSubview(view)
+            // Under Draw's canvas and what it shows: pages never overlap one another.
+            contentView.insertSubview(view, at: 0)
             pageViews[page] = view
         }
         if let page = readerPage(in: layout), page != model.currentPage {

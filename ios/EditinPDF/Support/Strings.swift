@@ -415,6 +415,12 @@ enum Strings {
         String(localized: "Draw", comment: "Markup tool for drawing freehand")
     }
 
+    /// The palette button, there while strokes drawn with Draw are waiting, that adds them to the page.
+    /// Its own key: the "Done" that closes a sheet may be translated otherwise.
+    static var doneDrawing: String {
+        String(localized: "doneDrawing", defaultValue: "Done", comment: "Markup palette button that adds the strokes just drawn to the page")
+    }
+
     /// The tool that types text onto the page.
     static var toolTextBox: String {
         String(localized: "Text Box", comment: "Markup tool that adds a box of typed text")

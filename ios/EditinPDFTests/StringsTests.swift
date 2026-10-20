@@ -143,6 +143,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.underline, "Underline")
         XCTAssertEqual(Strings.strikeout, "Strikethrough")
         XCTAssertEqual(Strings.toolInk, "Draw")
+        XCTAssertEqual(Strings.doneDrawing, "Done")
         XCTAssertEqual(Strings.toolTextBox, "Text Box")
         XCTAssertEqual(Strings.toolNote, "Note")
         XCTAssertEqual(Strings.toolRectangle, "Rectangle")

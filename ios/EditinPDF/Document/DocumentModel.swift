@@ -70,8 +70,11 @@ final class DocumentModel {
     // MARK: Markup
 
     /// What a touch on the page does: nil while the reader is only reading (touches scroll, zoom and
-    /// select text); Markup in the toolbar sets `.select`, and the palette any other tool.
-    var tool: Tool?
+    /// select text); Markup in the toolbar sets `.select`, and the palette any other tool. Strokes drawn
+    /// with Draw and not added yet are added as soon as it changes (`commitPendingInk`).
+    var tool: Tool? {
+        didSet { if tool != oldValue { commitPendingInk() } }
+    }
     /// Each tool's colour and size, kept between documents and launches.
     let toolStyles: ToolStyleStore
 
@@ -125,6 +128,59 @@ final class DocumentModel {
     /// read, and not when they refuse it.
     func canUse(_ tool: Tool) -> Bool {
         capabilities != nil && refusal(of: tool) == nil
+    }
+
+    // MARK: Drawing
+
+    /// Whether strokes drawn with Draw are on a page, waiting to be added as one drawing
+    /// (`commitPendingInk`): the palette shows Done meanwhile.
+    private(set) var hasPendingInk = false
+    /// What holds those strokes: the page view's ink capture (`MarkupInteraction`), which tells
+    /// `pendingInkDidChange` when it has some or none.
+    @ObservationIgnored weak var inkHolder: (any PendingInkHolder)?
+
+    /// The ink capture's strokes came or went.
+    func pendingInkDidChange(_ pending: Bool) {
+        if hasPendingInk != pending { hasPendingInk = pending }
+    }
+
+    /// Adds the strokes drawn with Draw and waiting, if any, as one change, handed over before this
+    /// returns: Done does it, and so does everything that must come after them (another tool, any other
+    /// change, Undo and Redo, the scene leaving the screen). Nothing happens with none waiting.
+    func commitPendingInk() {
+        inkHolder?.commitPendingInk()
+    }
+
+    /// Adds `strokes` (view space: PDF points of `page`, each stroke the points it passed through) as
+    /// one drawing in `style` (Draw's own when nil): one change named `Strings.actionAddAnnotation`,
+    /// which one undo takes back. Says whether it was made.
+    ///
+    /// The strokes are kept within what the bridge takes (`InkGeometry`): a drawing too big for one
+    /// annotation is several, made together. Like every placement in view space it is worked out
+    /// against a revision: `drawnAt`, the one the strokes were drawn on (the model's now when nil), so
+    /// that ink drawn before a turn of its page was published is refused as stale (`enqueue`), and
+    /// the reader told, instead of landing turned. A tool that may not be used is refused at once.
+    @discardableResult
+    func addInk(page: Int, strokes: [[CGPoint]], drawnAt revision: UInt64? = nil, style: ToolStyle? = nil) async -> Bool {
+        await enqueueInk(page: page, strokes: strokes, drawnAt: revision, style: style).value
+    }
+
+    /// `addInk`, handed over at once (registered with the undo manager before this returns), for
+    /// whatever must come after it: the task says whether it was made.
+    @discardableResult
+    func enqueueInk(page: Int, strokes: [[CGPoint]], drawnAt revision: UInt64? = nil, style: ToolStyle? = nil) -> Task<Bool, Never> {
+        if let refusal = refusal(of: .ink, onPage: page) {
+            failure = EditFailure(message: refusal)
+            return Task { false }
+        }
+        guard let pageNumber = UInt32(exactly: page) else { return Task { false } }
+        let style = style ?? toolStyles[.ink]
+        let width = InkGeometry.lineWidth(style.width)
+        let edits = InkGeometry.drawings(strokes.flatMap(InkGeometry.withinLimits)).map { drawing in
+            Edit.addInk(page: pageNumber, strokes: drawing.map { $0.map { Point(x: Double($0.x), y: Double($0.y)) } },
+                        color: style.color.rgbColor, width: width)
+        }
+        return enqueue(edits, named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
     }
 
     /// The scene's undo manager, which the screen hands over (`@Environment(\.undoManager)`). With
@@ -229,14 +285,19 @@ final class DocumentModel {
     /// otherwise it is checked against the revision it was worked out for, and the engine refuses
     /// it (`Stale`) instead of changing the wrong page or annotation. The task says whether the
     /// change was made; when it was not, `failure` says why, and the change leaves nothing on the
-    /// undo manager.
+    /// undo manager. `base` is the revision it was worked out against, when that is not the model's
+    /// now: strokes drawn with Draw are worked out against the one they were drawn on.
+    ///
+    /// Strokes drawn with Draw and not added yet are added first (`commitPendingInk`): they were drawn
+    /// on the document as it is, before this change.
     @discardableResult
-    func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?) -> Task<Bool, Never> {
+    func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?, workedOutAt base: UInt64? = nil) -> Task<Bool, Never> {
         guard !edits.isEmpty else { return Task { false } }
+        commitPendingInk()
         let token = EditToken()
         registerStep(.undo, token: token, named: actionName, touching: pages)
         liveChanges.add(token)
-        let base = revision
+        let base = base ?? revision
         return queue.submit { [weak self] in
             await self?.apply(edits, label: actionName, base: base, token: token, touching: pages) ?? false
         }
@@ -255,13 +316,17 @@ final class DocumentModel {
     }
 
     /// Takes back the last change: the toolbar's Undo. Through the undo manager, so its stack and
-    /// the engine's history move together.
+    /// the engine's history move together. Strokes drawn with Draw and waiting are added first, so
+    /// Undo then takes back the whole drawing.
     func undo() {
+        commitPendingInk()
         undoManager?.undo()
     }
 
-    /// Makes again the change last taken back: the toolbar's Redo.
+    /// Makes again the change last taken back: the toolbar's Redo. Strokes drawn with Draw and waiting
+    /// are added first (they are the latest change, and the screen does not offer Redo meanwhile).
     func redo() {
+        commitPendingInk()
         undoManager?.redo()
     }
 
@@ -454,6 +519,16 @@ final class DocumentModel {
             self?.adopt(state)
         }
     }
+}
+
+/// What holds strokes drawn with Draw that are not added to the document yet: the page view's ink
+/// capture (`MarkupInteraction`).
+@MainActor
+protocol PendingInkHolder: AnyObject {
+    /// Adds the strokes waiting, if any, as one change, handed over before this returns; the task says
+    /// whether it was made. Nil with none waiting.
+    @discardableResult
+    func commitPendingInk() -> Task<Bool, Never>?
 }
 
 /// What one change, undo or redo did, for the views that redraw pages: its revision, the pages it

@@ -38,6 +38,8 @@ struct DocumentScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// The scene's undo manager, handed to the model, which registers each change with it.
     @Environment(\.undoManager) private var undoManager
+    /// Whether the scene is on screen and active: strokes drawn with Draw are added as it leaves.
+    @Environment(\.scenePhase) private var scenePhase
     /// Whether the undo manager has something to undo, and to redo. It is not observable, so these are
     /// read again whenever it says its stacks moved.
     @State private var canUndo = false
@@ -70,6 +72,11 @@ struct DocumentScreen: View {
         content
             .onAppear { adoptUndoManager() }
             .onChange(of: undoManager) { adoptUndoManager() }
+            // Strokes left waiting on the page are added before the scene goes to the background (and
+            // the file is saved): they would not be in it otherwise.
+            .onChange(of: scenePhase) {
+                if scenePhase != .active { model.commitPendingInk() }
+            }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { readUndoState($0) }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { readUndoState($0) }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidRedoChange)) { readUndoState($0) }
@@ -323,25 +330,27 @@ struct DocumentScreen: View {
     }
 
     /// Takes back the last change. Changes stay tappable while one is being made: the model makes
-    /// them in order.
+    /// them in order. Strokes drawn with Draw and waiting count as a change: Undo adds them, then
+    /// takes the drawing back.
     private var undoButton: some View {
         Button {
             model.undo()
         } label: {
             Label(Strings.undo, systemImage: "arrow.uturn.backward")
         }
-        .disabled(!canUndo)
+        .disabled(!canUndo && !model.hasPendingInk)
         .accessibilityIdentifier("undoButton")
     }
 
-    /// Makes again the change last taken back.
+    /// Makes again the change last taken back. Not while strokes drawn with Draw are waiting: they are
+    /// a change after it, and adding them leaves nothing to redo.
     private var redoButton: some View {
         Button {
             model.redo()
         } label: {
             Label(Strings.redo, systemImage: "arrow.uturn.forward")
         }
-        .disabled(!canRedo)
+        .disabled(!canRedo || model.hasPendingInk)
         .accessibilityIdentifier("redoButton")
     }
 
