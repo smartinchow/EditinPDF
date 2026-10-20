@@ -679,3 +679,41 @@ fn the_truncated_form_fixture_is_listed_short_and_says_so() {
             .form_fields_truncated()
     );
 }
+
+/// The bridge runs no script a document carries: a field's keystroke, validate, calculate and
+/// format scripts have no time or memory limit in the engine. The built-in calculations the engine
+/// works out natively (a sum, here) still happen.
+#[test]
+fn filling_a_field_runs_none_of_the_forms_scripts() {
+    let doc = PdfDocument::open(fixtures::scripted_form_doc(), None).unwrap();
+    doc.apply(
+        Edit::SetFieldValue {
+            name: "typed".into(),
+            value: text("hello"),
+        },
+        0,
+    )
+    .unwrap();
+    assert_eq!(field(&doc, "typed").value, ["hello"]);
+    assert!(
+        field(&doc, "echo").value.is_empty(),
+        "the keystroke script did not run"
+    );
+    assert!(
+        field(&doc, "computed").value.is_empty(),
+        "nor the calculate script"
+    );
+    doc.apply(
+        Edit::SetFieldValue {
+            name: "amount".into(),
+            value: text("2"),
+        },
+        1,
+    )
+    .unwrap();
+    assert_eq!(field(&doc, "total").value, ["2"], "a built-in sum is made");
+    assert!(field(&doc, "computed").value.is_empty());
+    // Opened again from what was saved, nothing has run either.
+    let back = reopen(doc.save(SaveMode::Incremental).unwrap(), None);
+    assert!(field(&back, "echo").value.is_empty() && field(&back, "computed").value.is_empty());
+}

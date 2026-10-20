@@ -227,30 +227,44 @@ fn an_encrypted_documents_comments_are_deleted_too() {
 /// another comment deleted in the same step. Each delete takes those out with its comment, which moves
 /// the next one's place. If this starts failing, the engine has changed how it deletes; look again at
 /// `DeleteAnnotations` before changing the test.
+/// Single deletes addressed by the places before the first of them, highest first, hit the wrong
+/// annotation: which is why a step does not take more than one of them on a page, and
+/// `DeleteAnnotations` exists.
 #[test]
 fn deletes_by_the_places_before_the_step_highest_first_hit_the_wrong_annotation() {
-    let old_way = |indices: &[u32]| {
-        indices
-            .iter()
-            .map(|&index| Edit::DeleteAnnotation { page: 0, index })
-            .collect::<Vec<_>>()
+    // Each delete is its own step here, at the revision the one before it left, with the places as
+    // they were before the first: what one step of them would have done.
+    let old_way = |doc: &PdfDocument, indices: &[u32]| {
+        for (revision, &index) in (0..).zip(indices) {
+            doc.apply(Edit::DeleteAnnotation { page: 0, index }, revision)
+                .unwrap();
+        }
     };
 
     // A (2) goes with its pop-up (0), so B moves from 1 to 0, and "delete 1" takes the form's widget.
     let doc = PdfDocument::open(popup_first(false), None).unwrap();
-    doc.apply_all("Erase".into(), old_way(&[2, 1]), 0).unwrap();
+    old_way(&doc, &[2, 1]);
     assert_eq!(annots(&doc), vec![5], "B is left, and the widget is gone");
 
     // The note (2) goes with the reply before it (0), so the rectangle moves from 1 to 0, and
     // "delete 1" takes the link.
     let doc = PdfDocument::open(replies_around(false), None).unwrap();
-    doc.apply_all("Erase".into(), old_way(&[3, 2, 1]), 0)
-        .unwrap();
+    old_way(&doc, &[3, 2, 1]);
     assert_eq!(
         annots(&doc),
         vec![5],
         "the rectangle is left, and the link is gone"
     );
+
+    // In one step they are refused.
+    let doc = PdfDocument::open(popup_first(false), None).unwrap();
+    let both = [2, 1].map(|index| Edit::DeleteAnnotation { page: 0, index });
+    let result = doc.apply_all("Erase".into(), both.to_vec(), 0);
+    assert!(
+        matches!(result, Err(EditError::Invalid { .. })),
+        "{result:?}"
+    );
+    assert_eq!(doc.revision(), 0);
 }
 
 #[test]
@@ -403,4 +417,94 @@ fn a_step_that_deletes_several_comments_of_a_page_addresses_no_other_there() {
     );
     assert!(other_page.is_ok(), "{other_page:?}");
     assert!(doc.annotations().is_empty());
+}
+
+/// Deleting one comment moves the places of those after it, so a step that deletes a comment of a
+/// page addresses no other comment there either. Adding one, and changing other pages, still go.
+#[test]
+fn a_step_that_deletes_a_comment_of_a_page_addresses_no_other_there() {
+    let doc = PdfDocument::open(popup_first(false), None).unwrap();
+    let delete_b = Edit::DeleteAnnotation { page: 0, index: 1 };
+    let others = [
+        Edit::DeleteAnnotation { page: 0, index: 2 },
+        Edit::SetAnnotationContents {
+            page: 0,
+            index: 2,
+            contents: "x".into(),
+        },
+        Edit::MoveAnnotation {
+            page: 0,
+            index: 2,
+            dx: 5.0,
+            dy: 5.0,
+        },
+    ];
+    for other in others {
+        for edits in [
+            vec![other.clone(), delete_b.clone()],
+            vec![delete_b.clone(), other.clone()],
+        ] {
+            let result = doc.apply_all("x".into(), edits, 0);
+            assert!(
+                matches!(result, Err(EditError::Invalid { .. })),
+                "{other:?}: {result:?}"
+            );
+        }
+    }
+    assert_eq!(doc.revision(), 0);
+
+    let added = doc.apply_all(
+        "x".into(),
+        vec![
+            delete_b.clone(),
+            Edit::AddNote {
+                page: 0,
+                at: Point { x: 300.0, y: 300.0 },
+                contents: "new".into(),
+                color: YELLOW,
+            },
+        ],
+        0,
+    );
+    assert!(added.is_ok(), "{added:?}");
+    let mut left: Vec<String> = doc
+        .annotations()
+        .into_iter()
+        .filter_map(|a| a.contents)
+        .collect();
+    left.sort();
+    assert_eq!(left, ["A", "new"], "B went, and the note came");
+
+    let doc = PdfDocument::open(fixtures::text_doc(&["one", "two"]), None).unwrap();
+    for page in [0, 1] {
+        doc.apply(
+            Edit::AddNote {
+                page,
+                at: Point { x: 50.0, y: 50.0 },
+                contents: String::new(),
+                color: YELLOW,
+            },
+            u64::from(page),
+        )
+        .unwrap();
+    }
+    let other_page = doc.apply_all(
+        "x".into(),
+        vec![
+            Edit::DeleteAnnotation { page: 0, index: 0 },
+            Edit::SetAnnotationContents {
+                page: 1,
+                index: 0,
+                contents: "kept".into(),
+            },
+        ],
+        2,
+    );
+    assert!(other_page.is_ok(), "{other_page:?}");
+    let left = doc.annotations();
+    assert_eq!(left.len(), 1);
+    assert_eq!(
+        (left[0].page, left[0].contents.as_deref()),
+        (1, Some("kept"))
+    );
 }

@@ -142,8 +142,9 @@ impl From<pdfcraft_engine::EditError> for EditError {
 /// Why a document could not be saved. Nothing about the document changes.
 #[derive(Clone, Debug, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum SaveError {
-    /// The document is signed, and this save would rewrite it and so invalidate the signatures;
-    /// an incremental save keeps them.
+    /// The document is signed, and this save would rewrite it and so invalidate the signatures. An
+    /// incremental save keeps them, except for a document saving writes out in full
+    /// (`EditCapabilities::rewrites_on_save`), which no save of is made.
     #[error("this document is signed: rewriting it would invalidate its signatures")]
     Signed,
     /// The document cannot be edited, so it cannot be rewritten. `message` says why, and may be

@@ -512,3 +512,80 @@ pub fn many_fields_doc(count: usize) -> Vec<u8> {
     let fields: Vec<String> = (0..count).map(|i| format!("/FT /Tx /T (f{i})")).collect();
     hand_form_doc(&fields)
 }
+
+/// `hand_form_doc` with fields whose scripts change fields, for the tests that check the bridge runs
+/// no script:
+///
+/// - `typed`: a text field whose keystroke script sets `echo` to "from a script";
+/// - `echo`: a text field, empty;
+/// - `computed`: a text field whose calculate script sets it to "calculated" (a calculation runs
+///   after any field changes);
+/// - `amount` and `total`: text fields, `total` the sum of `amount` by the built-in
+///   `AFSimple_Calculate`, which the engine works out itself, with no script engine.
+pub fn scripted_form_doc() -> Vec<u8> {
+    let script = |js: &str| format!("<< /S /JavaScript /JS ({js}) >>");
+    hand_form_doc(&[
+        format!(
+            "/FT /Tx /T (typed) /AA << /K {} >>",
+            script("this.getField(\"echo\").value = \"from a script\";")
+        ),
+        "/FT /Tx /T (echo)".to_owned(),
+        format!(
+            "/FT /Tx /T (computed) /AA << /C {} >>",
+            script("event.value = \"calculated\";")
+        ),
+        "/FT /Tx /T (amount)".to_owned(),
+        format!(
+            "/FT /Tx /T (total) /AA << /C {} >>",
+            script("AFSimple_Calculate(\"SUM\", new Array(\"amount\"));")
+        ),
+    ])
+}
+
+/// `pdf` with the offset its last `startxref` gives pointing past the end of the file, as a file
+/// damaged in transit can have it: the engine rebuilds the cross-reference data from the objects'
+/// headers when it opens it.
+pub fn with_damaged_startxref(mut pdf: Vec<u8>) -> Vec<u8> {
+    let at = pdf
+        .windows(9)
+        .rposition(|w| w == b"startxref")
+        .expect("a PDF ends with startxref");
+    let start = at
+        + 9
+        + pdf[at + 9..]
+            .iter()
+            .position(u8::is_ascii_digit)
+            .expect("startxref gives an offset");
+    let end = start
+        + pdf[start..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+    pdf[start..end].fill(b'9');
+    let offset: usize = std::str::from_utf8(&pdf[start..end])
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(offset >= pdf.len(), "the offset now points past the end");
+    pdf
+}
+
+/// `hand_form_doc` with one signature field, `signature`, holding a signature dictionary: the
+/// engine counts the document as signed. (The signature is not a valid one, which does not change
+/// that.)
+pub fn signed_doc() -> Vec<u8> {
+    hand_form_doc(&[
+        "/FT /Sig /T (signature) /V << /Type /Sig /Filter /Adobe.PPKLite \
+         /SubFilter /adbe.pkcs7.detached /ByteRange [0 0 0 0] /Contents <00> >>"
+            .to_owned(),
+    ])
+}
+
+/// A one-page document reading `text` that the engine shows but cannot edit: `text_doc` behind
+/// 5,000 spaces. The renderer finds a `%PDF-` header that far in; the object layer the engine edits
+/// with looks for it in the first 1,024 bytes only, and so cannot read the file.
+pub fn read_only_doc(text: &str) -> Vec<u8> {
+    let mut pdf = vec![b' '; 5_000];
+    pdf.extend(text_doc(&[text]));
+    pdf
+}

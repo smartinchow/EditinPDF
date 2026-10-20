@@ -5,7 +5,8 @@
 //!
 //! - [`PdfDocument`]: one open document (open, page count, page geometry, page pixels, page text,
 //!   selecting text and searching, editing, listing comments and form fields, undo and redo,
-//!   saving, extracting pages).
+//!   saving, extracting pages). No script a document carries is ever run: the engine's
+//!   JavaScript is off in every session the bridge makes.
 //! - [`Edit`], [`EditOutcome`], [`EditCapabilities`], [`SaveMode`], [`Point`], [`RgbColor`],
 //!   [`MarkupKind`], [`ShapeKind`], [`FieldValue`], [`EditError`], [`SaveError`]: what editing takes
 //!   and gives.
@@ -20,6 +21,8 @@
 //!   engine's work, which grows with the page and the document. [`search_hit_limit`] hands the first
 //!   to the apps, which cannot read a Rust constant.
 //! - [`blank_document`]: a new one-page PDF, for starting a document from nothing.
+//! - [`max_text_chars`]: the most characters the text of a comment, a text box or a document
+//!   information entry may have, for the apps to hold their editors to.
 //! - [`min_tile_scale`], [`max_tile_scale`]: the scales a tile is drawn at, for the apps to keep
 //!   their requests within.
 //!
@@ -77,7 +80,7 @@ pub fn engine_version() -> String {
 pub fn blank_document(width_pt: f64, height_pt: f64) -> Result<Vec<u8>, EditError> {
     let width = edit::page_side(width_pt)?;
     let height = edit::page_side(height_pt)?;
-    let bytes = pdfcraft_engine::Session::new().create_blank(width, height, 1)?;
+    let bytes = document::session().create_blank(width, height, 1)?;
     Ok(std::sync::Arc::unwrap_or_clone(bytes))
 }
 
@@ -86,6 +89,15 @@ pub fn blank_document(width_pt: f64, height_pt: f64) -> Result<Vec<u8>, EditErro
 #[uniffi::export]
 pub fn search_hit_limit() -> u32 {
     u32::try_from(MAX_SEARCH_HITS).unwrap_or(u32::MAX)
+}
+
+/// The most characters (Unicode scalar values) the text of a comment, of a text box or of a
+/// document information entry may have: 100,000. An edit that carries more is refused as
+/// `Invalid`, so the apps hold their editors to it. (A form field's text has a cap of its own,
+/// 10,000.)
+#[uniffi::export]
+pub fn max_text_chars() -> u32 {
+    u32::try_from(edit::MAX_TEXT_CHARS).unwrap_or(u32::MAX)
 }
 
 /// The smallest scale, in device pixels per point, that `PdfDocument::render_tile` draws a tile at.
@@ -104,6 +116,14 @@ pub fn max_tile_scale() -> f64 {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_exported_text_cap_is_the_one_edits_are_held_to() {
+        assert_eq!(
+            usize::try_from(max_text_chars()).unwrap(),
+            edit::MAX_TEXT_CHARS
+        );
+    }
 
     #[test]
     fn the_exported_hit_limit_is_the_one_a_search_stops_at() {

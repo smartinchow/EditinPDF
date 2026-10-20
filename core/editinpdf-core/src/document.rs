@@ -20,12 +20,30 @@ use crate::{
 /// An open PDF document. Safe to share between threads. Calls on one document run one at a time,
 /// except those that draw a page or read its text, which can run alongside each other and alongside
 /// the other calls.
+///
+/// No script the document carries is run: not a form field's keystroke, validate, calculate or
+/// format script when a field is filled in, nor a form's scripts when it opens. The built-in
+/// formats, checks and calculations Acrobat writes for fields (sums, number and date formats) are
+/// still worked out, by the engine itself; a form whose own scripts compute values is not
+/// recalculated.
 #[derive(uniffi::Object)]
 pub struct PdfDocument {
     // The engine session is not `Sync`, so it lives behind a single mutex. Every method locks once
     // and returns, never holding the lock while it waits on anything else.
     inner: Mutex<Inner>,
+    /// Whether saving writes the document out in full (`EditCapabilities::rewrites_on_save`),
+    /// decided when it opened.
+    rewrites_on_save: bool,
+    /// Whether the bridge refuses every change and every save, though the engine could make them:
+    /// the document was signed when it opened and saving rewrites it, so the first change saved
+    /// would break its signatures (`locks_for_signatures`). Decided when it opened.
+    locked_for_signatures: bool,
 }
+
+/// Why a document `PdfDocument::locked_for_signatures` is not changed, as `read_only_reason` and the
+/// `ReadOnly` error give it. English, for logs; the apps say it in their own words.
+const SIGNED_AND_REBUILT: &str = "it is signed, and its cross-reference data was damaged and \
+     rebuilt: saving a change would rewrite the file and break its signatures";
 
 struct Inner {
     session: Session,
@@ -228,11 +246,78 @@ impl PdfDocument {
         result
     }
 
+    /// `ReadOnly` for a document the bridge does not change though the engine could
+    /// (`locked_for_signatures`).
+    fn refuse_if_locked(&self) -> Result<(), EditError> {
+        if self.locked_for_signatures {
+            Err(EditError::ReadOnly {
+                message: SIGNED_AND_REBUILT.to_owned(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     /// Reads the document under the lock; `default` when it is no longer open.
     fn read<T>(&self, default: T, f: impl FnOnce(&pdfcraft_engine::Document) -> T) -> T {
         let inner = self.lock();
         inner.session.get(inner.id).map_or(default, f)
     }
+}
+
+/// A new engine session, as the bridge uses one: with the engine's JavaScript turned off.
+///
+/// The engine runs a document's scripts when JavaScript is on: a form field's keystroke, validate,
+/// calculate and format scripts at every fill, and a dynamic XFA form's initialize scripts when it
+/// opens. They have no time or memory limit there, so a hostile file could hold the document's lock
+/// for ever, and they are code from the file, which the apps do not run. With it off, the built-in
+/// formats, checks and calculations Acrobat writes (`AFNumber_Format`, `AFSimple_Calculate` and the
+/// like) are still worked out, by the engine itself; other scripts are kept in the file and not run.
+///
+/// Every session the bridge makes comes from here: `PdfDocument::open` and `blank_document`.
+/// (`extract_pages` writes from the document's own session.)
+pub(crate) fn session() -> Session {
+    let mut session = Session::new();
+    session.set_javascript(false);
+    session
+}
+
+/// Whether saving `doc` writes it out in full instead of appending to `original`, the bytes it was
+/// opened from: when the engine rebuilt the file's cross-reference data as it opened it (none could
+/// be read), the object layer has no revision to append to and its incremental write falls back to
+/// a full one; and when the bytes the engine works on do not begin with `original` (an XFA form the
+/// engine laid out or filled in from its XFA data as it opened a rebuilt file), even an unchanged
+/// save is not the file as opened. A document the engine cannot edit is never written but as it was opened: `false`.
+///
+/// Where each revision of the file ends is cheap to find, and a rebuilt file has none. Only when
+/// none is found (a rebuilt file, or rarely one whose revisions lack their end marker) is the file
+/// read again to tell which. Anything that goes wrong reading it again counts as a rewrite: for a
+/// signed document that means read-only, the side that keeps its signatures.
+fn rewrites_on_save(doc: &pdfcraft_engine::Document, original: &Arc<Vec<u8>>) -> bool {
+    if !doc.editable() {
+        return false;
+    }
+    let working = doc.saved_bytes();
+    if !Arc::ptr_eq(&working, original) && !working.starts_with(original) {
+        return true;
+    }
+    if !doc.revision_ends().is_empty() {
+        return false;
+    }
+    let password = doc.password.as_deref();
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        pdfcraft_cos::Document::open_with_password(working.clone(), password)
+            .map_or(true, |cos| cos.revisions().is_empty())
+    }))
+    .unwrap_or(true)
+}
+
+/// Whether the bridge refuses every change to a document and every save of it, given whether it
+/// was `signed` when it opened and whether saving `rewrites` it: then the first change saved would
+/// break the signatures. A signed document that is appended to keeps them, and an unsigned one
+/// that is rewritten loses nothing the reader sees.
+fn locks_for_signatures(signed: bool, rewrites: bool) -> bool {
+    signed && rewrites
 }
 
 /// The document `id` names in `session`; `Failed` when it is no longer open.
@@ -243,17 +328,20 @@ fn open_doc(session: &Session, id: DocId) -> Result<&pdfcraft_engine::Document, 
 }
 
 /// Whether the edits of one step read the places of a page's comments consistently, refused as
-/// `Invalid` when they do not: `DeleteAnnotations` reads them as the page's list is before the step,
-/// so no other edit of the step may address a comment of its page by its place, which the deletes
-/// would move (or the other edit's change, the deletes'). Adding a comment puts it at the end of the
-/// list, which moves no place, so that goes with it.
+/// `Invalid` when they do not. Every edit of a step addresses a comment by its place in the page's
+/// list as it is before the step, and deleting a comment (`DeleteAnnotation`, `DeleteAnnotations`)
+/// moves the places of those after it, and of more when its pop-up and replies go with it. So no
+/// other edit of the step may address a comment of a page one of its deletes deletes from: another
+/// delete, a change of text or a move. Adding a comment puts it at the end of the list, which moves
+/// no place, so that goes with a delete, and so do changes to other pages.
 fn annotation_places_check(edits: &[Edit]) -> Result<(), EditError> {
     let mut addressing: HashMap<u32, usize> = HashMap::new();
     for page in edits.iter().filter_map(Edit::annotation_page) {
         *addressing.entry(page).or_default() += 1;
     }
     let clash = edits.iter().find_map(|edit| {
-        let Edit::DeleteAnnotations { page, .. } = edit else {
+        let (Edit::DeleteAnnotation { page, .. } | Edit::DeleteAnnotations { page, .. }) = edit
+        else {
             return None;
         };
         addressing
@@ -264,8 +352,8 @@ fn annotation_places_check(edits: &[Edit]) -> Result<(), EditError> {
     match clash {
         Some(page) => Err(EditError::Invalid {
             message: format!(
-                "deleting several comments of page {page} can't be combined with other changes to \
-                 its comments in one step"
+                "deleting comments of page {page} can't be combined with other changes to its \
+                 comments in one step"
             ),
         }),
         None => Ok(()),
@@ -352,8 +440,13 @@ impl PdfDocument {
     /// not a readable PDF. Bad input is an error, not a crash.
     #[uniffi::constructor]
     pub fn open(bytes: Vec<u8>, password: Option<String>) -> Result<Arc<Self>, OpenError> {
-        let mut session = Session::new();
-        let id = session.open("document.pdf", None, Arc::new(bytes), password.as_deref())?;
+        // JavaScript is off before the document opens: an XFA form's scripts would run as it does.
+        let mut session = session();
+        let original = Arc::new(bytes);
+        let id = session.open("document.pdf", None, original.clone(), password.as_deref())?;
+        let (rewrites, signed) = session.get(id).map_or((false, false), |doc| {
+            (rewrites_on_save(doc, &original), doc.is_signed())
+        });
         Ok(Arc::new(Self {
             inner: Mutex::new(Inner {
                 session,
@@ -362,6 +455,8 @@ impl PdfDocument {
                 renderers: None,
                 text_cache: TextCache::default(),
             }),
+            rewrites_on_save: rewrites,
+            locked_for_signatures: locks_for_signatures(signed, rewrites),
         }))
     }
 
@@ -384,7 +479,8 @@ impl PdfDocument {
     }
 
     /// Changes whenever the document's content does, so callers can drop what they cached for an
-    /// older state: 0 when opened, and one more after every edit, undo and redo that succeeds.
+    /// older state: 0 when opened, and one more after every edit, undo and redo that succeeds, and
+    /// after one that fails with `Failed`, which may have changed the document all the same.
     pub fn revision(&self) -> u64 {
         self.lock().revision
     }
@@ -513,19 +609,23 @@ impl PdfDocument {
     /// since, nothing is done and the error is `Stale`, with the current revision. On success the
     /// revision goes up by one, and what was drawn or read for the old one is out of date.
     ///
-    /// Fails with `ReadOnly` for a document that cannot be edited, `NotPermitted` when its security
+    /// Fails with `ReadOnly` for a document that cannot be edited (a signed one that saving would
+    /// rewrite among them: `EditCapabilities::rewrites_on_save`), `NotPermitted` when its security
     /// settings forbid the change, `WouldRemoveAllPages` for a change that leaves no page, `Invalid`
     /// for a change that does not fit the document (a page, comment or form field it does not have,
     /// a turn that is not a multiple of 90 degrees, a size that is not a positive, finite number of
-    /// at most 14,400 points, text markup without a box, a position or colour that is not a number,
-    /// a value its field does not take or a field that is read-only), `SourceNeedsPassword`, `SourceNotPermitted` or `SourceUnreadable` for pages taken
-    /// from a PDF that needs a password, does not allow its pages to be copied, or cannot be read
-    /// (the document's own refusal comes first: the source is not read then), and `Failed` when the engine cannot make it. After any error but `Failed` the document is as it
-    /// was; after `Failed` it may not be, and the revision has gone up by one all the same, so the
-    /// apps should read the document again.
+    /// at most 14,400 points, text markup without a box or with more than 10,000, a text longer than
+    /// `max_text_chars`, a position or colour that is not a number, a value its field does not take
+    /// or a field that is read-only), `SourceNeedsPassword`, `SourceNotPermitted` or
+    /// `SourceUnreadable` for pages taken from a PDF that needs a password, does not allow its pages
+    /// to be copied, or cannot be read (the document's own refusal comes first: the source is not
+    /// read then), and `Failed` when the engine cannot make it. After any error but `Failed` the
+    /// document is as it was; after `Failed` it may not be, and the revision has gone up by one all
+    /// the same, so the apps should read the document again.
     pub fn apply(&self, edit: Edit, base_revision: u64) -> Result<EditOutcome, EditError> {
         self.mutate(
             |session, id| {
+                self.refuse_if_locked()?;
                 if edit.takes_source() {
                     destination_check(session, id)?;
                 }
@@ -547,16 +647,22 @@ impl PdfDocument {
     /// position: that is refused as `Invalid`. Likewise a step that deletes, moves or inserts pages
     /// cannot also delete a comment or change its text, which address the comment by its page as it
     /// is before the step (turning pages keeps their numbers, so that mix is allowed). A step that
-    /// deletes several comments of a page (`DeleteAnnotations`) cannot also address another comment
-    /// of that page by its place. Filling in a form field addresses it by its name, so it goes with
-    /// any page change. Otherwise the errors are those of `apply`, and a step of more than 10,000
-    /// changes is refused as `Invalid`.
+    /// deletes a comment of a page (`DeleteAnnotation` or `DeleteAnnotations`) cannot also address
+    /// another comment of that page by its place: deleting moves the places after it. Filling in a
+    /// form field addresses it by its name, so it goes with any page change. Otherwise the errors
+    /// are those of `apply`, and a step of no change, or of more than 10,000, is refused as
+    /// `Invalid`.
     pub fn apply_all(
         &self,
         label: String,
         edits: Vec<Edit>,
         base_revision: u64,
     ) -> Result<EditOutcome, EditError> {
+        if edits.is_empty() {
+            return Err(EditError::Invalid {
+                message: "a step makes at least one change".to_owned(),
+            });
+        }
         if edits.len() > MAX_STEP_EDITS {
             return Err(EditError::Invalid {
                 message: format!(
@@ -581,6 +687,7 @@ impl PdfDocument {
         annotation_places_check(&edits)?;
         self.mutate(
             |session, id| {
+                self.refuse_if_locked()?;
                 if edits.iter().any(Edit::takes_source) {
                     destination_check(session, id)?;
                 }
@@ -600,6 +707,9 @@ impl PdfDocument {
 
     /// Takes back the last change made or redone. The revision goes up by one, as for an edit.
     ///
+    /// The engine keeps the last 100 changes: once there are more, the oldest can no longer be
+    /// taken back, and undoing past the 100th finds nothing to undo.
+    ///
     /// Fails with `NothingToUndo` when there is none, and `Failed` when the engine cannot undo it.
     /// The engine can fail after it has already taken the change back, so after `Failed` the
     /// revision has gone up by one all the same, and the apps should read the document again.
@@ -611,7 +721,8 @@ impl PdfDocument {
         )
     }
 
-    /// Makes again the last change undone. The revision goes up by one, as for an edit.
+    /// Makes again the last change undone. The revision goes up by one, as for an edit. Like
+    /// `undo`, it reaches back at most 100 changes.
     ///
     /// Fails with `NothingToRedo` when there is none, and `Failed` when the engine cannot redo it.
     /// The engine can fail after it has already made the change again, so after `Failed` the
@@ -634,22 +745,34 @@ impl PdfDocument {
         self.read(false, |doc| doc.can_redo().is_some())
     }
 
-    /// Whether the document has changed since it was opened. Saving does not clear it.
+    /// Whether the document has changed since it was opened. Saving does not clear it, and nor does
+    /// undoing every change: it stays true once a change has been made.
     pub fn is_dirty(&self) -> bool {
         self.read(false, |doc| doc.dirty)
     }
 
     /// The document's bytes as they are now, for the app to write.
     ///
-    /// `Incremental` appends the changes to the file as it was opened (an unchanged document comes
-    /// back exactly as it was opened); `Full` writes a complete, compact file. An encrypted
-    /// document stays encrypted with the same password either way. Saving waits for an edit under
-    /// way to finish, so it never sees half of one, and does not mark the document as saved.
+    /// `Incremental` appends the changes to the file as it was opened, so the bytes as opened are
+    /// the start of what is written, and an unchanged document comes back as the engine holds it:
+    /// the bytes as opened, except for an XFA form the engine laid out, or filled in from its XFA
+    /// data, as it opened it, which it holds with that appended. A file whose cross-reference data the engine had to
+    /// rebuild when it opened it has nothing to append to: once it has changed, it is written out in
+    /// full (`EditCapabilities::rewrites_on_save`). `Full` writes a complete, compact file. An
+    /// encrypted document stays encrypted with the same password either way. Saving waits for an
+    /// edit under way to finish, so it never sees half of one, and does not mark the document as
+    /// saved.
     ///
-    /// Fails with `Signed` for a `Full` save of a signed document (it would invalidate the
-    /// signatures), `ReadOnly` for a `Full` save of a document that cannot be edited, and `Failed`
-    /// when the engine cannot write the document.
+    /// Fails with `Signed` for a `Full` save of a signed document and for any save of a signed one
+    /// that saving would rewrite (either would invalidate the signatures), `ReadOnly` for a `Full`
+    /// save of a document that cannot be edited, and `Failed` when the engine cannot write the
+    /// document.
     pub fn save(&self, mode: SaveMode) -> Result<Vec<u8>, SaveError> {
+        // The bridge never changes such a document, so this is a second line of defence: were a
+        // change to get through, writing it would break the signatures.
+        if self.locked_for_signatures {
+            return Err(SaveError::Signed);
+        }
         let inner = self.lock();
         let id = inner.id;
         let session = &inner.session;
@@ -671,8 +794,10 @@ impl PdfDocument {
     /// change: extracting is not an edit, and the revision stays as it is.
     ///
     /// Fails with `Invalid` when `pages` is empty or names a page the document does not have,
-    /// `NotPermitted` when the document's security settings do not allow taking its pages, and
-    /// `Failed` when the engine cannot write the new document.
+    /// `ReadOnly` when the engine cannot read the document's structure to copy pages from (it can
+    /// only show it: `EditCapabilities::read_only_reason`), `NotPermitted` when the document's
+    /// security settings do not allow taking its pages, and `Failed` when the engine cannot write
+    /// the new document.
     pub fn extract_pages(&self, pages: Vec<u32>) -> Result<Vec<u8>, EditError> {
         let inner = self.lock();
         let id = inner.id;
@@ -710,8 +835,9 @@ impl PdfDocument {
         Ok(Arc::unwrap_or_clone(extracted))
     }
 
-    /// What can be done to the document, given whether the engine can edit it and what its
-    /// security settings allow.
+    /// What can be done to the document, given whether the engine can edit it, what its security
+    /// settings allow, and whether saving a change would break its signatures (a signed document
+    /// that saving rewrites cannot be changed at all: `EditCapabilities::rewrites_on_save`).
     pub fn capabilities(&self) -> EditCapabilities {
         let closed = EditCapabilities {
             can_edit: false,
@@ -721,17 +847,24 @@ impl PdfDocument {
             can_fill_forms: false,
             is_signed: false,
             is_encrypted: false,
+            rewrites_on_save: false,
         };
+        let locked = self.locked_for_signatures;
         self.read(closed, |doc| {
-            let editable = doc.editable();
+            let editable = doc.editable() && !locked;
             EditCapabilities {
                 can_edit: editable && doc.allows_modification(),
-                read_only_reason: doc.read_only_reason.clone(),
+                read_only_reason: if locked {
+                    Some(SIGNED_AND_REBUILT.to_owned())
+                } else {
+                    doc.read_only_reason.clone()
+                },
                 can_organize: editable && doc.allows_assembly(),
                 can_annotate: editable && doc.allows_annotation(),
                 can_fill_forms: editable && doc.allows_form_filling(),
                 is_signed: doc.is_signed(),
                 is_encrypted: doc.info.encrypted || doc.permissions().is_some(),
+                rewrites_on_save: self.rewrites_on_save,
             }
         })
     }
@@ -778,9 +911,8 @@ impl PdfDocument {
     /// A page whose reading or searching panics is skipped, like a page whose text cannot be read,
     /// and the search goes on with the next. `search` has no error to report the panic with: the
     /// Swift side calls it without `try`, so a panic that reached the FFI boundary would end the app
-    /// (see the crate's documentation). The panic itself has been reported by the panic hook, and the
-    /// page is logged as skipped, by its number only (its text is the user's business). The state
-    /// lock recovers from the poisoning such a panic can leave behind (`lock`).
+    /// (see the crate's documentation). The panic itself has been reported by the panic hook. The
+    /// state lock recovers from the poisoning such a panic can leave behind (`lock`).
     fn search_pages(
         &self,
         query: &str,
@@ -840,6 +972,22 @@ mod tests {
     /// Gives `doc` a text cache that holds `budget` glyphs.
     fn limit_the_text_cache(doc: &PdfDocument, budget: usize) {
         doc.lock().text_cache = TextCache::with_budget(budget);
+    }
+
+    #[test]
+    fn only_a_signed_document_that_saving_rewrites_is_locked() {
+        assert!(locks_for_signatures(true, true));
+        assert!(
+            !locks_for_signatures(true, false),
+            "appended to: its signatures stay"
+        );
+        assert!(!locks_for_signatures(false, true), "no signature to break");
+        assert!(!locks_for_signatures(false, false));
+    }
+
+    #[test]
+    fn a_session_the_bridge_makes_runs_no_script() {
+        assert!(!session().javascript());
     }
 
     #[test]

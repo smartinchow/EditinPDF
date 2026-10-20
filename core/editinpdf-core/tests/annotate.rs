@@ -5,7 +5,7 @@ mod support;
 
 use editinpdf_core::{
     AnnotationKind, Edit, EditError, MarkupKind, PdfDocument, Point, Rect, RgbColor, SaveMode,
-    ShapeKind,
+    ShapeKind, max_text_chars,
 };
 use support::{BLUE, RED, YELLOW, assert_rect_close, reopen};
 
@@ -1059,4 +1059,81 @@ fn the_locked_markup_fixture_is_locked_where_the_app_tests_expect() {
     );
     assert!(matches!(moved, Err(EditError::Invalid { .. })), "{moved:?}");
     assert_eq!(doc.revision(), 0);
+}
+
+/// The text a comment, a text box or a document information entry carries is capped, in
+/// characters (not bytes): what the apps hold their editors to (`max_text_chars`). So is the number
+/// of boxes one text markup covers.
+#[test]
+fn over_long_texts_and_too_many_marked_boxes_are_invalid() {
+    let cap = usize::try_from(max_text_chars()).unwrap();
+    assert_eq!(cap, 100_000);
+    let doc = PdfDocument::open(fixtures::text_doc(&["hello"]), None).unwrap();
+    let note = |contents: String| Edit::AddNote {
+        page: 0,
+        at: Point { x: 50.0, y: 50.0 },
+        contents,
+        color: YELLOW,
+    };
+    doc.apply(note(String::new()), 0).unwrap();
+    let rect = Rect {
+        x: 50.0,
+        y: 50.0,
+        width: 100.0,
+        height: 20.0,
+    };
+    let markup = |rects: Vec<Rect>, contents: String| Edit::AddTextMarkup {
+        page: 0,
+        kind: MarkupKind::Highlight,
+        rects,
+        color: YELLOW,
+        contents,
+    };
+    let long = "a".repeat(cap + 1);
+    let too_long = [
+        note(long.clone()),
+        Edit::SetAnnotationContents {
+            page: 0,
+            index: 0,
+            contents: long.clone(),
+        },
+        Edit::AddTextBox {
+            page: 0,
+            rect,
+            text: long.clone(),
+            font_size: 12.0,
+            color: RED,
+        },
+        Edit::SetInfo {
+            key: "Title".into(),
+            value: long.clone(),
+        },
+        Edit::SetInfo {
+            key: long.clone(),
+            value: "x".into(),
+        },
+        markup(vec![rect], long),
+        markup(vec![rect; 10_001], String::new()),
+    ];
+    for edit in too_long {
+        let result = doc.apply(edit.clone(), 1);
+        assert!(
+            matches!(result, Err(EditError::Invalid { .. })),
+            "{result:?}"
+        );
+    }
+    assert_eq!(doc.revision(), 1);
+
+    // At the cap: characters, not bytes, so as many two-byte letters fit.
+    let fits = "é".repeat(cap);
+    doc.apply(note(fits.clone()), 1).unwrap();
+    doc.apply(
+        Edit::SetInfo {
+            key: "Title".into(),
+            value: fits,
+        },
+        2,
+    )
+    .unwrap();
+    doc.apply(markup(vec![rect; 3], String::new()), 3).unwrap();
 }

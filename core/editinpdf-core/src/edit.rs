@@ -21,6 +21,19 @@ const MAX_VIEW_COORD: f64 = 4.0 * MAX_PAGE_SIDE_PT;
 /// The most edits one step (`PdfDocument::apply_all`) may make.
 pub(crate) const MAX_STEP_EDITS: usize = 10_000;
 
+/// The most characters (Unicode scalar values, as Rust's `char`) that the text of a comment, of a
+/// text box or of a document information entry may have: 100,000, some 40 pages of prose.
+///
+/// A form field takes at most 10,000 (`forms::MAX_TEXT_CHARS`): it shows its text in its own small
+/// box. A note can hold a long passage pasted in, so its cap is ten times that, far more than anyone
+/// types or pastes into a comment. What it bounds is a hostile caller's text: the engine lays a text
+/// box's text out and draws it under the document's lock, and every edit's text is kept in the undo
+/// history. At the cap, a text is at most 400 KB of UTF-8.
+pub(crate) const MAX_TEXT_CHARS: usize = 100_000;
+
+/// The most boxes one text markup may cover: one for each line marked, so far more than a page has.
+const MAX_MARKUP_RECTS: usize = 10_000;
+
 /// The most strokes one drawing may have.
 const MAX_STROKES: usize = 500;
 /// The most points one stroke may have.
@@ -80,7 +93,10 @@ pub enum FieldValue {
 /// How a document is written.
 #[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq)]
 pub enum SaveMode {
-    /// The file as opened, with the changes appended: quick, and keeps signatures valid.
+    /// The file as opened, with the changes appended: quick, and keeps signatures valid. A file
+    /// whose cross-reference data the engine had to rebuild when it opened it has nothing to append
+    /// to (`EditCapabilities::rewrites_on_save`): once it has changed it is written out in full, and
+    /// a signed one is refused.
     Incremental,
     /// A complete, compact rewrite. Refused for a signed document.
     Full,
@@ -113,6 +129,16 @@ pub struct EditCapabilities {
     /// The document is password-protected (an owner password counts, even with no open password).
     /// Pages extracted from it make a new PDF with no protection.
     pub is_encrypted: bool,
+    /// Saving writes the document out in full, even an `Incremental` save, so the bytes as opened
+    /// are not kept at the start of what is written: the file's cross-reference data could not be
+    /// read, and the engine rebuilt it from the objects when the document opened, which leaves no
+    /// chain of revisions to append to. What is written is a whole, repaired file, and later saves
+    /// of that file would append to it again.
+    ///
+    /// A signed document like this cannot be changed at all (`can_edit` and the rest are false,
+    /// with a `read_only_reason`): the first change saved would rewrite it and break its
+    /// signatures.
+    pub rewrites_on_save: bool,
 }
 
 /// A change to a document. Pages are 0-based.
@@ -130,7 +156,8 @@ pub enum Edit {
         width_pt: f64,
         height_pt: f64,
     },
-    /// Sets a document information entry (`Title`, `Author`, …).
+    /// Sets a document information entry (`Title`, `Author`, …). The name and the value have at
+    /// most `max_text_chars` characters each.
     SetInfo { key: String, value: String },
     /// Inserts pages of another PDF, `bytes`, so that the first of them is at index `at`: the
     /// source's `pages` in the order given, or all of them in order when `pages` is `None`. `name`
@@ -142,7 +169,8 @@ pub enum Edit {
         at: u32,
     },
     /// Marks text: `rects` are the boxes of the marked text, one for each line, as
-    /// `TextSelection.rects` gives them.
+    /// `TextSelection.rects` gives them: at least one and at most 10,000. `contents`, the comment's
+    /// text, has at most `max_text_chars` characters.
     AddTextMarkup {
         page: u32,
         kind: MarkupKind,
@@ -150,7 +178,8 @@ pub enum Edit {
         color: RgbColor,
         contents: String,
     },
-    /// Adds a sticky note whose icon's top-left corner, as shown, is at `at`.
+    /// Adds a sticky note whose icon's top-left corner, as shown, is at `at`. `contents` has at most
+    /// `max_text_chars` characters.
     AddNote {
         page: u32,
         at: Point,
@@ -162,8 +191,9 @@ pub enum Edit {
     ///
     /// Deleting a comment moves the ones after it on the page down the list, and the engine also
     /// takes out its pop-up and replies, which have places of their own and can be listed before
-    /// it. So no order of these deletes in one step is sure to address the comments meant: to
-    /// delete several comments of a page at once, use `DeleteAnnotations`.
+    /// it. So in `apply_all` no other change in the step may address a comment on that page by its
+    /// place, another of these deletes included (refused as `Invalid`): to delete several comments
+    /// of a page at once, use `DeleteAnnotations`.
     DeleteAnnotation { page: u32, index: u32 },
     /// Deletes the comments at `indices` in page `page`'s list (`AnnotationInfo.index`, in any
     /// order; one given twice is deleted once), each with its replies and pop-up, and nothing else:
@@ -175,7 +205,8 @@ pub enum Edit {
     /// at most 10,000 places, each one the page's list has; a comment the file locks among them
     /// refuses the whole change, as `DeleteAnnotation` refuses it.
     DeleteAnnotations { page: u32, indices: Vec<u32> },
-    /// Changes the text of the comment at `index` in the page's list (`AnnotationInfo.index`).
+    /// Changes the text of the comment at `index` in the page's list (`AnnotationInfo.index`), to
+    /// at most `max_text_chars` characters.
     SetAnnotationContents {
         page: u32,
         index: u32,
@@ -198,8 +229,9 @@ pub enum Edit {
         color: RgbColor,
         width: f64,
     },
-    /// Adds a box showing `text` in `color`, `font_size` points (4 through 144), with no border
-    /// and no background. `rect` is at least 1 point wide and tall.
+    /// Adds a box showing `text` (at most `max_text_chars` characters) in `color`, `font_size`
+    /// points (4 through 144), with no border and no background. `rect` is at least 1 point wide and
+    /// tall.
     ///
     /// The engine sets the text upright in the file's own space, so on a page turned by a quarter
     /// or three quarters (`PageInfo.rotation_degrees` 90 or 270) the box is where it was drawn but
@@ -290,8 +322,8 @@ impl Edit {
                 height: page_side(*height_pt)?,
             },
             Self::SetInfo { key, value } => Engine::SetInfo {
-                key: key.clone(),
-                value: value.clone(),
+                key: capped(key, "an information entry's name")?.to_owned(),
+                value: capped(value, "an information entry")?.to_owned(),
             },
             Self::InsertPagesFrom {
                 name,
@@ -320,6 +352,12 @@ impl Edit {
                 if rects.is_empty() {
                     return Err(invalid("there is no text to mark".to_owned()));
                 }
+                if rects.len() > MAX_MARKUP_RECTS {
+                    return Err(invalid(format!(
+                        "text markup covers at most {MAX_MARKUP_RECTS} boxes, not {}",
+                        rects.len()
+                    )));
+                }
                 let quads = rects
                     .iter()
                     .map(|rect| Ok(geometry::rect_to_quad(info, area(rect)?)))
@@ -336,7 +374,7 @@ impl Edit {
                         quads,
                     },
                     *color,
-                    contents,
+                    capped(contents, "a comment's text")?,
                 )?
             }
             Self::AddNote {
@@ -368,7 +406,7 @@ impl Edit {
                         icon: pdfcraft_engine::NoteIcon::default(),
                     },
                     *color,
-                    contents,
+                    capped(contents, "a comment's text")?,
                 )?
             }
             Self::DeleteAnnotation { page, index } => Engine::DeleteAnnotation {
@@ -394,7 +432,7 @@ impl Edit {
             } => Engine::SetAnnotationContents {
                 page: index_of(pages, *page)?,
                 index: annotation_index(*index)?,
-                text: contents.clone(),
+                text: capped(contents, "a comment's text")?.to_owned(),
             },
             Self::AddInk {
                 page,
@@ -440,7 +478,7 @@ impl Edit {
                     font_size: *font_size,
                 };
                 // The text's colour; no border and no background.
-                comment(*page, shape, *color, text)?
+                comment(*page, shape, *color, capped(text, "a text box's text")?)?
             }
             Self::AddShape {
                 page,
@@ -642,7 +680,26 @@ impl Edit {
     /// Whether the edit takes pages from another PDF, which is read only once the document is
     /// known to accept them.
     pub(crate) fn takes_source(&self) -> bool {
-        matches!(self, Self::InsertPagesFrom { .. })
+        match self {
+            Self::InsertPagesFrom { .. } => true,
+            Self::RotatePages { .. }
+            | Self::DeletePages { .. }
+            | Self::MovePages { .. }
+            | Self::InsertBlankPage { .. }
+            | Self::SetInfo { .. }
+            | Self::AddTextMarkup { .. }
+            | Self::AddNote { .. }
+            | Self::DeleteAnnotation { .. }
+            | Self::DeleteAnnotations { .. }
+            | Self::SetAnnotationContents { .. }
+            | Self::AddInk { .. }
+            | Self::AddSignature { .. }
+            | Self::AddTextBox { .. }
+            | Self::AddShape { .. }
+            | Self::AddLine { .. }
+            | Self::MoveAnnotation { .. }
+            | Self::SetFieldValue { .. } => false,
+        }
     }
 
     /// Whether the edit carries a position on a page, which is converted against the pages as they
@@ -751,6 +808,18 @@ fn drawn_box(rect: &Rect) -> Result<&Rect, EditError> {
         Err(invalid(format!(
             "{rect:?} is not a box at least {MIN_SIDE_PT} point wide and tall"
         )))
+    }
+}
+
+/// `text`, once it is known to have at most `MAX_TEXT_CHARS` characters; `what` says whose text it
+/// is in the error. Counting stops one past the cap, so a huge text costs no more than a long one.
+fn capped<'a>(text: &'a str, what: &str) -> Result<&'a str, EditError> {
+    if text.chars().nth(MAX_TEXT_CHARS).is_some() {
+        Err(invalid(format!(
+            "{what} has at most {MAX_TEXT_CHARS} characters"
+        )))
+    } else {
+        Ok(text)
     }
 }
 
