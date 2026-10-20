@@ -7,8 +7,8 @@ import UIKit
 /// One finger on a page where the eraser may be used (the document allows markup) erases: the points
 /// it passes over, on the page it went down on, are collected (`begin`, `move`), and when it comes up
 /// everything the path touched, within `MarkupInteraction.screenHitSlop` points on screen, is deleted
-/// at once (`DocumentModel.enqueueErase`: the one on top at each point, highest index first, one
-/// change that one undo takes back). A tap deletes the annotation under it. In the gap between pages
+/// at once (`DocumentModel.enqueueErase`: the one on top at each point, in one change that one undo
+/// takes back). A tap deletes the annotation under it. In the gap between pages
 /// one finger scrolls; two fingers always scroll and zoom (the pan fails on a second finger).
 @MainActor
 final class EraserInteraction {
@@ -58,21 +58,26 @@ final class EraserInteraction {
         return true
     }
 
-    /// The finger is at `point`: the stroke goes on there, on the page it began on.
+    /// The finger is at `point`: the stroke goes on there, on the page it began on. A point less than
+    /// half the slop from the last one kept is left out: the path between the points kept is looked
+    /// along anyway, about a slop apart (`AnnotationIndex.erased`), so it would add only work, and a
+    /// slow stroke would keep hundreds of them.
     func move(toContentPoint point: CGPoint) {
         guard var going = stroke, let at = host?.pagePoint(ofContentPoint: point, onPage: going.page) else { return }
-        if at != going.points.last { going.points.append(at) }
+        if let last = going.points.last, hypot(at.x - last.x, at.y - last.y) < spacing(onPage: going.page) { return }
+        going.points.append(at)
         stroke = going
     }
 
-    /// The finger came up at `point`: what the stroke touched is deleted, if the eraser is still picked
-    /// and may still be used there. The task says whether anything was deleted; nil when no stroke was
-    /// going on, or it was dropped.
+    /// The finger came up at `point`: what the stroke touched, up to there, is deleted, if the eraser is
+    /// still picked and may still be used there. The task says whether anything was deleted; nil when no
+    /// stroke was going on, or it was dropped.
     @discardableResult
     func end(atContentPoint point: CGPoint) -> Task<Bool, Never>? {
-        move(toContentPoint: point)
-        guard let done = stroke else { return nil }
+        guard var done = stroke else { return nil }
         stroke = nil
+        // Where the finger came up counts however close it is to the last point kept.
+        if let at = host?.pagePoint(ofContentPoint: point, onPage: done.page), at != done.points.last { done.points.append(at) }
         guard usable(onPage: done.page) else { return nil }
         return model.enqueueErase(page: done.page, along: done.points, slop: slop(onPage: done.page))
     }
@@ -95,5 +100,12 @@ final class EraserInteraction {
     /// every zoom.
     private func slop(onPage page: Int) -> CGFloat {
         MarkupInteraction.hitSlop(screenScale: host?.screenScale(ofPage: page) ?? 0)
+    }
+
+    /// The least distance between two points of a stroke on `page` that `move` keeps: half the slop, and
+    /// half the least spacing of the looks along the path (half a point) when the slop is smaller.
+    private func spacing(onPage page: Int) -> CGFloat {
+        let slop = slop(onPage: page)
+        return max(slop.isFinite ? slop / 2 : 0, 0.25)
     }
 }

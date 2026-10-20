@@ -22,9 +22,12 @@ struct AnnotationIndex: Sendable {
     /// is on top: the highest index. Only those `matching` count (a note under a shape, say). Nil when
     /// the touch lands on none.
     func hit(page: Int, at point: CGPoint, slop: CGFloat = 8, matching: (AnnotationInfo) -> Bool = { _ in true }) -> AnnotationInfo? {
-        annotations(onPage: page)
-            .filter { matching($0) && $0.box.insetBy(dx: -slop, dy: -slop).contains(point) }
-            .max { $0.index < $1.index }
+        var top: AnnotationInfo?
+        for info in annotations(onPage: page) where info.index >= (top?.index ?? 0) && matching(info)
+            && info.box.insetBy(dx: -slop, dy: -slop).contains(point) {
+            top = info
+        }
+        return top
     }
 
     /// The annotation `ref` names at this revision; nil when its page has none at that index.
@@ -32,36 +35,57 @@ struct AnnotationIndex: Sendable {
         annotations(onPage: ref.page).first { $0.index == ref.index }
     }
 
+    /// About the most places `erased` looks at along a path, however long it is: the spacing grows
+    /// with the path's length past it. (Each piece of the path between two of its points is looked at
+    /// once at least, so a path of more points than this is looked at once for each point.)
+    static let maxEraserLooks: CGFloat = 20_000
+
     /// What an eraser dragged along `points` (view space, in points, on `page`) deletes: at every point
     /// along the path, the annotation on top there (`hit`) that the file does not lock (a locked one
-    /// on top is passed over, for the one under it), each once, highest index first, the order their
-    /// deletes must go in, since deleting one moves those after it down. The path is followed from
-    /// point to point at most `slop` apart (half a point at least), so a box it crosses between two
-    /// points is not missed; a single point is a tap.
+    /// on top is passed over, for the one under it), each once, in index order. The path is followed
+    /// from point to point at most `slop` apart (half a point at least, more for a path so long that
+    /// that would be more than `maxEraserLooks` looks), so a box it crosses between two points is not
+    /// missed; a single point is a tap. A path whose length is not a finite number touches nothing.
     func erased(page: Int, along points: [CGPoint], slop: CGFloat) -> [AnnotationInfo] {
-        let all = annotations(onPage: page)
-        guard !all.isEmpty, let first = points.first else { return [] }
         let slop = slop.isFinite ? max(slop, 0) : 0
-        let length = zip(points, points.dropFirst()).reduce(0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
-        // Some 20,000 looks along the path at most, however long and wiggly it is.
-        let step = max(slop, 0.5, length.isFinite ? length / 20_000 : 0.5)
+        let finite = points.filter { $0.x.isFinite && $0.y.isFinite }
+        guard let first = finite.first else { return [] }
+        // Only those whose box, grown by the slop, meets the box around the path can be touched: found
+        // once, so that each look below goes through those alone.
+        var low = first, high = first
+        for point in finite {
+            low = CGPoint(x: min(low.x, point.x), y: min(low.y, point.y))
+            high = CGPoint(x: max(high.x, point.x), y: max(high.y, point.y))
+        }
+        let candidates: [(info: AnnotationInfo, reach: CGRect)] = annotations(onPage: page).compactMap { info in
+            let reach = info.box.insetBy(dx: -slop, dy: -slop)
+            guard !info.locked, reach.minX <= high.x, reach.maxX >= low.x, reach.minY <= high.y, reach.maxY >= low.y else { return nil }
+            return (info, reach)
+        }
+        guard !candidates.isEmpty else { return [] }
+        let length = zip(finite, finite.dropFirst()).reduce(0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
+        guard length.isFinite else { return [] }
+        let step = max(slop, 0.5, length / Self.maxEraserLooks)
         var found: [UInt32: AnnotationInfo] = [:]
         func look(at point: CGPoint) {
-            guard point.x.isFinite, point.y.isFinite,
-                  let top = hit(page: page, at: point, slop: slop, matching: { !$0.locked }) else { return }
-            found[top.index] = top
+            var top: AnnotationInfo?
+            for candidate in candidates where candidate.info.index >= (top?.index ?? 0) && candidate.reach.contains(point) {
+                top = candidate.info
+            }
+            if let top { found[top.index] = top }
         }
         look(at: first)
-        for (from, to) in zip(points, points.dropFirst()) {
+        for (from, to) in zip(finite, finite.dropFirst()) {
+            // Finite, since the whole length is; and at most `maxEraserLooks` steps, since `step` is at
+            // least the length over that.
             let distance = hypot(to.x - from.x, to.y - from.y)
-            guard distance.isFinite else { continue }
-            let count = Int((distance / step).rounded(.up))
-            for i in stride(from: 1, through: max(count, 1), by: 1) {
-                let t = CGFloat(i) / CGFloat(max(count, 1))
+            let count = max(Int(min((distance / step).rounded(.up), Self.maxEraserLooks)), 1)
+            for i in 1...count {
+                let t = CGFloat(i) / CGFloat(count)
                 look(at: CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t))
             }
         }
-        return found.values.sorted { $0.index > $1.index }
+        return found.values.sorted { $0.index < $1.index }
     }
 }
 

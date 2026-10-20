@@ -368,6 +368,13 @@ final class DocumentModel {
     /// The later of `lastIndexShift` and the revision made by the last rotation: after it, a point
     /// in view space worked out before it is somewhere else on the page.
     @ObservationIgnored private var lastGeometryShift: UInt64 = 0
+
+    /// Whether a page or annotation index worked out at `revision` still names what it named then: no
+    /// change made since has numbered them again (`lastIndexShift`).
+    func stillNamesTheSame(workedOutAt revision: UInt64) -> Bool {
+        revision >= lastIndexShift
+    }
+
     /// Every change whose entries the undo manager may still hold (they are the entries' targets),
     /// so they can all be taken off it when the two histories no longer match. Weak: a change goes
     /// when the undo manager lets go of its entries.
@@ -619,7 +626,8 @@ final class DocumentModel {
         var shift = Shift.none
         for edit in edits {
             switch edit {
-            case .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .deleteAnnotation, .moveAnnotation:
+            case .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .deleteAnnotation, .deleteAnnotations,
+                 .moveAnnotation:
                 return .index
             case .rotatePages:
                 shift = .geometry
@@ -636,7 +644,7 @@ final class DocumentModel {
         edits.contains { edit in
             switch edit {
             case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .setInfo,
-                 .deleteAnnotation, .setAnnotationContents, .setFieldValue:
+                 .deleteAnnotation, .deleteAnnotations, .setAnnotationContents, .setFieldValue:
                 false
             case .addTextMarkup, .addNote, .addInk, .addSignature, .addTextBox, .addShape, .addLine, .moveAnnotation:
                 true

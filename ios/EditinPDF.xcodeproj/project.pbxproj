@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0116A5DE83F679ACC3D8140E /* AnnotationEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C730FC0FA514D1E2ABCA646 /* AnnotationEditing.swift */; };
+		03FB0FD8C9C8F79BD73B9310 /* locked-markup.pdf in Resources */ = {isa = PBXBuildFile; fileRef = DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */; };
 		0B84E0745D79C7456B3B9404 /* ViewerSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E31D0F54FEE759D2B890E9 /* ViewerSmokeTests.swift */; };
 		0EECBD8B2D0DEF1A70CF27B1 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CB7C655ABDBB7F63EB993 /* UITestSupport.swift */; };
 		1073C409E61E635E09D2F082 /* OrganizeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F41A6CBEBB600930F951039 /* OrganizeController.swift */; };
@@ -225,6 +226,7 @@
 		D4609F6D4F4B173E62DB40D3 /* locked.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = locked.pdf; sourceTree = "<group>"; };
 		DAE3F4EA7ACD9AF1D5B5D798 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 		DB04A44731160E44C9AA23DE /* OrganizeMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeMathTests.swift; sourceTree = "<group>"; };
+		DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "locked-markup.pdf"; sourceTree = "<group>"; };
 		DBEBAFEAFFB9D73A05C95CCA /* ToolModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModeTests.swift; sourceTree = "<group>"; };
 		E214CEFD25FB448BA6DFA4AF /* PageOverlayViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageOverlayViewTests.swift; sourceTree = "<group>"; };
 		EAAEE4C82EB6DB705E009F1A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -494,6 +496,7 @@
 				6A4C612C47DC1C35FA5C3B7E /* annotated.pdf */,
 				4C1125033EA5E30924C174D5 /* form.pdf */,
 				22177CB12AF8A846F8AE260E /* hello.pdf */,
+				DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */,
 				A9A5081BA8D089C224584764 /* locked.pdf */,
 				01542E7C8766F737DAB1EBC6 /* owner-only.pdf */,
 				2F472452DDACC231079CB6A3 /* rotated.pdf */,
@@ -648,6 +651,7 @@
 				3458BE2DB2CAA78E5B5B4F97 /* annotated.pdf in Resources */,
 				D43355A4DEB64242D02469F0 /* form.pdf in Resources */,
 				FA4B8AA1028D578B338F701E /* hello.pdf in Resources */,
+				03FB0FD8C9C8F79BD73B9310 /* locked-markup.pdf in Resources */,
 				317B0D48D7DE556D252F4019 /* locked.pdf in Resources */,
 				225CC512551C27B81138BB22 /* owner-only.pdf in Resources */,
 				320B958E2160EE4892724CB8 /* rotated.pdf in Resources */,

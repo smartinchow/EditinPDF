@@ -26,8 +26,12 @@ struct CommentRow: Identifiable, Equatable {
 /// annotations again, or turns the page under a move, is refused as stale (`enqueue`) rather than
 /// changing another annotation, or moving it the wrong way.
 extension DocumentModel {
-    /// The most changes the bridge makes in one step.
+    /// The most changes the bridge makes in one step, and the most annotations one
+    /// `deleteAnnotations` deletes.
     static let maxEditsPerStep = 10_000
+    /// The most characters of an annotation's text, and of its author's name, a row of the Comments
+    /// list carries: a row shows three lines of it, and a file can hold megabytes of text.
+    static let maxRowText = 500
 
     // MARK: Selecting
 
@@ -110,14 +114,17 @@ extension DocumentModel {
 
     /// `deleteAnnotation`, handed over at once: one change named `Strings.actionDeleteAnnotation`,
     /// addressed as at `revision` (the model's now when nil, and then only an annotation the document
-    /// has now). One the file locks is refused, saying the document does not allow it.
+    /// has now). One the file locks is refused, saying the document does not allow it: also one worked
+    /// out earlier (a text box emptied in place), while `ref` still names it (`stillNamesTheSame`).
     @discardableResult
     func enqueueDelete(_ ref: AnnotationRef, workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
         guard let pageNumber = UInt32(exactly: ref.page) else { return Task { false } }
         let info = annotationIndex.annotation(ref)
         guard revision != nil || info != nil else { return Task { false } }
         if let refusal = changeRefusal(onPage: ref.page) { return refuse(refusal) }
-        if revision == nil, info?.locked == true { return refuse(Strings.editNotAllowed) }
+        // Otherwise the delete is refused as stale on its way (`enqueue`), whatever `ref` names now.
+        let namesInfo = revision.map(stillNamesTheSame(workedOutAt:)) ?? true
+        if namesInfo, info?.locked == true { return refuse(Strings.editNotAllowed) }
         let edit = Edit.deleteAnnotation(page: pageNumber, index: ref.index)
         return enqueue([edit], named: Strings.actionDeleteAnnotation, touching: [ref.page], workedOutAt: revision)
     }
@@ -162,40 +169,58 @@ extension DocumentModel {
         await enqueueErase(page: page, along: points, slop: slop).value
     }
 
-    /// `erase`, handed over at once: every annotation the path touches, within `slop` points
-    /// (`AnnotationIndex.erased`: the one on top at each point, each once, none the file locks), is
-    /// deleted, highest index first (deleting one moves those after it down), in one step, which one
-    /// undo takes back: one change named `Strings.actionDeleteAnnotation`. A path that touches none is
-    /// no change.
+    /// `erase`, handed over at once: everything the path touches is deleted (`eraseEdit`), with its
+    /// pop-up and its replies, in one change that one undo takes back, named
+    /// `Strings.actionDeleteAnnotation`. A path that touches none is no change.
     @discardableResult
     func enqueueErase(page: Int, along points: [CGPoint], slop: CGFloat = 8) -> Task<Bool, Never> {
-        guard let pageNumber = UInt32(exactly: page) else { return Task { false } }
-        let doomed = annotationIndex.erased(page: page, along: points, slop: slop)
-        guard !doomed.isEmpty else { return Task { false } }
+        guard let edit = eraseEdit(page: page, along: points, slop: slop) else { return Task { false } }
         if let refusal = changeRefusal(onPage: page) { return refuse(refusal) }
-        // Highest first already; past the bridge's limit for one step, the lowest are left.
-        let edits = doomed.prefix(Self.maxEditsPerStep).map { Edit.deleteAnnotation(page: pageNumber, index: $0.index) }
-        return enqueue(Array(edits), named: Strings.actionDeleteAnnotation, touching: [page])
+        return enqueue([edit], named: Strings.actionDeleteAnnotation, touching: [page])
+    }
+
+    /// What an eraser dragged along `points` (view space, on `page`) changes: one `deleteAnnotations`
+    /// of every annotation the path touches, within `slop` points (`AnnotationIndex.erased`: the one
+    /// on top at each point, each once, none the file locks); nil when it touches none. The bridge
+    /// follows each index to the annotation it is, so they go in one edit, in any order, however
+    /// deleting one moves the others. Past the bridge's limit for one change, the highest are left.
+    func eraseEdit(page: Int, along points: [CGPoint], slop: CGFloat = 8) -> Edit? {
+        guard let pageNumber = UInt32(exactly: page) else { return nil }
+        let doomed = annotationIndex.erased(page: page, along: points, slop: slop)
+        guard !doomed.isEmpty else { return nil }
+        return .deleteAnnotations(page: pageNumber, indices: doomed.prefix(Self.maxEditsPerStep).map(\.index))
     }
 
     // MARK: The Comments list
 
     /// The rows of the Comments list for the annotations of `index`: page by page, and top to bottom
-    /// (then left to right) on a page. Each is named for its kind (`Strings.annotationKindName`), with
-    /// its text, and its author's name, when it has them (without the blank around them).
+    /// (then left to right) on a page. Each is named for its kind (`Strings.annotationKindName`, looked
+    /// up once for each kind), with its text, and its author's name, when it has them: without the
+    /// blank around them, and at most `maxRowText` characters of each.
     static func commentRows(_ index: AnnotationIndex) -> [CommentRow] {
         func key(_ info: AnnotationInfo) -> (UInt32, Double, Double, UInt32) {
             (info.page, info.rect.y.isFinite ? info.rect.y : 0, info.rect.x.isFinite ? info.rect.x : 0, info.index)
         }
+        // Only the start of a long text is looked at: leading blanks skipped, then `maxRowText`
+        // characters at most, then the blanks at their end.
         func shown(_ text: String?) -> String? {
-            guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
-            return text
+            guard let text else { return nil }
+            let head = text.drop { $0.isWhitespace }.prefix(maxRowText)
+            let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        var names: [AnnotationKind: String] = [:]
+        func name(of kind: AnnotationKind) -> String {
+            if let known = names[kind] { return known }
+            let looked = Strings.annotationKindName(kind)
+            names[kind] = looked
+            return looked
         }
         return index.byPage.values.joined()
             .sorted { key($0) < key($1) }
             .map { info in
                 CommentRow(id: AnnotationRef(page: Int(info.page), index: info.index), page: Int(info.page), kind: info.kind,
-                           title: Strings.annotationKindName(info.kind), detail: shown(info.contents), author: shown(info.author),
+                           title: name(of: info.kind), detail: shown(info.contents), author: shown(info.author),
                            rect: info.box, isLocked: info.locked)
             }
     }

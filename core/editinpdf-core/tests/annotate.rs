@@ -1030,3 +1030,33 @@ fn a_drawing_has_at_most_100_000_points_in_all() {
     .unwrap();
     assert_eq!(doc.annotations().len(), 1);
 }
+
+/// The premise of the app's tests that open `locked-markup.pdf`: the rectangle written with
+/// `/F 128.0` is listed as unlocked, and the engine still refuses to move it; the text box is listed as
+/// locked.
+#[test]
+fn the_locked_markup_fixture_is_locked_where_the_app_tests_expect() {
+    let doc = PdfDocument::open(fixtures::locked_markup_doc(), None).unwrap();
+    let list = doc.annotations();
+    let rectangle = list
+        .iter()
+        .find(|a| a.kind == AnnotationKind::Rectangle)
+        .unwrap();
+    let text_box = list
+        .iter()
+        .find(|a| a.kind == AnnotationKind::TextBox)
+        .unwrap();
+    assert!(!rectangle.locked, "listed as unlocked");
+    assert!(text_box.locked);
+    let moved = doc.apply(
+        Edit::MoveAnnotation {
+            page: 0,
+            index: rectangle.index,
+            dx: 10.0,
+            dy: 10.0,
+        },
+        0,
+    );
+    assert!(matches!(moved, Err(EditError::Invalid { .. })), "{moved:?}");
+    assert_eq!(doc.revision(), 0);
+}

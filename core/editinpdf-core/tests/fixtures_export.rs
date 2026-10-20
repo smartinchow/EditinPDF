@@ -1,7 +1,8 @@
 //! Writes the fixture documents that the apps' own tests need as files, so they are checked in
 //! next to those tests rather than rebuilt there: the Swift package's tests open `hello.pdf`; the
 //! app's unit tests open `hello.pdf` too, `rotated.pdf` (one page turned by `/Rotate 90`),
-//! `form.pdf` (a page of form fields) and `annotated.pdf` (a page with a highlight and a note); and
+//! `form.pdf` (a page of form fields), `annotated.pdf` (a page with a highlight and a note) and
+//! `locked-markup.pdf` (a rectangle and a text box the file locks); and
 //! the app's UI tests open `sample.pdf` (three readable pages), `locked.pdf` (one page behind a
 //! password), `garbage.pdf` (not a PDF at all), `form.pdf` and `rotated.pdf`.
 //!
@@ -64,6 +65,10 @@ fn dump_fixtures() {
     // One page reading "Marked page" with a highlight over that line and a sticky note
     // (`fixtures::annotated_doc`): the app's tests list, select and delete comments.
     fs::write(dir.join("annotated.pdf"), fixtures::annotated_doc()).unwrap();
+    // One page with a rectangle and a text box that the file locks, the rectangle in a way only the
+    // engine's changes see (`fixtures::locked_markup_doc`): the app's tests check what a refused move
+    // and a refused delete leave.
+    fs::write(dir.join("locked-markup.pdf"), fixtures::locked_markup_doc()).unwrap();
     // Opens with no password but has an owner password (`fixtures::restricted_doc`): extracting its
     // pages drops that protection, which the app says.
     fs::write(

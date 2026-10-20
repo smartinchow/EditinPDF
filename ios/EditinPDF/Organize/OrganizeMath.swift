@@ -61,7 +61,7 @@ enum OrganizeMath {
             case .insertPagesFrom(_, _, let pages, let at):
                 if Int(at) <= page { page += pages?.count ?? max(pagesAdded, 0) }
             case .rotatePages, .setInfo, .addTextMarkup, .addNote, .setAnnotationContents, .addInk, .addSignature,
-                 .addTextBox, .addShape, .addLine, .setFieldValue, .deleteAnnotation, .moveAnnotation:
+                 .addTextBox, .addShape, .addLine, .setFieldValue, .deleteAnnotation, .deleteAnnotations, .moveAnnotation:
                 break
             }
         }

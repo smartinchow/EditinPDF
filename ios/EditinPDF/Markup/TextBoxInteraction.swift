@@ -104,7 +104,8 @@ final class TextBoxInteraction: NSObject {
     /// at once. The task says whether it was made; nil with no box.
     ///
     /// Over a text box on the page, its text, changed, replaces the text box's (all of it taken away,
-    /// the text box is deleted); unchanged, nothing is handed over, and the task is nil.
+    /// the text box is deleted, unless the file locks it: that is refused, `enqueueDelete`); unchanged,
+    /// nothing is handed over, and the task is nil.
     @discardableResult
     func commitPendingText() -> Task<Bool, Never>? {
         guard let editor = textEditor else { return nil }

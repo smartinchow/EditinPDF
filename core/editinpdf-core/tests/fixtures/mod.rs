@@ -355,7 +355,7 @@ pub fn hand_form_doc(fields: &[String]) -> Vec<u8> {
 /// A one-page document (US Letter, unturned) written by hand, whose page's `/Annots` lists `annots`
 /// in order: the whole dictionaries of objects 4, 5, …, which may refer to one another by those
 /// numbers. The catalog's form lists the objects `fields` names, so that a widget among them is a
-/// field's.
+/// field's; with none, the document has no form.
 ///
 /// The engine always lists a comment's pop-up and replies after it; files made elsewhere need not, and
 /// this is how the tests get those.
@@ -367,11 +367,16 @@ pub fn hand_annotated_doc(annots: &[&str], fields: &[u32]) -> Vec<u8> {
             .join(" ")
     };
     let listed = (4..).take(annots.len());
-    let mut objects = vec![
+    let form = if fields.is_empty() {
+        String::new()
+    } else {
         format!(
-            "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [{}] >> >>",
+            " /AcroForm << /Fields [{}] >>",
             refs(&mut fields.iter().copied())
-        ),
+        )
+    };
+    let mut objects = vec![
+        format!("<< /Type /Catalog /Pages 2 0 R{form} >>"),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
         format!(
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Annots [{}] >>",
@@ -380,6 +385,24 @@ pub fn hand_annotated_doc(annots: &[&str], fields: &[u32]) -> Vec<u8> {
     ];
     objects.extend(annots.iter().map(|body| (*body).to_owned()));
     write_pdf(&objects)
+}
+
+/// A one-page document (US Letter, unturned) written by hand with two comments the file locks:
+///
+/// - a rectangle, user space `[100 600 200 700]`, whose flags are written as a real number
+///   (`/F 128.0`): the comment list the engine reads when it opens a file takes it for unlocked, and
+///   the engine's own changes for locked, so a change to it gets past the apps and the engine refuses
+///   it;
+/// - a text box reading "Locked", `[100 400 300 440]`, locked as usual (`/F 128`).
+pub fn locked_markup_doc() -> Vec<u8> {
+    hand_annotated_doc(
+        &[
+            "<< /Type /Annot /Subtype /Square /Rect [100 600 200 700] /C [1 0 0] /F 128.0 >>",
+            "<< /Type /Annot /Subtype /FreeText /Rect [100 400 300 440] /Contents (Locked) \
+             /DA (/Helv 12 Tf 0 0 0 rg) /F 128 >>",
+        ],
+        &[],
+    )
 }
 
 /// `hand_form_doc` with `count` empty text fields, `f0`, `f1`, … all at the same place.
