@@ -5,10 +5,10 @@ import os
 /// The engine document of one file, shared between the file document (any thread) and its model
 /// (main actor).
 ///
-/// The file document needs it to save: SwiftUI asks for a snapshot on the main thread and writes it
-/// on a background queue. The model puts the document here when the file opens, and again when a
-/// locked file is unlocked, so a document becomes savable exactly when it becomes open. Until then
-/// it is nil, and a file that is locked or could not be read is never written.
+/// The file document needs it to save: SwiftUI asks for a snapshot, then writes it on a background
+/// queue (observed off the main thread). The model puts the document here when the file opens, and
+/// again when a locked file is unlocked, so a document becomes savable exactly when it becomes open.
+/// Until then it is nil, and a file that is locked or could not be read is never written.
 ///
 /// It also counts the changes, undos and redos handed over to the model's queue that have not reached
 /// the engine yet, so a save can wait for them (`waitForEdits`): the scene saves as the document closes,

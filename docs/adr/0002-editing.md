@@ -49,8 +49,16 @@ queue too, so the first read of a document comes before any change handed over m
 Running an undo manager entry does two things at once: it registers the opposite entry (so an undo can be redone,
 and that redo undone), and it hands `move(step, token)` to the queue, behind everything handed over before it. An
 undo tapped while its edit is still waiting therefore undoes that edit once it has been made, never an older one.
-When `move` runs, it does nothing if `token.applied` is false (the engine refused the change). If the engine fails to undo or redo, the two histories no longer match: every live
-token's entries are taken off the undo manager (`liveChanges`, a weak table) and the reader is told.
+When `move` runs, it does nothing if `token.applied` is false (the engine refused the change). If the engine fails
+to undo or redo, the two histories no longer match: every live token's entries are taken off the undo manager
+(`liveChanges`, a weak table) and the reader is told. The same goes for a change the engine fails half way
+(`EditError.Failed` from `apply`, which may have changed the document and moved the revision on): `apply` takes
+every live token's entries off, not only its own.
+
+The engine keeps only the last 100 changes (`MAX_UNDO` in the pinned PdfCraft release; `PdfDocument.undo` says
+so), while the undo manager keeps them all. An undo past the engine's history finds `NothingToUndo` (and a redo,
+`NothingToRedo`): that is no mismatch, only a change the engine has no step for any more, so `move` takes that
+token's entries off, quietly, with no alert, and the rest of the history (what can be redone, above all) stays.
 
 The engine's undo has no identity, only order. The token's job is to make sure that the undo manager never holds
 an entry the engine has no step for, and that the order of entries is the order of steps.
@@ -62,16 +70,17 @@ wait for them (section 3).
 
 `PDFFileDocument.Snapshot` is `PdfDocument` itself (`ios/EditinPDF/Document/PDFFileDocument.swift`).
 `snapshot(contentType:)` returns it, so taking a snapshot costs nothing and the file's bytes are held once, by the
-engine. Copying them at snapshot time would be a full save, and the bridge's `save` holds the state lock for the whole
-write (`document.rs`).
+engine. Copying them at snapshot time would be a whole save, and the bridge's `save` holds the state lock for the
+whole write (`document.rs`).
 
-The write is `fileWrapper(snapshot:configuration:)`, which calls `save(mode: .incremental)` on SwiftUI's
-background queue. The bridge's lock means the write sees whole edits. A snapshot is therefore a live reference,
-not a frozen copy: a save writes the document as it is when the write runs. That is what an autosave should
-write. To make a save taken just after a change (the strokes added as the back button goes down) include it,
-`savedBytes(of:)` waits, off the main thread only, for up to 2 s for the jobs counted by `EngineHandle`, and logs a
-warning if it gave up. A file that is locked or could not be read has no engine document in the handle, and its
-snapshot is refused with our own message, so it is never written.
+The write is `fileWrapper(snapshot:configuration:)`, which calls `save(mode: .incremental)`; SwiftUI calls it on a
+background queue (observed to run off the main thread on the iOS 26.5 simulator). The bridge's lock means the
+write sees whole edits. A snapshot is therefore a live reference, not a frozen copy: a save writes the document as
+it is when the write runs. That is what an autosave should write. To make a save taken just after a change (the
+strokes added as the back button goes down) include it, `savedBytes(of:)` waits, off the main thread only, for up
+to 2 s for the jobs counted by `EngineHandle`, and logs a warning if it gave up. A file that is locked or could not
+be read has no engine document in the handle, and its snapshot is refused with our own message, so it is never
+written.
 
 `EngineHandle` (`ios/EditinPDF/Document/EngineHandle.swift`) is what the file document and the model share: a
 lock-guarded slot for the document and the counter. The model fills the slot when the file opens and on `unlock`.
@@ -84,21 +93,33 @@ bridge deliberately does not expose it. `PdfDocument.save` says so: it "does not
 `is_dirty` stays true after a save.
 
 So **every save is the file as it was opened plus one appended update holding every change made since**
-(`Session::save_bytes`, "an incremental update of the file as opened/last saved"; an unchanged document comes
-back exactly as opened). The user's original bytes are a prefix of what is written, which is what makes autosave
-safe for files the app did not make. The other consequence is the safety property: nothing ever tells the engine
-that a write succeeded, so a write that failed, or that the system could not finish, can never leave the engine
-believing the file holds changes it does not. The next save simply writes all of them again. The cost is that an
-update holds the whole session's changes rather than only the newest, which is small next to rewriting the file
-(`SaveMode.full` exists in the bridge for a later "optimized copy", and refuses a signed document; the app does
-not use it yet).
+(`Session::save_bytes`, "an incremental update of the file as opened/last saved"). The user's original bytes are a
+prefix of what is written, which is what makes autosave safe for files the app did not make. An unchanged document
+comes back as the engine holds it: the bytes as opened, except for an XFA form, which the engine may lay out or
+fill in from its XFA data as it opens it, and holds with that appended (the original bytes still come first). The
+other consequence is the safety property: nothing ever tells the engine that a write succeeded, so a write that
+failed, or that the system could not finish, can never leave the engine believing the file holds changes it does
+not. The next save simply writes all of them again. The cost is that an update holds the whole session's changes
+rather than only the newest, which is small next to rewriting the file (`SaveMode.full` exists in the bridge for a
+later "optimized copy", and refuses a signed document; the app does not use it yet).
+
+One kind of file is the exception. When the file's cross-reference data cannot be read, the object layer rebuilds
+it from the objects' headers as the file opens (`pdfcraft_cos`), which leaves no revision to append to, and its
+incremental write falls back to a full one. The bridge finds this out when the document opens (where each revision
+ends, and only when it finds none, a second read of the file) and reports it as
+`EditCapabilities.rewrites_on_save`. An unsigned such file stays editable: the first save of a change writes it out
+in full, a whole, repaired copy of what the reader sees, and the README says so. A **signed** one would lose its
+signatures with that save, with nothing refusing it, so the bridge refuses every change to it (`ReadOnly`, the
+capabilities all false, a `read_only_reason`) and, as a second line of defence, every save of it (`Signed`). The app
+says why in one sentence of its own (`Strings.signedDocumentDamaged`), in place of each tool's own refusal
+(`DocumentModel.signatureLock`).
 
 ### 5. What `apply_all` refuses to mix
 
 `apply` makes one change. `apply_all(label, edits, base_revision)` makes several, in order, as one engine step
 (`Edit::Batch`): all or none, one revision, one undo step (`document.rs`, `edit.rs`). It refuses, as `Invalid`:
 
-- more than 10,000 edits (`MAX_STEP_EDITS`);
+- no edit at all, or more than 10,000 (`MAX_STEP_EDITS`);
 - **a page-structure edit with an edit that carries a point or a box** (`is_page_structure` with `has_geometry`).
   Every edit of a step is converted from view space to the file's space against the document **as it is before the
   step** (`to_engine` is given that one document). After a turn, a delete, a move or an insert, a later edit's
@@ -107,9 +128,9 @@ not use it yet).
   `addresses_annotation`: delete, move or change the text of a comment). Those name the comment by page number and
   place, read before the step. A turn does not renumber, so a turn with a change of a comment's text is allowed;
   a turn with a move is already refused by the previous rule, because a move has a distance in view space;
-- **`DeleteAnnotations` with any other edit that addresses a comment of the same page by its place**
-  (`annotation_places_check`), for the reason in section 7. Adding a comment (it goes at the end of the list),
-  changes to other pages and form fills are fine.
+- **a delete of a comment (`DeleteAnnotation` or `DeleteAnnotations`) with any other edit that addresses a
+  comment of the same page by its place** (`annotation_places_check`), another delete included, for the reason in
+  section 7. Adding a comment (it goes at the end of the list), changes to other pages and form fills are fine.
 
 Filling a form field is addressed by the field's name (`FormField.name`), which no change to pages or comments
 alters, so `SetFieldValue` mixes with anything. Names are checked against the fields as they are before the step
@@ -117,8 +138,14 @@ alters, so `SetFieldValue` mixes with anything. Names are checked against the fi
 
 The app stays inside these rules by construction: a multi-page delete is one `deletePages` with a list, an
 eraser stroke is one `deleteAnnotations`, and a long Pencil drawing that exceeds the bridge's ink caps becomes
-several `addInk` edits of one step (`ios/EditinPDF/Markup/InkGeometry.swift`). The rules exist so that a mistake
-in the app is refused with `Invalid` instead of changing the wrong thing.
+several `addInk` edits of one step (`ios/EditinPDF/Markup/InkGeometry.swift`). Every other change is a step of one
+edit, and `DocumentModel.enqueue` hands over no empty step. The rules exist so that a mistake in the app is refused
+with `Invalid` instead of changing the wrong thing.
+
+The bridge also caps what one edit carries, so a hostile or mistaken caller cannot make the engine lay out or keep
+without bound: a comment's, a text box's or an information entry's text at `max_text_chars()` (100,000 characters;
+a form field's text has its own cap of 10,000), and one text markup at 10,000 boxes. The text box and note editors
+hold what is typed or pasted to the same cap (`ShapeGeometry.limitedText`), so the reader is never refused for it.
 
 ### 6. Revisions, `Stale`, and the rebase rule
 
@@ -156,11 +183,13 @@ and the `index` of each is not that order. A position moves when an earlier comm
 every undo and redo, so the app reads all comments again after every revision (`EngineState.read`,
 `AnnotationIndex`) and any edit that names a position is only good for the revision it was worked out at: section 6.
 
-Deleting several comments by position is the one case where this breaks down inside a single step. The engine's
-delete takes out the comment together with its pop-up and its replies, wherever they are listed, and those have
-places of their own that can come before the comment. So deleting the highest place first is not safe, and no
-order of "delete place N" edits is sure to remove the comments meant. `Edit::DeleteAnnotations { page, indices }`
-(`annotations::deletes`) therefore follows each comment **as the object it is**:
+Inside a single step, deleting comments by position is where this breaks down: every edit of a step names its
+comment by its place before the step, and a delete moves the places after it. Among the edits the app makes, it
+matters when several comments of a page are deleted at once (the eraser). The engine's delete takes out the comment
+together with its pop-up and its replies, wherever they are listed, and those have places of their own that can
+come before the comment. So deleting the highest place first is not safe, and no order of "delete place N" edits
+is sure to remove the comments meant. `Edit::DeleteAnnotations { page, indices }` (`annotations::deletes`)
+therefore follows each comment **as the object it is**:
 
 1. It reads the page's `/Annots` from the working file, as the engine does, refuses a place the list does not have
    and any comment the file locks (the whole change, as the engine would refuse a locked delete), sorts the places
@@ -173,8 +202,9 @@ order of "delete place N" edits is sure to remove the comments meant. `Edit::Del
 3. The deletes go as one engine `Batch`: one revision, one undo step.
 
 Because the places are read against the list before the step, no other edit in the step may address a comment of
-that page by its place (section 5). The eraser (`DocumentModel.eraseEdit`) sends a single `deleteAnnotations`; the
-Comments list and the delete button send a single `deleteAnnotation`, which is fine on its own.
+that page by its place; the same holds for a step with a `DeleteAnnotation` (section 5). The eraser
+(`DocumentModel.eraseEdit`) sends a single `deleteAnnotations`; the Comments list and the delete button send a
+single `deleteAnnotation`, which is fine on its own.
 
 ## Consequences
 
@@ -182,18 +212,31 @@ Comments list and the delete button send a single `deleteAnnotation`, which is f
   stack. The price is a protocol with several moving parts (token, entry, queue, counter) that has to be kept
   whole: a new kind of change goes through `enqueue`, never straight to the engine. A failure of the engine's own
   undo empties the undo manager's stack rather than guessing, so the reader loses their Undo history there.
-- Nothing calls the engine on the main actor, so a long autosave never freezes the screen. A change is published
-  only after the jobs before it, so the screen can lag behind the reader's taps by the queue's length.
-- The user's file keeps its original bytes, and a failed write loses nothing. A long session's autosaves each write
-  the original plus the whole update; shrinking it would take a full save, which the app does not offer yet.
+- Changes, undos and redos and the reads after them never call the engine on the main actor, and the write was
+  observed to run off the main thread, so a long autosave does not freeze the screen. A few quick calls do run on
+  the main thread: `SelectionWorker.init` reads the revision when the document opens, and a new blank document is
+  made there. A change is published only after the jobs before it, so the screen can lag behind the reader's taps
+  by the queue's length.
+- The user's file keeps its original bytes, and a failed write loses nothing; the exception is a file whose
+  cross-reference data had to be rebuilt, which is written out in full the first time it changes (and is read-only
+  when signed: section 4). A long session's autosaves each write the original plus the whole update; shrinking it
+  would take a full save, which the app does not offer yet.
 - Every addressed edit is right for exactly one revision. Most are rebased and a few are refused as `Stale`, the
   alert being the price for never editing the wrong page or comment. The rebase rule is a list of what can shift
-  an index or a point: **a new `Edit` must be added to `shift(of:)`, `hasViewSpaceGeometry` and the bridge's
-  predicates** (the Swift `switch`es and `edit.rs` are exhaustive, so the compiler says where).
+  an index or a point: **a new `Edit` must be added to `shift(of:)`, `hasViewSpaceGeometry`,
+  `OrganizeMath.readerPage` (`ios/EditinPDF/Organize/OrganizeMath.swift`, where the reader's page follows page
+  changes) and the bridge's predicates** (those three Swift `switch`es and the predicates in `edit.rs` are
+  exhaustive, so the compiler says where).
 - Because the engine has no stable comment identity, `DeleteAnnotations` re-derives the engine's delete in the
-  bridge. It depends on how the pinned PdfCraft release treats pop-ups and replies (`pdfcraft_annot::delete_annotation`);
-  `core/editinpdf-core/tests/delete_annotations.rs` pins the cases (pop-ups and replies listed before the comment,
-locked comments, encrypted files), and `make update-upstream` re-runs it.
+  bridge. It depends on how the pinned PdfCraft release treats pop-ups and replies
+  (`pdfcraft_annot::delete_annotation`); `core/editinpdf-core/tests/delete_annotations.rs` pins the cases (pop-ups
+  and replies listed before the comment, locked comments, encrypted files), and `make update-upstream` re-runs it.
 - A snapshot is live, not a copy. SwiftUI can ask for one, and write it a little later, while a change is on its
   way. The wait in `savedBytes` covers the changes the app knows about; one that arrives after the wait is in the
   next autosave.
+- No script a document carries is run. Every engine session the bridge makes has the engine's JavaScript off
+  (`document::session`): with it on, every fill would run the field's keystroke, validate, calculate and format
+  scripts, and an XFA form its scripts as it opens, with no time or memory limit, under the document's lock. The
+  built-in formats and calculations Acrobat writes (`AFNumber_Format`, `AFSimple_Calculate` and the like) are still
+  worked out by the engine itself; a form whose own scripts compute values is not recalculated, and the README says
+  so.

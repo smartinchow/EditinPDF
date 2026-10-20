@@ -15,9 +15,10 @@ struct EditinPDFApp: App {
     }
 
     var body: some Scene {
-        // Edited in place; the system autosaves what the engine writes (see PDFFileDocument). The
-        // iOS 27 replacements of this initializer and of ReferenceFileDocument need iOS 27, so their
-        // deprecation warnings stay.
+        // Edited in place; the system autosaves what the engine writes (see PDFFileDocument). The iOS 27
+        // SDK marks this initializer and ReferenceFileDocument deprecated, but their replacements need
+        // iOS 27, so the app keeps them until its minimum moves there (the build prints no warning for
+        // them today).
         DocumentGroup(newDocument: { PDFFileDocument() }) { configuration in
             DocumentScreen(model: configuration.document.model,
                            documentName: configuration.fileURL?.deletingPathExtension().lastPathComponent ?? Strings.untitledDocument)

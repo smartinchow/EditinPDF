@@ -11,12 +11,14 @@ import os
 /// the main thread on the iOS 26.5 simulator: `init(configuration:)` reported `Thread.isMainThread`
 /// false on every open.
 ///
-/// Saving: the snapshot is the engine document itself, so taking it (on the main thread) costs
-/// nothing; the write, `save(mode: .incremental)`, runs in `fileWrapper` on SwiftUI's background
-/// queue. The bridge's state lock makes it see whole edits. Every save is the file as opened plus one
-/// appended update holding all current changes; nothing tells the engine it saved, so a failed
-/// write can never leave it believing so. A file that is locked or could not be read has no engine
-/// document, and its snapshot is refused: it is never written.
+/// Saving: the snapshot is the engine document itself, so taking it costs nothing, on whichever
+/// thread SwiftUI asks for it; the write, `save(mode: .incremental)`, runs in `fileWrapper`, which
+/// SwiftUI calls on a background queue (observed off the main thread on the iOS 26.5 simulator). The
+/// bridge's state lock makes it see whole edits. Every save is the file as opened plus one appended
+/// update holding all current changes (but for a damaged file the engine rebuilt, written out in full:
+/// `EditCapabilities.rewritesOnSave`); nothing tells the engine it saved, so a failed write can never
+/// leave it believing so. A file that is locked or could not be read has no engine document, and its
+/// snapshot is refused: it is never written.
 final class PDFFileDocument: ReferenceFileDocument {
     typealias Snapshot = PdfDocument
 

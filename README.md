@@ -43,8 +43,9 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **Select and copy** text: long-press a word, drag the handles to extend the selection, then Copy.
 - **Organize pages**: select several pages, drag to reorder, rotate, delete, insert a blank page, insert the
   pages of another PDF, and extract pages to a new PDF to share or save.
-- **Undo and redo** every change; changes **save automatically** back to the original file, as an incremental
-  update that keeps the original bytes. A new blank document can be started from the file browser.
+- **Undo and redo** every change (the last 100); changes **save automatically** back to the original file, as an
+  incremental update that keeps the original bytes (a damaged file is the exception: see Known issues). A new
+  blank document can be started from the file browser.
 - **Mark up**: a Markup mode with a tool palette (a bar at the bottom on iPhone, a side palette on iPad). Each
   tool remembers its colour and line width.
   - **Text markup**: highlight, underline and strikethrough over text you drag across.
@@ -70,6 +71,12 @@ tracking and no data collected.
 - Text boxes are not offered on a page that has been turned (rotated), because the engine draws their text
   sideways there. Turn the page back first. The other tools are offered on turned pages.
 - Pages extracted from a password-protected PDF are written without the password. The Organize screen says so.
+- Forms that compute values with their own scripts (totals, formatting) are not recalculated: EditinPDF doesn't
+  run scripts in documents. The usual built-in sums and number and date formats still work.
+- A damaged file is written out in full the first time it changes, rather than keeping its original bytes and
+  adding the changes after them. A damaged file that is digitally signed can't be changed at all, since that would
+  break its signatures; the app says so.
+- Undo goes back at most 100 changes.
 - The iOS 27 SDK marks `ReferenceFileDocument` and the `DocumentGroup` initializer the app uses as deprecated, in
   favour of a `Document` protocol that needs iOS 27. The app supports iOS 17, so it keeps them. The build prints
   no warning for this today; the switch comes when the minimum moves to iOS 27.
