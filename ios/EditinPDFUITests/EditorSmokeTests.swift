@@ -97,7 +97,18 @@ final class EditorSmokeTests: XCTestCase {
             if undoWasOn { sleep(1) } else { XCTAssertTrue(undo.waitForEnabled(timeout: 5), "dragging with \(tool) marked nothing") }
         }
         attach(app, "text-markup-tools")
+        // One finger on the white of the page scrolls, text tool or not.
+        let indicator = app.staticTexts["pageIndicator"]
+        pagePoint(CGPoint(x: 300, y: 600), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 300, y: 100), pageWidth: 612, in: app))
+        let moved = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label != %@", "1 / 3"), object: indicator)
+        XCTAssertEqual(XCTWaiter().wait(for: [moved], timeout: 5), .completed, "a drag on the white of the page did not scroll")
+        attach(app, "text-markup-scrolled")
         XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app))
+        // Back to the top, where the marked line is.
+        app.scrollViews["pageScrollView"].firstMatch.swipeDown(velocity: .fast)
+        app.scrollViews["pageScrollView"].firstMatch.swipeDown(velocity: .fast)
+        expect(indicator, toRead: "1 / 3", within: 5)
         // Reading mode: a long press selects a word, and its menu marks it.
         line.start.withOffset(CGVector(dx: 8, dy: 0)).press(forDuration: 1)
         let highlight = app.menuItems["Highlight"].exists ? app.menuItems["Highlight"] : app.buttons["Highlight"]

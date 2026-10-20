@@ -1,4 +1,5 @@
 import EditinPDFCore
+import PDFKit
 import UIKit
 import XCTest
 @testable import EditinPDF
@@ -150,10 +151,11 @@ final class TextMarkupTests: XCTestCase {
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()
         model.tool = .highlight
+        let onText = try contentPoint(ofGlyph: 0, page: 0, in: model)
         // Before the document's permissions are read, no tool may be used.
-        XCTAssertFalse(controller.markupInteraction.takesTouch(atContentPoint: CGPoint(x: 100, y: 100)))
+        XCTAssertFalse(controller.markupInteraction.takesTouch(atContentPoint: onText))
         await model.settle()
-        XCTAssertTrue(controller.markupInteraction.takesTouch(atContentPoint: CGPoint(x: 100, y: 100)))
+        XCTAssertTrue(controller.markupInteraction.takesTouch(atContentPoint: onText))
     }
 
     /// While a tool that annotates is picked the long press does not select: the tool has the finger.
@@ -222,6 +224,114 @@ final class TextMarkupTests: XCTestCase {
         controller.scrollView.zoomScale = 4
         XCTAssertEqual(controller.markupInteraction.hitSlop(onPage: 0), 8 / (scale * 4), accuracy: 0.001)
         XCTAssertEqual(MarkupInteraction.hitSlop(screenScale: 0), 8, "no layout: the index's own")
+    }
+
+    // MARK: Text or white: mark or scroll (fix round 1)
+
+    /// The white of a page, well away from "Page 1" at its top left, in the content view's coordinates.
+    let whiteOfPage0 = CGPoint(x: 300, y: 300)
+
+    /// One finger that goes down on the white of a page scrolls: the markup pan takes no touch there
+    /// (and, asked as it would begin, does not begin), and a drag from there marks nothing.
+    func testADragThatStartsOnTheWhiteOfAPageScrollsAndMarksNothing() async throws {
+        let (controller, model) = await makeController()
+        model.tool = .highlight
+        let markup = controller.markupInteraction
+        await markup.loadText(onPage: 0)?.value
+        XCTAssertEqual(markup.isNearText(CGPoint(x: 300 / scale, y: 300 / scale), onPage: 0), false)
+        XCTAssertFalse(markup.takesTouch(atContentPoint: whiteOfPage0), "the scroll view has it")
+        markup.begin(atContentPoint: whiteOfPage0)
+        XCTAssertFalse(markup.isMarking)
+        let ok = await markup.end(atContentPoint: try contentPoint(ofGlyph: 3, page: 0, in: model))
+        XCTAssertFalse(ok)
+        XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+        XCTAssertNil(model.selection?.selection)
+    }
+
+    /// With the page's text read, a drag that starts on a word still marks.
+    func testADragThatStartsOnAWordStillMarks() async throws {
+        let (controller, model) = await makeController()
+        model.tool = .highlight
+        let markup = controller.markupInteraction
+        await markup.loadText(onPage: 0)?.value
+        let start = try contentPoint(ofGlyph: 0, page: 0, in: model)
+        XCTAssertTrue(markup.takesTouch(atContentPoint: start))
+        markup.begin(atContentPoint: start)
+        XCTAssertTrue(markup.isMarking)
+        let ok = await markup.end(atContentPoint: try contentPoint(ofGlyph: 3, page: 0, in: model))
+        XCTAssertTrue(ok)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).first?.kind, .highlight)
+    }
+
+    /// A finger a little off the text, within 8 points on screen of a glyph, is on it; further off it is not.
+    func testATouchJustOffTheTextIsOnIt() async throws {
+        let (controller, model) = await makeController()
+        model.tool = .underline
+        let markup = controller.markupInteraction
+        await markup.loadText(onPage: 0)?.value
+        let glyph = try XCTUnwrap(try XCTUnwrap(model.document()).pageText(page: 0).glyphs.first).rect
+        let slop = markup.hitSlop(onPage: 0)
+        XCTAssertEqual(markup.isNearText(CGPoint(x: glyph.x - slop * 0.9, y: glyph.y + glyph.height / 2), onPage: 0), true)
+        XCTAssertEqual(markup.isNearText(CGPoint(x: glyph.x - slop * 1.1, y: glyph.y + glyph.height / 2), onPage: 0), false)
+    }
+
+    /// Until a page's text has been read, a touch on it is taken (as before the fix): the first touch
+    /// asks for the text, and once it is read the white of the page scrolls.
+    func testBeforeThePagesTextIsReadATouchOnItIsTaken() async throws {
+        let (controller, model) = await makeController()
+        model.tool = .strikeout
+        let markup = controller.markupInteraction
+        XCTAssertNil(markup.isNearText(CGPoint(x: 400, y: 400), onPage: 1), "not read yet; this asks for it")
+        XCTAssertTrue(markup.takesTouch(atContentPoint: CGPoint(x: 300, y: 530 + 300)))
+        // The reading asked for above, still on its way.
+        await markup.loadText(onPage: 1)?.value
+        XCTAssertEqual(markup.isNearText(CGPoint(x: 400, y: 400), onPage: 1), false)
+        XCTAssertFalse(markup.takesTouch(atContentPoint: CGPoint(x: 300, y: 530 + 300)))
+    }
+
+    /// The glyph boxes are of one revision of the document: after a change they are read again.
+    func testThePagesTextIsReadAgainAfterAChange() async throws {
+        let (controller, model) = await makeController()
+        model.tool = .highlight
+        let markup = controller.markupInteraction
+        await markup.loadText(onPage: 0)?.value
+        XCTAssertNotNil(markup.isNearText(CGPoint(x: 10, y: 10), onPage: 0))
+        await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        XCTAssertNil(markup.isNearText(CGPoint(x: 10, y: 10), onPage: 0), "the boxes of the old revision are dropped")
+    }
+
+    // MARK: Lines (Minor 1)
+
+    /// A page of `lines` lines of 24-point text, 48 points apart, from 72 points down.
+    static func linesPage(_ lines: [String]) -> Data {
+        UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792)).pdfData { context in
+            context.beginPage()
+            for (index, line) in lines.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 72, y: 72 + CGFloat(index) * 48), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            }
+        }
+    }
+
+    /// A selection across two lines is marked with one quad for each line, not one box over both.
+    func testAMarkOverTwoLinesHasAQuadForEachLine() async throws {
+        let model = DocumentModel(bytes: Self.linesPage(["First line", "Second line"]))
+        await model.settle()
+        let document = try XCTUnwrap(model.document())
+        let glyphs = try document.pageText(page: 0).glyphs
+        let first = try XCTUnwrap(glyphs.first).rect
+        let last = try XCTUnwrap(glyphs.last).rect
+        XCTAssertGreaterThan(last.y, first.y + 30, "two lines")
+        model.selection?.beginWord(page: 0, at: CGPoint(x: first.x + first.width / 2, y: first.y + first.height / 2))
+        await model.selection?.waitUntilSettled()
+        model.selection?.extend(to: CGPoint(x: last.x + last.width, y: last.y + last.height / 2))
+        await model.selection?.waitUntilSettled()
+        let lines = try XCTUnwrap(model.selection?.pageRects?.rects)
+        XCTAssertEqual(lines.count, 2, "one box for each line")
+        let ok = await model.markSelection(.highlight)
+        XCTAssertTrue(ok)
+        let saved = try document.save(mode: .incremental)
+        let annotation = try XCTUnwrap(PDFDocument(data: saved)?.page(at: 0)?.annotations.first { $0.type == "Highlight" })
+        XCTAssertEqual(annotation.quadrilateralPoints?.count, 8, "two quads of four points")
     }
 
     // MARK: The menu

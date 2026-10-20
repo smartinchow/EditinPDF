@@ -459,6 +459,8 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         }
         // The zoom and the layout move the selection on screen, and its handles with it.
         selectionInteraction.layoutHandles()
+        // With a text tool picked, whether a finger is on text is known before it goes down.
+        markupInteraction.prefetchText(onPages: inView)
     }
 
     private func applyHighlightsToPageViews() {
