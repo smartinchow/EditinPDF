@@ -56,8 +56,19 @@ final class DocumentModel {
     private(set) var annotationIndex = AnnotationIndex([])
     /// The document's annotations, by the page (counting from 0) they are on, in the engine's order.
     var annotationsByPage: [Int: [AnnotationInfo]] { annotationIndex.byPage }
-    /// The document's form fields.
-    private(set) var formFields: [FormField] = []
+    /// The document's form fields, in the document's order, and each page's widgets (`FormIndex`):
+    /// read again with every revision.
+    private(set) var formIndex = FormIndex.empty
+    /// The document's form fields, in the document's order.
+    var formFields: [FormField] { formIndex.fields }
+    /// Whether the form has more fields (or options, or widgets) than the engine lists: only the first
+    /// ones can be filled in, and the screen says so once.
+    private(set) var formFieldsTruncated = false
+    /// Values handed to the engine for fields, by the fields' names, and not published yet: what a tap
+    /// works out its change from (`fieldAsFilled`). See `FormFilling.swift`.
+    @ObservationIgnored var fillsOnTheirWay: [String: FillOnItsWay] = [:]
+    /// The list box whose sheet of options is up, for several of them to be checked; nil while none is.
+    var choiceDraft: ChoiceDraft?
     /// What the last change, undo or redo did: its revision, the pages it touched (nil: any of them
     /// may have moved), and whether the number of pages, or a page's size or rotation, changed.
     private(set) var lastChange: PageChange?
@@ -149,14 +160,37 @@ final class DocumentModel {
         if hasPendingInk != pending { hasPendingInk = pending }
     }
 
-    /// Adds the strokes drawn with Draw and waiting, if any, as one change, and the text typed in a
-    /// text box and waiting, if any, as another, each handed over before this returns: Done does it,
-    /// and so does everything that must come after them (another tool, any other change, Undo and
-    /// Redo, the scene leaving the screen). Nothing happens with none waiting.
+    /// Adds the strokes drawn with Draw and waiting, if any, as one change, the text typed in a text
+    /// box and waiting, if any, as another, and the text typed in a form field, if any, as a third, each
+    /// handed over before this returns: Done does it, and so does everything that must come after them
+    /// (another tool, any other change, Undo and Redo, the scene leaving the screen). Nothing happens
+    /// with none waiting.
     func commitPendingInk() {
         inkHolder?.commitPendingInk()
         inkHolder?.commitPendingText()
+        fieldHolder?.commitPendingField()
     }
+
+    // MARK: Form fields being typed in
+
+    /// What holds the text being typed in a form field: the scroll view's forms (`FormInteraction`).
+    @ObservationIgnored weak var fieldHolder: (any PendingFieldHolder)?
+
+    /// Whether a form field is being typed in (its editor is up), changed or not.
+    var isEditingField: Bool { fieldHolder?.isEditingField ?? false }
+
+    /// Whether text other than the field's own is typed in a form field, waiting to be filled in: added
+    /// with the strokes waiting (`commitPendingInk`).
+    private(set) var hasPendingFieldText = false
+
+    /// The text being typed in a form field came to differ from the field's, or back.
+    func pendingFieldTextDidChange(_ pending: Bool) {
+        if hasPendingFieldText != pending { hasPendingFieldText = pending }
+    }
+
+    /// Whether anything is waiting to be added (`hasPendingMarkup`, `hasPendingFieldText`): Undo adds
+    /// it and takes it back, and Redo waits.
+    var hasPendingEdit: Bool { hasPendingMarkup || hasPendingFieldText }
 
     /// Adds `strokes` (view space: PDF points of `page`, each stroke the points it passed through) as
     /// one drawing in `style` (Draw's own when nil): one change named `Strings.actionAddAnnotation`,
@@ -467,8 +501,14 @@ final class DocumentModel {
     ///
     /// Strokes drawn with Draw and not added yet are added first (`commitPendingInk`): they were drawn
     /// on the document as it is, before this change.
+    ///
+    /// `alreadyMade`, when given, is asked off the main actor, just before the engine would be: when it
+    /// says the document is already as the edits would make it (a field filled with the value it has),
+    /// nothing is done, the entry is taken off the undo manager again, and the task says no change was
+    /// made, with no failure.
     @discardableResult
-    func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?, workedOutAt base: UInt64? = nil) -> Task<Bool, Never> {
+    func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?, workedOutAt base: UInt64? = nil,
+                 unless alreadyMade: (@Sendable (PdfDocument) -> Bool)? = nil) -> Task<Bool, Never> {
         guard !edits.isEmpty else { return Task { false } }
         commitPendingInk()
         let token = EditToken()
@@ -479,7 +519,7 @@ final class DocumentModel {
         engine.editWillStart()
         return queue.submit { [weak self] in
             defer { engine.editDidFinish() }
-            return await self?.apply(edits, label: actionName, base: base, token: token, touching: pages) ?? false
+            return await self?.apply(edits, label: actionName, base: base, token: token, touching: pages, unless: alreadyMade) ?? false
         }
     }
 
@@ -548,14 +588,16 @@ final class DocumentModel {
 
     /// A queued edit: asks the engine for it off the main actor and, once made, publishes the
     /// document's new state.
-    private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken, touching pages: Set<Int>?) async -> Bool {
+    private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken, touching pages: Set<Int>?,
+                       unless alreadyMade: (@Sendable (PdfDocument) -> Bool)?) async -> Bool {
         guard let document = document() else {
             undoManager?.removeAllActions(withTarget: token)
             return false
         }
         let base = Self.canRebase(edits, workedOutAt: base, indexShift: lastIndexShift, geometryShift: lastGeometryShift)
             ? revision : base
-        let result = await EditQueue.offMain { () throws -> EngineState in
+        let result = await EditQueue.offMain { () throws -> EngineState? in
+            if let alreadyMade, alreadyMade(document) { return nil }
             if edits.count == 1, let edit = edits.first {
                 _ = try document.apply(edit: edit, baseRevision: base)
             } else {
@@ -564,7 +606,11 @@ final class DocumentModel {
             return EngineState.read(document)
         }
         switch result {
-        case .success(let state):
+        case .success(nil):
+            // Already as the edits would make it: no change, and nothing to undo.
+            undoManager?.removeAllActions(withTarget: token)
+            return false
+        case .success(let state?):
             token.applied = true
             // The reader stays on the page they were reading when pages before it go, move or arrive.
             // (An undo or redo does not say where pages went: there, the index is only kept in range.)
@@ -654,9 +700,16 @@ final class DocumentModel {
 
     /// Whether `edits`, worked out at revision `base`, still mean the same on the document as it is
     /// now: no change since `base` has shifted an index, and none has turned a page, or the edits
-    /// have no point in view space for a turn to move.
+    /// have no point in view space for a turn to move. Fills of form fields always do: a field is
+    /// addressed by its name, which no change to the pages or the annotations alters.
     private static func canRebase(_ edits: [Edit], workedOutAt base: UInt64, indexShift: UInt64, geometryShift: UInt64) -> Bool {
-        base >= indexShift && (base >= geometryShift || !hasViewSpaceGeometry(edits))
+        if edits.allSatisfy(isAddressedByName) { return true }
+        return base >= indexShift && (base >= geometryShift || !hasViewSpaceGeometry(edits))
+    }
+
+    /// Whether `edit` addresses what it changes by a name, not by a page or an index: a form field's fill.
+    private static func isAddressedByName(_ edit: Edit) -> Bool {
+        if case .setFieldValue = edit { true } else { false }
     }
 
     /// Publishes the document as it is after a change, undo or redo: its pages, with the current
@@ -688,7 +741,8 @@ final class DocumentModel {
     private func adopt(_ state: EngineState) {
         revision = state.revision
         annotationIndex = AnnotationIndex(state.annotations)
-        formFields = state.formFields
+        formIndex = state.formIndex
+        formFieldsTruncated = state.formFieldsTruncated
         capabilities = state.capabilities
         // A document that no longer allows annotations (or never did) leaves a tool that makes them.
         if let tool, tool.annotates, !state.capabilities.canAnnotate { self.tool = .select }
@@ -718,6 +772,20 @@ protocol PendingInkHolder: AnyObject {
     /// returns); the task says whether it was made. Nil with none being typed in.
     @discardableResult
     func commitPendingText() -> Task<Bool, Never>?
+}
+
+/// What holds the text being typed in a form field, not filled in yet: the scroll view's forms
+/// (`FormInteraction`).
+@MainActor
+protocol PendingFieldHolder: AnyObject {
+    /// Whether a field's editor is up.
+    var isEditingField: Bool { get }
+
+    /// Ends the field's editor, if one is up, filling the field with what was typed when it differs
+    /// from the field's text (handed over before this returns); the task says whether it changed. Nil
+    /// with no editor up, or nothing changed.
+    @discardableResult
+    func commitPendingField() -> Task<Bool, Never>?
 }
 
 /// A note the note sheet is open for (`DocumentModel.noteDraft`): on `page`, its icon's top-left at
@@ -753,14 +821,17 @@ private struct EngineState: Sendable {
     let revision: UInt64
     let pages: [PageInfo]
     let annotations: [AnnotationInfo]
-    let formFields: [FormField]
+    /// The form's fields, each page's widgets looked up once here, off the main actor.
+    let formIndex: FormIndex
+    let formFieldsTruncated: Bool
     let capabilities: EditCapabilities
 
     static func read(_ document: PdfDocument) -> EngineState {
         EngineState(revision: document.revision(),
                     pages: (0..<document.pageCount()).compactMap { document.pageInfo(page: $0) },
                     annotations: document.annotations(),
-                    formFields: document.formFields(),
+                    formIndex: FormIndex(document.formFields()),
+                    formFieldsTruncated: document.formFieldsTruncated(),
                     capabilities: document.capabilities())
     }
 }

@@ -496,10 +496,10 @@ final class MarkupInteraction: NSObject {
     /// a bar over the pages), the strokes waiting are added. Going back to the documents closes the
     /// file at once, saving it only if it has a change by then; the finger going down on the back
     /// button is the last moment the strokes can become one.
-    /// So is the text being typed in a text box: a finger on the box itself, or on the pages, is not
-    /// outside them.
+    /// So is the text being typed in a text box, or in a form field: a finger on the box or the field's
+    /// editor itself, or on the pages, is not outside them.
     func fingerWentDown(on view: UIView?) {
-        guard let host, model.hasPendingInk || textBoxes.textEditor != nil else { return }
+        guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
         if let view, view.isDescendant(of: host.scrollView) { return }
         model.commitPendingInk()
     }

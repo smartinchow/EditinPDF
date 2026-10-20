@@ -174,4 +174,16 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.annotationKindName(.ink), "Drawing")
         XCTAssertEqual(Strings.annotationKindName(.other(subtype: "Polygon")), "Comment")
     }
+
+    func testFormWording() {
+        XCTAssertEqual(Strings.formHint, "Tap a field to fill it in.")
+        XCTAssertEqual(Strings.formNotAllowed, "This document doesn't allow filling in its form.")
+        XCTAssertEqual(Strings.formTruncated, "Only the first fields of this large form can be filled in.")
+        XCTAssertEqual(Strings.chooseOption, "Choose")
+        XCTAssertEqual(Strings.otherChoice, "Other…")
+        XCTAssertEqual(Strings.fieldChecked, "checked")
+        XCTAssertEqual(Strings.fieldUnchecked, "unchecked")
+        XCTAssertEqual(Strings.radioButtonLabel(field: "size", option: "L"), "size, L")
+        XCTAssertEqual(Strings.actionFillField, "Fill Form")
+    }
 }

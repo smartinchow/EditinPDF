@@ -27,11 +27,12 @@ final class TextBoxInteraction: NSObject {
     /// Pictures of text boxes on their way into the document, over their page, each until the page has
     /// been drawn again with it (or at once when it is refused).
     private(set) var textPreviews: [UIView] = []
-    /// The scroll view's bottom inset before the keyboard came up over a box being typed in, to put
-    /// back when the box goes; nil while the keyboard has not moved it.
-    private var insetBeforeKeyboard: CGFloat?
-    /// How far the keyboard reaches up over the scroll view, in its points; 0 while it is down.
-    private var keyboardCover: CGFloat = 0
+    /// Keeps the box being typed in clear of the keyboard. The palette's bar and the page indicator
+    /// stand over the keyboard on a compact width; the page indicator alone on a regular one.
+    private lazy var keyboard = KeyboardAvoidance(
+        scrollView: host?.scrollView,
+        editedView: { [weak self] in self?.textEditor },
+        clearance: { [weak self] in self?.host?.traitCollection.horizontalSizeClass == .regular ? 48 : 116 })
 
     init(host: PageScrollViewController, model: DocumentModel) {
         self.host = host
@@ -41,10 +42,7 @@ final class TextBoxInteraction: NSObject {
 
     /// Listens to the keyboard coming, moving and going.
     func install() {
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)),
-                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)),
-                                               name: UIResponder.keyboardWillHideNotification, object: nil)
+        keyboard.install()
     }
 
     /// Puts a box to type in on `page` (`pageSize` in size, as shown) at `point` (view space; moved in
@@ -120,7 +118,7 @@ final class TextBoxInteraction: NSObject {
         editor.resignFirstResponder()
         let preview = committed.isEmpty || !changes ? nil : showPreview(of: editor)
         editor.removeFromSuperview()
-        keyboardInsetDidChange()
+        keyboard.editingDidChange()
         let made: Task<Bool, Never>
         if let existing = editor.existing {
             guard changes else { return nil }
@@ -165,69 +163,6 @@ final class TextBoxInteraction: NSObject {
         preview.removeFromSuperview()
         textPreviews.removeAll { $0 === preview }
     }
-
-    // MARK: The keyboard
-
-    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
-        guard let host, let window = host.scrollView.window,
-              let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        let keyboard = host.scrollView.convert(window.convert(end, from: window.screen.coordinateSpace), from: window)
-        keyboardCover = max(0, host.scrollView.bounds.maxY - keyboard.minY)
-        keyboardInsetDidChange()
-        revealTextEditor()
-    }
-
-    @objc private func keyboardWillHide(_ notification: Notification) {
-        keyboardCover = 0
-        keyboardInsetDidChange()
-    }
-
-    /// How much more than the keyboard covers the bottom of the view has over it while a box is typed
-    /// in, in points: the palette's bar and the page indicator stand over the keyboard on a compact
-    /// width; the page indicator alone on a regular one.
-    private var keyboardClearance: CGFloat {
-        host?.traitCollection.horizontalSizeClass == .regular ? 48 : 116
-    }
-
-    /// While a box is typed in and the keyboard is up, the scroll view's bottom inset leaves room for
-    /// the keyboard (beyond what the safe area already does), so the pages can scroll the box clear of
-    /// it, down to the end of the document; otherwise the inset is put back.
-    private func keyboardInsetDidChange() {
-        guard let scrollView = host?.scrollView else { return }
-        if textEditor != nil, keyboardCover > 0 {
-            let before = insetBeforeKeyboard ?? scrollView.contentInset.bottom
-            insetBeforeKeyboard = before
-            let wanted = max(before, keyboardCover + keyboardClearance - scrollView.safeAreaInsets.bottom)
-            if scrollView.contentInset.bottom != wanted { scrollView.contentInset.bottom = wanted }
-        } else if let before = insetBeforeKeyboard {
-            insetBeforeKeyboard = nil
-            if scrollView.contentInset.bottom != before { scrollView.contentInset.bottom = before }
-        }
-    }
-
-    /// Scrolls the pages, if need be, so the box being typed in is in the part of the view the bars and
-    /// the keyboard leave: its bottom, where the text grows, without scrolling its top out of view.
-    private func revealTextEditor() {
-        guard let scrollView = host?.scrollView, let editor = textEditor, editor.window != nil else { return }
-        let visible = scrollView.bounds.inset(by: scrollView.adjustedContentInset)
-        let box = editor.frame.insetBy(dx: -8, dy: -8)
-        var offset = scrollView.contentOffset
-        if box.maxY > visible.maxY {
-            offset.y += max(0, min(box.maxY - visible.maxY, box.minY - visible.minY))
-        } else if box.minY < visible.minY {
-            offset.y -= visible.minY - box.minY
-        }
-        if box.maxX > visible.maxX {
-            offset.x += max(0, min(box.maxX - visible.maxX, box.minX - visible.minX))
-        } else if box.minX < visible.minX {
-            offset.x -= visible.minX - box.minX
-        }
-        let insets = scrollView.adjustedContentInset
-        let highest = CGPoint(x: max(-insets.left, scrollView.contentSize.width + insets.right - scrollView.bounds.width),
-                              y: max(-insets.top, scrollView.contentSize.height + insets.bottom - scrollView.bounds.height))
-        offset = CGPoint(x: min(max(offset.x, -insets.left), highest.x), y: min(max(offset.y, -insets.top), highest.y))
-        if offset != scrollView.contentOffset { scrollView.setContentOffset(offset, animated: true) }
-    }
 }
 
 // MARK: - UITextViewDelegate
@@ -239,7 +174,7 @@ extension TextBoxInteraction: UITextViewDelegate {
         guard let editor = textView as? InlineTextEditor, editor === textEditor else { return }
         model.pendingTextDidChange(editor.isWaiting)
         layoutTextEditor()
-        revealTextEditor()
+        keyboard.reveal()
     }
 
     /// Editing ended (the keyboard put away, another field taking it): the text is added.

@@ -221,6 +221,97 @@ pub fn form_doc() -> Vec<u8> {
     )
 }
 
+/// `form_doc` whose security settings forbid any change, form filling included: it opens without a
+/// password, and its permissions (owner) password is "owner". The app's tests check that its fields
+/// are shown and not filled in, and say why.
+///
+/// Like every encrypted fixture its bytes differ from run to run (the engine draws its keys and salts
+/// from OS randomness).
+pub fn restricted_form_doc() -> Vec<u8> {
+    let protection = Protection {
+        permissions_password: Some("owner".to_owned()),
+        changes: Changes::None,
+        ..Protection::default()
+    };
+    edited(form_doc(), Edit::Protect(protection))
+}
+
+/// Two US Letter pages (unturned) with the kinds of fields `form_doc` has not, all empty:
+///
+/// - page 0: `zip`, a one-line text field taking at most 5 characters, user `[72 700 200 720]`;
+///   `city`, a combo box that also takes typed text, offering "Paris" and "Rome", `[300 700 500 720]`;
+///   `toppings`, a list box allowing several choices, offering "Cheese", "Olives" and "Peppers",
+///   `[72 560 250 640]`; `submit`, a push button, `[300 600 400 630]`; `sign`, a signature field,
+///   `[300 500 500 560]`; and `notes`, a text field of several lines near the bottom of the page,
+///   `[72 80 540 160]`, where the keyboard comes up over it;
+/// - page 1: `second`, a one-line text field, `[72 700 300 720]`.
+pub fn form_kinds_doc() -> Vec<u8> {
+    let field = |page: usize, rect: [f64; 4], kind: NewField, name: &str| Edit::AddField {
+        page,
+        rect,
+        kind,
+        name: Some(name.to_owned()),
+    };
+    let options = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+    edited_all(
+        text_doc(&["Zip:\n\nToppings:\n\nNotes:", "Page two"]),
+        vec![
+            field(
+                0,
+                [72.0, 700.0, 200.0, 720.0],
+                NewField::Text { multiline: false },
+                "zip",
+            ),
+            Edit::SetFieldProps {
+                name: "zip".to_owned(),
+                props: Box::new(FieldProps {
+                    max_len: Some(Some(5)),
+                    ..FieldProps::default()
+                }),
+            },
+            field(
+                0,
+                [300.0, 700.0, 500.0, 720.0],
+                NewField::Combo {
+                    options: options(&["Paris", "Rome"]),
+                    editable: true,
+                },
+                "city",
+            ),
+            field(
+                0,
+                [72.0, 560.0, 250.0, 640.0],
+                NewField::List {
+                    options: options(&["Cheese", "Olives", "Peppers"]),
+                    multi: true,
+                },
+                "toppings",
+            ),
+            field(
+                0,
+                [300.0, 600.0, 400.0, 630.0],
+                NewField::Button {
+                    caption: "Submit".to_owned(),
+                },
+                "submit",
+            ),
+            field(0, [300.0, 500.0, 500.0, 560.0], NewField::Signature, "sign"),
+            field(
+                0,
+                [72.0, 80.0, 540.0, 160.0],
+                NewField::Text { multiline: true },
+                "notes",
+            ),
+            field(
+                1,
+                [72.0, 700.0, 300.0, 720.0],
+                NewField::Text { multiline: false },
+                "second",
+            ),
+        ],
+    )
+}
+
 /// A one-page document (US Letter, unturned) reading "Marked page", with two comments: a highlight
 /// over that line (user space `[72 706.8 136.2 717.8]`) and a sticky note whose icon's top-left
 /// corner is at user `(72, 650)`, reading "Check this".
@@ -403,6 +494,17 @@ pub fn locked_markup_doc() -> Vec<u8> {
         ],
         &[],
     )
+}
+
+/// `hand_form_doc` with one drop-down list, `big`, offering 1,001 options (`o0` … `o1000`): one more
+/// than the bridge lists, so the listing says it left something out. Small, unlike a form of 5,001
+/// fields: the app's tests check that it says so.
+pub fn truncated_form_doc() -> Vec<u8> {
+    let options: Vec<String> = (0..1_001).map(|i| format!("(o{i})")).collect();
+    hand_form_doc(&[format!(
+        "/FT /Ch /Ff 131072 /T (big) /Opt [{}]",
+        options.join(" ")
+    )])
 }
 
 /// `hand_form_doc` with `count` empty text fields, `f0`, `f1`, … all at the same place.

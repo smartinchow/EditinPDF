@@ -40,6 +40,15 @@ final class PageContentView: UIView {
     }
 }
 
+/// The scroll view of the pages. A finger that goes down on a form field's widget (a button, in reading
+/// mode) and moves scrolls the pages, as it does from anywhere else on them: by default a scroll view
+/// leaves a touch that began on a control to the control.
+final class PagesScrollView: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        view is FormWidgetButton || super.touchesShouldCancel(in: view)
+    }
+}
+
 /// The open document's pages, one below the other, scrolling and zooming.
 struct PageScrollView: UIViewControllerRepresentable {
     let model: DocumentModel
@@ -65,6 +74,9 @@ struct PageScrollView: UIViewControllerRepresentable {
     /// The annotation selected with Select, or picked in the Comments list: its page and its box there
     /// (`DocumentModel.selectedAnnotationPlace`), passed in for its page to outline it.
     var selectedAnnotation: PageRect?
+    /// The document's form and whether it may be filled in (`DocumentModel.formIndex`, `canFillForms`),
+    /// passed in, as `lastChange` is, for the form's overlays.
+    var forms = FormDisplay.empty
 
     /// The screen is going: strokes drawn with Draw and waiting are added (the canvas goes with it).
     static func dismantleUIViewController(_ controller: PageScrollViewController, coordinator: ()) {
@@ -83,6 +95,7 @@ struct PageScrollView: UIViewControllerRepresentable {
         // A change the controller has followed already is ignored, so handing the same one over with
         // every update is harmless.
         if let lastChange { controller.apply(lastChange) }
+        controller.forms = forms
         controller.selectedAnnotation = selectedAnnotation
         guard scrollTarget != nil || revealRect != nil else { return }
         let target = scrollTarget
@@ -111,7 +124,8 @@ struct PageScrollView: UIViewControllerRepresentable {
 ///
 /// The reader can select text on the pages: a long press, then handles to drag, then Copy or a mark. The
 /// gestures and the handles are `SelectionInteraction`'s, and a Markup tool's drag `MarkupInteraction`'s; what is selected arrives as `selection`, to be drawn by
-/// the page views' overlays like the search hits are.
+/// the page views' overlays like the search hits are. In reading mode the form's widgets on the pages
+/// that have a view are buttons that fill the form in (`FormInteraction`).
 final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// How many pages above and below those in view keep a view, so they are drawn before they
     /// scroll in.
@@ -121,7 +135,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// sizes are rounded to device pixels along the way: a point at most, on a 1x screen.
     static let endTolerance: CGFloat = 1
 
-    let scrollView = UIScrollView()
+    let scrollView: UIScrollView = PagesScrollView()
     /// The view that zooms. It holds the page views, laid out at zoom 1, and Draw's canvas over one.
     let contentView = PageContentView()
 
@@ -166,19 +180,28 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     let model: DocumentModel
     /// The Markup tool picked: when it changes, the text of the pages in view is asked for, for a tool
     /// that marks text (`MarkupInteraction.prefetchText`), and the gestures are set up for it: with
-    /// Draw, one finger draws and two scroll (`MarkupInteraction.toolDidChange`).
+    /// Draw, one finger draws and two scroll (`MarkupInteraction.toolDidChange`). The form's overlays
+    /// are shown in reading mode only (`FormInteraction.toolDidChange`).
     var markupTool: Tool? {
         didSet {
             guard markupTool != oldValue else { return }
             markupInteraction.toolDidChange()
+            formInteraction.toolDidChange()
             prefetchMarkupText()
         }
+    }
+    /// The document's form, and whether it may be filled in: the overlays over the pages' widgets are
+    /// made again when it changes (`FormInteraction.formsDidChange`).
+    var forms = FormDisplay.empty {
+        didSet { if forms != oldValue { formInteraction.formsDidChange() } }
     }
     /// The long press, the tap, the handles and the menu of text selection.
     private(set) lazy var selectionInteraction = SelectionInteraction(host: self)
     /// What a finger does with a Markup tool picked: drags out text to highlight, underline or strike
     /// through. It decides which of its gestures and the scroll view's has a finger.
     private(set) lazy var markupInteraction = MarkupInteraction(host: self, model: model)
+    /// The form's overlays in reading mode, and the field being typed in.
+    private(set) lazy var formInteraction = FormInteraction(host: self, model: model)
     /// Nil until the view has a width.
     private var layout: PageLayout?
     private var pageViews: [Int: PageView] = [:]
@@ -227,6 +250,7 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         view = scrollView
         selectionInteraction.install()
         markupInteraction.install()
+        formInteraction.install()
     }
 
     /// On screen, the window tells the markup of every finger going down, outside the pages too
@@ -452,8 +476,10 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     /// the text was on screen; the handles themselves are put at the selection's new place.
     private func relayout(fitWidth: CGFloat, placing placement: Placement) {
         selectionInteraction.layoutWillChange()
-        // Strokes drawn with Draw are added for the layout they were drawn on, before it goes.
+        // Strokes drawn with Draw are added for the layout they were drawn on, before it goes; so is the
+        // text typed in a form field.
         markupInteraction.layoutWillChange()
+        formInteraction.layoutWillChange()
         let position = lastPosition
         // Read before the zoom changes, which moves the current page.
         let currentPage = model.currentPage
@@ -549,13 +575,16 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         if let page = readerPage(in: layout), page != model.currentPage {
             model.currentPage = page
         }
+        // The form's overlays follow the pages that have a view.
+        formInteraction.pagesDidChange()
         if currentFitWidth() == layout.fitWidth {
             lastPosition = ReadingPosition(visibleArea: visibleArea(), zoom: scrollView.zoomScale, in: layout)
         }
         // The zoom and the layout move the selection on screen, and its handles with it; and the box a
-        // text box is typed in.
+        // text box is typed in, and a form field's editor.
         selectionInteraction.layoutHandles()
         markupInteraction.textBoxes.layoutTextEditor()
+        formInteraction.layoutEditor()
         // With a text tool picked, whether a finger is on text is known before it goes down.
         markupInteraction.prefetchText(onPages: inView)
     }

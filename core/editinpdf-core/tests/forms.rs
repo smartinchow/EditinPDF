@@ -565,3 +565,117 @@ fn check_boxes_with_odd_appearances_read_as_they_are_shown() {
     assert_eq!(no_as.widgets[0].on_state.as_deref(), Some("Yes"));
     assert!(!no_as.widgets[0].is_on);
 }
+
+/// The premise of the app's tests that open `form-kinds.pdf`: which fields it has, where, and of
+/// what kind.
+#[test]
+fn the_form_kinds_fixture_reads_as_the_app_tests_expect() {
+    let doc = PdfDocument::open(fixtures::form_kinds_doc(), None).unwrap();
+    assert_eq!(doc.page_count(), 2);
+    let names: Vec<String> = doc.form_fields().into_iter().map(|f| f.name).collect();
+    assert_eq!(
+        names,
+        [
+            "zip", "city", "toppings", "submit", "sign", "notes", "second"
+        ]
+    );
+    let zip = field(&doc, "zip");
+    assert_eq!(
+        (zip.kind, zip.max_len, zip.multiline),
+        (FormFieldKind::Text, Some(5), false)
+    );
+    let city = field(&doc, "city");
+    assert_eq!(city.kind, FormFieldKind::Combo);
+    assert!(city.editable_choice && !city.multi_select);
+    assert_eq!(
+        city.options
+            .iter()
+            .map(|o| o.display.as_str())
+            .collect::<Vec<_>>(),
+        ["Paris", "Rome"]
+    );
+    let toppings = field(&doc, "toppings");
+    assert_eq!(toppings.kind, FormFieldKind::List);
+    assert!(toppings.multi_select && !toppings.editable_choice);
+    assert_eq!(toppings.options.len(), 3);
+    assert_eq!(field(&doc, "submit").kind, FormFieldKind::PushButton);
+    assert_eq!(field(&doc, "sign").kind, FormFieldKind::Signature);
+    let notes = field(&doc, "notes");
+    assert!(notes.multiline);
+    // 792 - 160 = 632: near the bottom of the page.
+    assert_rect_close(
+        &notes.widgets[0].rect,
+        &Rect {
+            x: 72.0,
+            y: 632.0,
+            width: 468.0,
+            height: 80.0,
+        },
+        1.0,
+    );
+    assert_eq!(field(&doc, "second").widgets[0].page, 1);
+    assert!(doc.capabilities().can_fill_forms);
+
+    // Several choices of a list box, and a typed one of a combo box, are taken and kept.
+    doc.apply(
+        Edit::SetFieldValue {
+            name: "toppings".into(),
+            value: FieldValue::Choice {
+                values: vec!["Cheese".into(), "Peppers".into()],
+            },
+        },
+        0,
+    )
+    .unwrap();
+    doc.apply(
+        Edit::SetFieldValue {
+            name: "city".into(),
+            value: FieldValue::Choice {
+                values: vec!["Oslo".into()],
+            },
+        },
+        1,
+    )
+    .unwrap();
+    let back = reopen(doc.save(SaveMode::Incremental).unwrap(), None);
+    assert_eq!(field(&back, "toppings").value, vec!["Cheese", "Peppers"]);
+    assert_eq!(field(&back, "city").value, vec!["Oslo"]);
+}
+
+/// The premise of the app's tests that open `restricted-form.pdf`: it lists the form's fields and
+/// refuses to fill them in, for its own reason.
+#[test]
+fn the_restricted_form_fixture_lists_its_fields_and_forbids_filling() {
+    let doc = PdfDocument::open(fixtures::restricted_form_doc(), None).unwrap();
+    let caps = doc.capabilities();
+    assert!(!caps.can_fill_forms && caps.is_encrypted);
+    assert_eq!(doc.form_fields().len(), 5);
+    let result = doc.apply(
+        Edit::SetFieldValue {
+            name: "name".into(),
+            value: text("x"),
+        },
+        0,
+    );
+    assert!(
+        matches!(result, Err(EditError::NotPermitted { .. })),
+        "{result:?}"
+    );
+}
+
+/// The premise of the app's tests that open `truncated-form.pdf`: its one field is listed with the
+/// first 1,000 of its options, and the listing says it left some out.
+#[test]
+fn the_truncated_form_fixture_is_listed_short_and_says_so() {
+    let doc = PdfDocument::open(fixtures::truncated_form_doc(), None).unwrap();
+    let fields = doc.form_fields();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0].kind, FormFieldKind::Combo);
+    assert_eq!(fields[0].options.len(), 1_000);
+    assert!(doc.form_fields_truncated());
+    assert!(
+        !PdfDocument::open(fixtures::form_doc(), None)
+            .unwrap()
+            .form_fields_truncated()
+    );
+}

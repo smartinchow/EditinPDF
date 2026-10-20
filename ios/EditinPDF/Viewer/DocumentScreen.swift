@@ -6,6 +6,11 @@ import SwiftUI
 /// between them) over the pages. In Markup mode the tool palette stands over the pages too: above
 /// the page indicator on a compact width, at the leading edge on a regular one. The pages and the thumbnails follow every change, undo and redo.
 ///
+/// In reading mode a form's fields are filled in on the pages (`FormInteraction`). When the document
+/// has a form that may be filled in, a hint says so once (`Strings.formHint`), with a note when the
+/// form is larger than is listed (`Strings.formTruncated`); a list box of several choices opens its
+/// options in a sheet (`ChoiceSheet`).
+///
 /// A document that is locked has no pages to show yet: the prompt for its password (`PasswordSheet`)
 /// comes up over a screen that says it is locked. Cancel puts the prompt away and leaves that screen,
 /// whose Enter Password button brings the prompt back. One that could not be read has an alert saying
@@ -60,6 +65,11 @@ struct DocumentScreen: View {
     /// failed for good, so without this the alert would be put up again as soon as it went away,
     /// while the document is closing (UIKit logs an attempt to present on a view that is leaving).
     @State private var failureAnswered = false
+    /// Whether the hint about the form (`Strings.formHint`) has been shown since the document opened:
+    /// it is shown once.
+    @State private var formHintShown = false
+    /// Whether the hint about the form is up.
+    @State private var showsFormHint = false
 
     /// What the thumbnails sheet (and Organize Pages) is shown with. The store travels in the item the sheet is presented
     /// for, instead of the sheet's content reading it from this view's state: done that way the
@@ -167,11 +177,17 @@ struct DocumentScreen: View {
         Binding(get: { model.failure }, set: { model.failure = $0 })
     }
 
+    /// The list box the sheet of options is up for, while it is.
+    private var choiceDraft: Binding<ChoiceDraft?> {
+        Binding(get: { model.choiceDraft }, set: { model.choiceDraft = $0 })
+    }
+
     /// Whether the alert about a change that was not made is up: while the model has one to show, and
-    /// neither the note sheet nor the Comments list, which show their own, is up.
+    /// neither the note sheet nor the Comments list, which show their own, nor the sheet of a list's
+    /// options, is up.
     private var showsEditFailure: Binding<Bool> {
         Binding(
-            get: { model.failure != nil && model.noteDraft == nil && !showsComments },
+            get: { model.failure != nil && model.noteDraft == nil && !showsComments && model.choiceDraft == nil },
             set: { isShown in if !isShown { model.failure = nil } }
         )
     }
@@ -190,7 +206,8 @@ struct DocumentScreen: View {
                            selection: model.selection?.pageRects,
                            lastChange: model.lastChange,
                            tool: model.tool,
-                           selectedAnnotation: model.selectedAnnotationPlace)
+                           selectedAnnotation: model.selectedAnnotationPlace,
+                           forms: FormDisplay(index: model.formIndex, canFill: model.canFillForms))
                 .ignoresSafeArea()
                 // An overlay, not a bar: the scroll view's insets do not change when it appears.
                 .overlay(alignment: .bottom) {
@@ -211,6 +228,16 @@ struct DocumentScreen: View {
                             .transition(.move(edge: .leading).combined(with: .opacity))
                     }
                 }
+                // Once, when a document with a form that may be filled in opens, in reading mode: how to
+                // fill it in, and that only its first fields can be when it has more than are listed.
+                .overlay(alignment: .top) {
+                    if showsFormHint, model.tool == nil {
+                        formHint
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+                .task(id: hasFormToFill) { await showFormHintOnce() }
+                .animation(.snappy, value: showsFormHint)
                 .animation(.snappy, value: model.tool == nil)
                 .animation(.snappy, value: paletteLayout)
                 // Each button is a Label, title and icon: the bar shows the icon, and when the bar has no
@@ -257,6 +284,15 @@ struct DocumentScreen: View {
                 .sheet(isPresented: $showsComments) {
                     CommentsSheet(model: model, failure: editFailure) { row in jump(to: row) }
                 }
+                // A tap on a list box of several choices opens its options here: Done fills it with those
+                // checked, Cancel leaves it as it was.
+                .sheet(item: choiceDraft) { draft in
+                    ChoiceSheet(draft: draft, save: { values in
+                        await model.saveChoice(draft, choosing: values)
+                    }, cancel: {
+                        model.choiceDraft = nil
+                    })
+                }
                 // A tap with Note opens its note here: Save adds or changes it, and the sheet goes once it
                 // has; a refusal says why over the sheet, which stays with what was written. Cancel leaves
                 // the note as it was.
@@ -301,6 +337,41 @@ struct DocumentScreen: View {
             Color(.systemBackground)
                 .ignoresSafeArea()
         }
+    }
+
+    /// Whether the document has a form that may be filled in: the hint about it is shown once then.
+    private var hasFormToFill: Bool {
+        !model.formIndex.isEmpty && model.canFillForms
+    }
+
+    /// Shows the hint about the form for a few seconds, the first time the document has a form that may
+    /// be filled in.
+    private func showFormHintOnce() async {
+        guard hasFormToFill, !formHintShown else { return }
+        formHintShown = true
+        showsFormHint = true
+        try? await Task.sleep(for: .seconds(6))
+        showsFormHint = false
+    }
+
+    /// The hint about the form, and the note about a form larger than is listed; a tap puts it away.
+    private var formHint: some View {
+        VStack(spacing: 2) {
+            Text(Strings.formHint)
+                .accessibilityIdentifier("formHint")
+            if model.formFieldsTruncated {
+                Text(Strings.formTruncated)
+                    .accessibilityIdentifier("formTruncatedNote")
+            }
+        }
+        .font(.footnote)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.top, 8)
+        .padding(.horizontal, 16)
+        .onTapGesture { showsFormHint = false }
     }
 
     /// The page the reader is on and how many there are, over the bottom of the pages. Not shown
@@ -363,29 +434,30 @@ struct DocumentScreen: View {
     }
 
     /// Takes back the last change. Changes stay tappable while one is being made: the model makes
-    /// them in order. Strokes drawn with Draw, or text typed in a text box, waiting count as a change:
-    /// Undo adds them, then takes them back.
+    /// them in order. Strokes drawn with Draw, or text typed in a text box or a form field, waiting
+    /// count as a change: Undo adds them, then takes them back.
     private var undoButton: some View {
         Button {
             model.undo()
         } label: {
             Label(Strings.undo, systemImage: "arrow.uturn.backward")
         }
-        .disabled(!canUndo && !model.hasPendingMarkup)
+        .disabled(!canUndo && !model.hasPendingEdit)
         // ⌘Z on a hardware keyboard comes here, so strokes waiting are added first, as with a tap.
         .keyboardShortcut("z", modifiers: .command)
         .accessibilityIdentifier("undoButton")
     }
 
     /// Makes again the change last taken back. Not while strokes drawn with Draw, or text typed in a
-    /// text box, are waiting: they are a change after it, and adding them leaves nothing to redo.
+    /// text box or a form field, are waiting: they are a change after it, and adding them leaves
+    /// nothing to redo.
     private var redoButton: some View {
         Button {
             model.redo()
         } label: {
             Label(Strings.redo, systemImage: "arrow.uturn.forward")
         }
-        .disabled(!canRedo || model.hasPendingMarkup)
+        .disabled(!canRedo || model.hasPendingEdit)
         .keyboardShortcut("z", modifiers: [.command, .shift])
         .accessibilityIdentifier("redoButton")
     }

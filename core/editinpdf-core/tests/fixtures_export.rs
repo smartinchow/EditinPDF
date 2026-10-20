@@ -1,17 +1,21 @@
 //! Writes the fixture documents that the apps' own tests need as files, so they are checked in
 //! next to those tests rather than rebuilt there: the Swift package's tests open `hello.pdf`; the
 //! app's unit tests open `hello.pdf` too, `rotated.pdf` (one page turned by `/Rotate 90`),
-//! `form.pdf` (a page of form fields), `annotated.pdf` (a page with a highlight and a note) and
-//! `locked-markup.pdf` (a rectangle and a text box the file locks); and
+//! `form.pdf` (a page of form fields), `form-kinds.pdf` (the other kinds of field),
+//! `restricted-form.pdf` (`form.pdf`, not to be filled in), `truncated-form.pdf` (a drop-down list of
+//! more options than are listed), `annotated.pdf` (a page with a highlight
+//! and a note) and `locked-markup.pdf` (a rectangle and a text box the file locks); and
 //! the app's UI tests open `sample.pdf` (three readable pages), `locked.pdf` (one page behind a
-//! password), `garbage.pdf` (not a PDF at all), `form.pdf` and `rotated.pdf`.
+//! password), `garbage.pdf` (not a PDF at all), `form.pdf`, `form-kinds.pdf`, `truncated-form.pdf`
+//! and `rotated.pdf`.
 //!
 //! These tests are ignored, so a normal `cargo test` never touches the working tree. Run them
 //! with `cargo test -p editinpdf-core --test fixtures_export -- --ignored`, from anywhere in the
 //! workspace, and commit what changed. The fixtures are built with a fixed clock, so the same
-//! engine writes the same bytes, with two exceptions, which every run writes differently
-//! (`git checkout` them if the run was for another file): `locked.pdf` is encrypted, and the engine
-//! draws its encryption keys and salts from OS randomness; and `annotated.pdf`'s comments carry
+//! engine writes the same bytes, with some exceptions, which every run writes differently
+//! (`git checkout` them if the run was for another file): `locked.pdf`, `owner-only.pdf` and
+//! `restricted-form.pdf` are encrypted, and the engine draws its encryption keys and salts from OS
+//! randomness; and `annotated.pdf`'s comments carry
 //! ids (`/NM`) that the engine mixes the time of day into, fixed clock or not.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -62,6 +66,24 @@ fn dump_fixtures() {
     // group, a combo box and a read-only text field, all empty): the app's tests list and fill them.
     let form = fixtures::form_doc();
     fs::write(dir.join("form.pdf"), &form).unwrap();
+    // Two pages with the other kinds of field (`fixtures::form_kinds_doc`: a text field taking at
+    // most 5 characters, a combo box that takes typed text, a list box of several choices, a push
+    // button, a signature field, a text field of several lines near the bottom of page 0, and a text
+    // field on page 1): the app's tests decide what a tap on each does, and fill them in.
+    let form_kinds = fixtures::form_kinds_doc();
+    fs::write(dir.join("form-kinds.pdf"), &form_kinds).unwrap();
+    // The form of `form.pdf`, whose security settings forbid filling it in
+    // (`fixtures::restricted_form_doc`; encrypted, so its bytes differ from run to run): the app's
+    // tests check that its fields are shown, and that a tap says why they can't be filled in.
+    fs::write(
+        dir.join("restricted-form.pdf"),
+        fixtures::restricted_form_doc(),
+    )
+    .unwrap();
+    // A drop-down list of more options than the bridge lists (`fixtures::truncated_form_doc`): the
+    // app's tests check that the model says the form is listed short, and the screen's note.
+    let truncated_form = fixtures::truncated_form_doc();
+    fs::write(dir.join("truncated-form.pdf"), &truncated_form).unwrap();
     // One page reading "Marked page" with a highlight over that line and a sticky note
     // (`fixtures::annotated_doc`): the app's tests list, select and delete comments.
     fs::write(dir.join("annotated.pdf"), fixtures::annotated_doc()).unwrap();
@@ -81,6 +103,11 @@ fn dump_fixtures() {
     fs::create_dir_all(&dir).unwrap();
     // The same form: the UI tests fill it in.
     fs::write(dir.join("form.pdf"), &form).unwrap();
+    // The same other kinds of field: filled in by hand in the simulator (`-openFixture
+    // form-kinds.pdf`), where the keyboard comes up over the field near the bottom of the page.
+    fs::write(dir.join("form-kinds.pdf"), &form_kinds).unwrap();
+    // The same list of too many options: the UI tests read the note that says the form is listed short.
+    fs::write(dir.join("truncated-form.pdf"), &truncated_form).unwrap();
     // The same turned page: text is marked on it by hand in the simulator (`-openFixture rotated.pdf`).
     fs::write(dir.join("rotated.pdf"), &rotated).unwrap();
     // Three pages, each saying which it is: the viewer is scrolled, zoomed and searched through it.

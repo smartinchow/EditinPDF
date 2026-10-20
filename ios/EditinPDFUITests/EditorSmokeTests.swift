@@ -572,6 +572,197 @@ final class EditorSmokeTests: XCTestCase {
                       "Undo did not bring the rectangle back")
     }
 
+    /// `form.pdf`: the hint says how to fill the form in; a tap on the name field brings up its editor,
+    /// "Ada" and Return fill it in, and a tap on the check box turns it on. Closed with Back and opened
+    /// again, the field reads "Ada" and the box is checked (read off the widgets' accessibility values).
+    func testFillAFormAndToggleACheckbox() {
+        let app = launchAndOpen("form.pdf", as: "form-filled.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        let hint = app.staticTexts["formHint"]
+        XCTAssertTrue(hint.waitForExistence(timeout: 10), "no hint over a form")
+        hint.tap()
+        XCTAssertTrue(hint.waitForNonExistence(timeout: 5), "a tap did not put the hint away")
+        let name = app.buttons["formField-name-0"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10), "no overlay over the name field")
+        XCTAssertEqual(name.value as? String, "")
+        name.tap()
+        let editor = app.textFields["formFieldEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "no editor for the name field")
+        dismissKeyboardIntroduction(in: app)
+        editor.typeText("Ada\n")
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Return did not fill the field in")
+        let agree = app.buttons["formField-agree-0"]
+        XCTAssertEqual(agree.value as? String, "unchecked")
+        agree.tap()
+        expect(agree, toHaveValue: "checked", within: 5)
+        expect(app.buttons["formField-name-0"], toHaveValue: "Ada", within: 5)
+        XCTAssertTrue(app.buttons["undoButton"].isEnabled)
+        attach(app, "form-filled")
+
+        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
+        back.tap()
+        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        sleep(2)
+        // A fresh launch, without staging the form again: the file as saved.
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        openFromBrowser("form-filled.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        expect(app.buttons["formField-name-0"], toHaveValue: "Ada", within: 10)
+        expect(app.buttons["formField-agree-0"], toHaveValue: "checked", within: 5)
+        attach(app, "form-reopened")
+    }
+
+    /// `form-kinds.pdf`: the field of several lines near the bottom of its page is scrolled clear of the
+    /// keyboard while it is typed in, upright and on the device's side.
+    func testTheKeyboardDoesNotCoverTheFieldBeingFilled() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let app = launchAndOpen("form-kinds.pdf")
+            expect(app.staticTexts["pageIndicator"], toRead: "1 / 2", within: 10)
+            let notes = app.buttons["formField-notes-0"]
+            XCTAssertTrue(notes.waitForExistence(timeout: 10), "no overlay over the notes field")
+            // On its side the field is below the screen: the pages are dragged up to it, a little at a
+            // time, held at the end so they do not fly on.
+            for _ in 0..<8 where notes.frame.midY > app.frame.maxY - 100 {
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -120)),
+                            withVelocity: .slow, thenHoldForDuration: 0.3)
+            }
+            XCTAssertTrue(notes.isHittable, "the notes field never came into view (\(orientation.rawValue))")
+            notes.tap()
+            let editor = app.textViews["formFieldEditor"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 5), "no editor for the notes field")
+            dismissKeyboardIntroduction(in: app)
+            editor.typeText("Line one\nLine two")
+            let keyboard = app.keyboards.firstMatch
+            if keyboard.waitForExistence(timeout: 5) {
+                sleep(1)
+                XCTAssertLessThanOrEqual(editor.frame.maxY, keyboard.frame.minY + 1,
+                                         "the keyboard covers the field being typed in (\(orientation.rawValue))")
+                XCTAssertGreaterThanOrEqual(editor.frame.minY, app.navigationBars.firstMatch.frame.maxY - 1,
+                                            "the field went under the navigation bar (\(orientation.rawValue))")
+            }
+            attach(app, "form-keyboard-\(orientation == .portrait ? "portrait" : "landscape")")
+            app.terminate()
+        }
+    }
+
+    /// `form.pdf`: text typed in a field and left there, the document closed with Back, is in the file.
+    func testTextLeftInAFieldIsKeptWhenTheDocumentIsClosed() {
+        let app = launchAndOpen("form.pdf", as: "form-closed.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        let hint = app.staticTexts["formHint"]
+        if hint.waitForExistence(timeout: 5) { hint.tap() }
+        let name = app.buttons["formField-name-0"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10), "no overlay over the name field")
+        name.tap()
+        let editor = app.textFields["formFieldEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "no editor for the name field")
+        dismissKeyboardIntroduction(in: app)
+        editor.typeText("Kept")
+        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
+        back.tap()
+        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        sleep(2)
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        openFromBrowser("form-closed.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        expect(app.buttons["formField-name-0"], toHaveValue: "Kept", within: 10)
+    }
+
+    /// `truncated-form.pdf`, a drop-down list of more options than are listed: the hint comes with the
+    /// note that only the first fields can be filled in.
+    func testAFormListedShortSaysSo() {
+        let app = launchAndOpen("truncated-form.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        XCTAssertTrue(app.staticTexts["formHint"].waitForExistence(timeout: 10), "no hint over a form")
+        let note = app.staticTexts["formTruncatedNote"]
+        XCTAssertTrue(note.exists, "no note that the form is listed short")
+        XCTAssertEqual(note.label, "Only the first fields of this large form can be filled in.")
+        attach(app, "form-truncated-note")
+    }
+
+    /// A drop-down list's menu and a list box's sheet, as UIKit shows them. `form.pdf`: the colour is
+    /// chosen from its menu at the widget. `form-kinds.pdf`: the city is chosen, then typed with Other…
+    /// (the editor starts with the city chosen); two toppings are checked in the sheet, and Done fills
+    /// the field once.
+    func testChoosingFromAMenuAndFromASheet() {
+        let app = launchAndOpen("form.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
+        let hint = app.staticTexts["formHint"]
+        if hint.waitForExistence(timeout: 5) { hint.tap() }
+        let name = app.buttons["formField-name-0"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10))
+        name.tap()
+        let nameEditor = app.textFields["formFieldEditor"]
+        XCTAssertTrue(nameEditor.waitForExistence(timeout: 5))
+        dismissKeyboardIntroduction(in: app)
+        nameEditor.typeText("Ada Lovelace\n")
+        app.buttons["formField-agree-0"].tap()
+        app.buttons["formField-size-1"].tap()
+        expect(app.buttons["formField-size-1"], toHaveValue: "checked", within: 5)
+        let color = app.buttons["formField-color-0"]
+        color.tap()
+        let green = menuItem("Green", in: app)
+        XCTAssertTrue(green.waitForExistence(timeout: 5), "the menu does not offer Green")
+        XCTAssertTrue(menuItem("Red", in: app).exists && menuItem("Blue", in: app).exists)
+        attach(app, "form-menu")
+        green.tap()
+        expect(color, toHaveValue: "Green", within: 5)
+        sleep(1)
+        attach(app, "form-chosen")
+        app.terminate()
+
+        let kinds = launchAndOpen("form-kinds.pdf")
+        expect(kinds.staticTexts["pageIndicator"], toRead: "1 / 2", within: 10)
+        let kindsHint = kinds.staticTexts["formHint"]
+        if kindsHint.waitForExistence(timeout: 5) { kindsHint.tap() }
+        let city = kinds.buttons["formField-city-0"]
+        XCTAssertTrue(city.waitForExistence(timeout: 10))
+        city.tap()
+        let rome = menuItem("Rome", in: kinds)
+        XCTAssertTrue(rome.waitForExistence(timeout: 5), "the menu does not offer Rome")
+        rome.tap()
+        expect(city, toHaveValue: "Rome", within: 5)
+        city.tap()
+        let other = menuItem("Other…", in: kinds)
+        XCTAssertTrue(other.waitForExistence(timeout: 5), "the menu does not offer Other…")
+        other.tap()
+        let editor = kinds.textFields["formFieldEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "Other… brought up no editor")
+        XCTAssertEqual(editor.value as? String, "Rome", "the editor starts with the city chosen")
+        dismissKeyboardIntroduction(in: kinds)
+        editor.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "Oslo\n")
+        expect(city, toHaveValue: "Oslo", within: 5)
+
+        let toppings = kinds.buttons["formField-toppings-0"]
+        toppings.tap()
+        let cheese = kinds.buttons["choiceOption-0"]
+        XCTAssertTrue(cheese.waitForExistence(timeout: 5), "no sheet of options")
+        cheese.tap()
+        kinds.buttons["choiceOption-2"].tap()
+        attach(kinds, "form-sheet")
+        kinds.buttons["choiceDoneButton"].tap()
+        XCTAssertTrue(cheese.waitForNonExistence(timeout: 5), "Done left the sheet")
+        expect(toppings, toHaveValue: "Cheese and Peppers", within: 5)
+        let undo = kinds.buttons["undoButton"]
+        XCTAssertTrue(undo.isEnabled)
+        sleep(1)
+        attach(kinds, "form-kinds-filled")
+    }
+
+    /// Waits until `element`'s accessibility value is `value`.
+    private func expect(_ element: XCUIElement, toHaveValue value: String, within seconds: TimeInterval, file: StaticString = #filePath, line: UInt = #line) {
+        let has = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: element)
+        let result = XCTWaiter().wait(for: [has], timeout: seconds)
+        XCTAssertEqual(result, .completed, "\(element.identifier) holds \(String(describing: element.exists ? element.value : nil)), not \"\(value)\"", file: file, line: line)
+    }
+
     /// An item of the edit menu titled `title`: the system shows them as menu items or as buttons.
     private func menuItem(_ title: String, in app: XCUIApplication) -> XCUIElement {
         let types = [XCUIElement.ElementType.menuItem, .button].map { NSNumber(value: $0.rawValue) }

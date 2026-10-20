@@ -169,7 +169,7 @@ enum Strings {
     /// The button that puts a prompt or a sheet away without doing anything: the password prompt (the
     /// document stays locked), the note sheet (the note stays as it was).
     static var cancel: String {
-        String(localized: "Cancel", comment: "Button that puts away a prompt or sheet without changing anything: the prompt for a PDF's password (the PDF stays locked), the note editor (the note stays as it was)")
+        String(localized: "Cancel", comment: "Button that puts away a prompt or sheet without changing anything: the prompt for a PDF's password (the PDF stays locked), the note editor (the note stays as it was), the sheet of a form field's options (the field stays as it was)")
     }
 
     /// The note sheet's button that keeps what was written.
@@ -283,6 +283,50 @@ enum Strings {
     /// The name Undo and Redo give a filled-in form field.
     static var actionFillField: String {
         String(localized: "Fill Form", comment: "Name of the change in Undo and Redo: a form field was filled in")
+    }
+
+    // MARK: Forms
+
+    /// The hint shown once over a document with a form, in reading mode.
+    static var formHint: String {
+        String(localized: "Tap a field to fill it in.", comment: "Hint shown once when a PDF with a form opens")
+    }
+
+    /// Why a field was not filled in: the document's security settings or format forbid filling its form.
+    static var formNotAllowed: String {
+        String(localized: "This document doesn't allow filling in its form.", comment: "Shown when a form field is tapped in a PDF whose security settings or format forbid filling in its form")
+    }
+
+    /// The note shown once with the form's hint when the form has more fields than the app lists.
+    static var formTruncated: String {
+        String(localized: "Only the first fields of this large form can be filled in.", comment: "Shown once when a PDF's form has more fields than the app can show")
+    }
+
+    /// The title of the menu of a drop-down list's options, and of the sheet where several of a list's
+    /// options are checked.
+    static var chooseOption: String {
+        String(localized: "Choose", comment: "Title of the menu or sheet where a form field's options are chosen")
+    }
+
+    /// The item of a drop-down list's menu that lets the reader type a value of their own.
+    static var otherChoice: String {
+        String(localized: "Other…", comment: "Menu item of a form's drop-down list that lets the reader type a value of their own")
+    }
+
+    /// What VoiceOver says of a check box or radio button that is on.
+    static var fieldChecked: String {
+        String(localized: "checked", comment: "Accessibility value of a form's check box or radio button that is on")
+    }
+
+    /// What VoiceOver says of a check box or radio button that is off.
+    static var fieldUnchecked: String {
+        String(localized: "unchecked", comment: "Accessibility value of a form's check box or radio button that is off")
+    }
+
+    /// What VoiceOver calls one radio button of a group: the group's name, then what the button stands
+    /// for. Its own key: a bare "%@, %@" would be shared with any other pair.
+    static func radioButtonLabel(field: String, option: String) -> String {
+        String(localized: "radioButtonLabel", defaultValue: "\(field), \(option)", comment: "Accessibility label of one radio button of a form: the field's name, then the option the button stands for")
     }
 
     // MARK: Organize
