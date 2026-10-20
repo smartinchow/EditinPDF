@@ -61,12 +61,12 @@ final class DocumentModel {
     private(set) var formIndex = FormIndex.empty
     /// The document's form fields, in the document's order.
     var formFields: [FormField] { formIndex.fields }
-    /// Whether the form has more fields (or options, or widgets) than the engine lists: only the first
-    /// ones can be filled in, and the screen says so once.
+    /// Whether the form has more fields, options or widgets than the engine lists: what is left out
+    /// cannot be filled in, and the screen says so once.
     private(set) var formFieldsTruncated = false
     /// Values handed to the engine for fields, by the fields' names, and not published yet: what a tap
     /// works out its change from (`fieldAsFilled`). See `FormFilling.swift`.
-    @ObservationIgnored var fillsOnTheirWay: [String: FillOnItsWay] = [:]
+    @ObservationIgnored private(set) var fillsOnTheirWay: [String: FillOnItsWay] = [:]
     /// The list box whose sheet of options is up, for several of them to be checked; nil while none is.
     var choiceDraft: ChoiceDraft?
     /// What the last change, undo or redo did: its revision, the pages it touched (nil: any of them
@@ -191,6 +191,20 @@ final class DocumentModel {
     /// Whether anything is waiting to be added (`hasPendingMarkup`, `hasPendingFieldText`): Undo adds
     /// it and takes it back, and Redo waits.
     var hasPendingEdit: Bool { hasPendingMarkup || hasPendingFieldText }
+
+    /// `value` is handed to the engine for field `field`: a tap works out its change from it until it is
+    /// published (`fillsOnTheirWay`). Says which hand-over it is, for `fillDidFinish`.
+    func fillWillStart(_ field: String, value: FieldValue) -> UUID {
+        let id = UUID()
+        fillsOnTheirWay[field] = FillOnItsWay(id: id, value: value)
+        return id
+    }
+
+    /// The value handed over as `id` for `field` is made and published, or refused: it is forgotten,
+    /// unless another has been handed over for the field since.
+    func fillDidFinish(_ field: String, id: UUID) {
+        if fillsOnTheirWay[field]?.id == id { fillsOnTheirWay[field] = nil }
+    }
 
     /// Adds `strokes` (view space: PDF points of `page`, each stroke the points it passed through) as
     /// one drawing in `style` (Draw's own when nil): one change named `Strings.actionAddAnnotation`,
@@ -502,24 +516,28 @@ final class DocumentModel {
     /// Strokes drawn with Draw and not added yet are added first (`commitPendingInk`): they were drawn
     /// on the document as it is, before this change.
     ///
-    /// `alreadyMade`, when given, is asked off the main actor, just before the engine would be: when it
-    /// says the document is already as the edits would make it (a field filled with the value it has),
-    /// nothing is done, the entry is taken off the undo manager again, and the task says no change was
-    /// made, with no failure.
+    /// `atItsTurn`, when given, is asked when the change's turn comes, on the main actor, just before
+    /// the engine is: what the model publishes then is the document as the engine has it, since every
+    /// change, undo and redo before this one has published what it did before the next one runs. It
+    /// says whether the document is already as the edits would make it (a field filled with the value it
+    /// has: nothing is done, the entry is taken off the undo manager again, and the task says no change
+    /// was made, with no failure), or which pages the change touches as the document is then, in place
+    /// of `pages`: what the change, its undo and its redo redraw. (A field's widgets may be on other
+    /// pages than when the fill was handed over: pages inserted, deleted or moved before it.)
     @discardableResult
     func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?, workedOutAt base: UInt64? = nil,
-                 unless alreadyMade: (@Sendable (PdfDocument) -> Bool)? = nil) -> Task<Bool, Never> {
+                 atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)? = nil) -> Task<Bool, Never> {
         guard !edits.isEmpty else { return Task { false } }
         commitPendingInk()
-        let token = EditToken()
-        registerStep(.undo, token: token, named: actionName, touching: pages)
+        let token = EditToken(pages: pages)
+        registerStep(.undo, token: token, named: actionName)
         liveChanges.add(token)
         let base = base ?? revision
         let engine = engine
         engine.editWillStart()
         return queue.submit { [weak self] in
             defer { engine.editDidFinish() }
-            return await self?.apply(edits, label: actionName, base: base, token: token, touching: pages, unless: alreadyMade) ?? false
+            return await self?.apply(edits, label: actionName, base: base, token: token, atItsTurn: atItsTurn) ?? false
         }
     }
 
@@ -568,36 +586,46 @@ final class DocumentModel {
     /// then hands the engine's undo or redo to the queue, behind everything handed over before it:
     /// an undo tapped while its edit is still waiting or running undoes that edit once it is made.
     /// Whether the change is in the engine's history is only known then, so the queued step looks
-    /// at `token.applied` when it runs, and does nothing for a change the engine refused.
-    private func registerStep(_ step: Step, token: EditToken, named actionName: String, touching pages: Set<Int>?) {
+    /// at `token.applied` when it runs, and does nothing for a change the engine refused. The pages it
+    /// redraws are the change's as it was made (`token.pages`), read when it runs too.
+    private func registerStep(_ step: Step, token: EditToken, named actionName: String) {
         guard let undoManager else { return }
         // The change is the target, so a refused one's entry can be taken off again on its own; the
         // handler holds it (the undo manager does not keep its targets).
         undoManager.registerUndo(withTarget: token) { [weak self, token] _ in
             guard let self else { return }
-            self.registerStep(step.opposite, token: token, named: actionName, touching: pages)
+            self.registerStep(step.opposite, token: token, named: actionName)
             let engine = self.engine
             engine.editWillStart()
             self.queue.submit { [weak self] in
                 defer { engine.editDidFinish() }
-                await self?.move(step, token: token, touching: pages)
+                await self?.move(step, token: token)
             }
         }
         undoManager.setActionName(actionName)
     }
 
     /// A queued edit: asks the engine for it off the main actor and, once made, publishes the
-    /// document's new state.
-    private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken, touching pages: Set<Int>?,
-                       unless alreadyMade: (@Sendable (PdfDocument) -> Bool)?) async -> Bool {
+    /// document's new state. `atItsTurn` as for `enqueue`.
+    private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken,
+                       atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)?) async -> Bool {
         guard let document = document() else {
             undoManager?.removeAllActions(withTarget: token)
             return false
         }
+        if let atItsTurn {
+            switch atItsTurn(self) {
+            case .alreadyMade:
+                // Already as the edits would make it: no change, and nothing to undo.
+                undoManager?.removeAllActions(withTarget: token)
+                return false
+            case .touching(let pages):
+                token.pages = pages
+            }
+        }
         let base = Self.canRebase(edits, workedOutAt: base, indexShift: lastIndexShift, geometryShift: lastGeometryShift)
             ? revision : base
-        let result = await EditQueue.offMain { () throws -> EngineState? in
-            if let alreadyMade, alreadyMade(document) { return nil }
+        let result = await EditQueue.offMain { () throws -> EngineState in
             if edits.count == 1, let edit = edits.first {
                 _ = try document.apply(edit: edit, baseRevision: base)
             } else {
@@ -606,16 +634,12 @@ final class DocumentModel {
             return EngineState.read(document)
         }
         switch result {
-        case .success(nil):
-            // Already as the edits would make it: no change, and nothing to undo.
-            undoManager?.removeAllActions(withTarget: token)
-            return false
-        case .success(let state?):
+        case .success(let state):
             token.applied = true
             // The reader stays on the page they were reading when pages before it go, move or arrive.
             // (An undo or redo does not say where pages went: there, the index is only kept in range.)
             currentPage = OrganizeMath.readerPage(currentPage, after: edits, pagesAdded: state.pages.count - self.pages.count)
-            refresh(state, touching: pages, shift: Self.shift(of: edits))
+            refresh(state, touching: token.pages, shift: Self.shift(of: edits))
             return true
         case .failure(let error):
             failure = EditFailure(error)
@@ -627,8 +651,9 @@ final class DocumentModel {
 
     /// A queued undo or redo of the change of `token`: nothing for a change the engine refused.
     /// One the engine cannot make means its history and the undo manager's stack no longer match,
-    /// so the stack is emptied, and the reader told.
-    private func move(_ step: Step, token: EditToken, touching pages: Set<Int>?) async {
+    /// so the stack is emptied, and the reader told. It redraws the pages the change touched as it was
+    /// made: every change after it has been undone by then, so they are where they were.
+    private func move(_ step: Step, token: EditToken) async {
         guard token.applied, let document = document() else { return }
         let result = await EditQueue.offMain { () throws -> EngineState in
             switch step {
@@ -639,7 +664,7 @@ final class DocumentModel {
         }
         switch result {
         case .success(let state):
-            refresh(state, touching: pages, shift: .index)
+            refresh(state, touching: token.pages, shift: .index)
         case .failure(let error):
             failure = EditFailure(error)
             for change in liveChanges.allObjects { undoManager?.removeAllActions(withTarget: change) }
@@ -772,6 +797,14 @@ protocol PendingInkHolder: AnyObject {
     /// returns); the task says whether it was made. Nil with none being typed in.
     @discardableResult
     func commitPendingText() -> Task<Bool, Never>?
+}
+
+/// What a change handed over with `DocumentModel.enqueue(..., atItsTurn:)` finds when its turn comes.
+enum ChangeAtItsTurn {
+    /// The document is already as the change would make it: nothing is done.
+    case alreadyMade
+    /// The change is made, and touches these pages (nil: any page may have moved).
+    case touching(Set<Int>?)
 }
 
 /// What holds the text being typed in a form field, not filled in yet: the scroll view's forms

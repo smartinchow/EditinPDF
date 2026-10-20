@@ -103,8 +103,9 @@ fn dump_fixtures() {
     fs::create_dir_all(&dir).unwrap();
     // The same form: the UI tests fill it in.
     fs::write(dir.join("form.pdf"), &form).unwrap();
-    // The same other kinds of field: filled in by hand in the simulator (`-openFixture
-    // form-kinds.pdf`), where the keyboard comes up over the field near the bottom of the page.
+    // The same other kinds of field: the UI tests fill them in (`-openFixture form-kinds.pdf`):
+    // `testTheKeyboardDoesNotCoverTheFieldBeingFilled`, where the keyboard comes up over the field near
+    // the bottom of the page, and `testChoosingFromAMenuAndFromASheet`.
     fs::write(dir.join("form-kinds.pdf"), &form_kinds).unwrap();
     // The same list of too many options: the UI tests read the note that says the form is listed short.
     fs::write(dir.join("truncated-form.pdf"), &truncated_form).unwrap();

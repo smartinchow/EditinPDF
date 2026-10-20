@@ -178,7 +178,7 @@ final class StringsTests: XCTestCase {
     func testFormWording() {
         XCTAssertEqual(Strings.formHint, "Tap a field to fill it in.")
         XCTAssertEqual(Strings.formNotAllowed, "This document doesn't allow filling in its form.")
-        XCTAssertEqual(Strings.formTruncated, "Only the first fields of this large form can be filled in.")
+        XCTAssertEqual(Strings.formTruncated, "This form is too large to show in full. Some fields or choices may be missing.")
         XCTAssertEqual(Strings.chooseOption, "Choose")
         XCTAssertEqual(Strings.otherChoice, "Other…")
         XCTAssertEqual(Strings.fieldChecked, "checked")

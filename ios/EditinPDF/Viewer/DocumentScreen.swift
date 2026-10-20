@@ -229,7 +229,7 @@ struct DocumentScreen: View {
                     }
                 }
                 // Once, when a document with a form that may be filled in opens, in reading mode: how to
-                // fill it in, and that only its first fields can be when it has more than are listed.
+                // fill it in, and that it is too large to show in full when it has more than are listed.
                 .overlay(alignment: .top) {
                     if showsFormHint, model.tool == nil {
                         formHint

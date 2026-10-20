@@ -676,14 +676,14 @@ final class EditorSmokeTests: XCTestCase {
     }
 
     /// `truncated-form.pdf`, a drop-down list of more options than are listed: the hint comes with the
-    /// note that only the first fields can be filled in.
+    /// note that the form is too large to show in full.
     func testAFormListedShortSaysSo() {
         let app = launchAndOpen("truncated-form.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
         XCTAssertTrue(app.staticTexts["formHint"].waitForExistence(timeout: 10), "no hint over a form")
         let note = app.staticTexts["formTruncatedNote"]
         XCTAssertTrue(note.exists, "no note that the form is listed short")
-        XCTAssertEqual(note.label, "Only the first fields of this large form can be filled in.")
+        XCTAssertEqual(note.label, "This form is too large to show in full. Some fields or choices may be missing.")
         attach(app, "form-truncated-note")
     }
 

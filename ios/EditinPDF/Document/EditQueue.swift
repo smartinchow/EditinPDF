@@ -70,4 +70,12 @@ final class EditQueue {
 @MainActor
 final class EditToken {
     var applied = false
+    /// The pages the change touches, as it was made (nil: any page may have moved): what it, its undo
+    /// and its redo redraw. Set when it is handed over, and again when its turn comes for a change
+    /// that works them out then (`DocumentModel.enqueue`'s `atItsTurn`).
+    var pages: Set<Int>?
+
+    init(pages: Set<Int>? = nil) {
+        self.pages = pages
+    }
 }

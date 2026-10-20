@@ -297,9 +297,10 @@ enum Strings {
         String(localized: "This document doesn't allow filling in its form.", comment: "Shown when a form field is tapped in a PDF whose security settings or format forbid filling in its form")
     }
 
-    /// The note shown once with the form's hint when the form has more fields than the app lists.
+    /// The note shown once with the form's hint when the form has more than the app lists: more fields,
+    /// more options in a list, or more places a field is shown.
     static var formTruncated: String {
-        String(localized: "Only the first fields of this large form can be filled in.", comment: "Shown once when a PDF's form has more fields than the app can show")
+        String(localized: "This form is too large to show in full. Some fields or choices may be missing.", comment: "Shown once when a PDF's form has more fields, more options in a list, or more places a field is shown, than the app can show")
     }
 
     /// The title of the menu of a drop-down list's options, and of the sheet where several of a list's

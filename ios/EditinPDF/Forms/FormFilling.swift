@@ -236,27 +236,29 @@ extension DocumentModel {
     /// one undo takes back.
     ///
     /// A value the field has already is no change, and leaves nothing to undo: as the model has it now
-    /// (with the values handed over and not published yet, `fieldAsFilled`), and as the engine has it
-    /// when the fill's turn comes. A document that does not allow its form to be filled in, and a
-    /// read-only field, are refused at once, with our sentence.
+    /// (with the values handed over and not published yet, `fieldAsFilled`), and as the document is
+    /// when the fill's turn comes. The pages redrawn are those the field's widgets are on then (pages
+    /// may have been inserted, deleted or moved before it), worked out from the fields the model
+    /// publishes then: the engine is not asked to list them all once more. A document that does not
+    /// allow its form to be filled in, and a read-only field, are refused at once, with our sentence.
     @discardableResult
     func enqueueFill(_ field: String, with value: FieldValue) -> Task<Bool, Never> {
         if capabilities != nil, !canFillForms { return refuse(Strings.formNotAllowed) }
-        let listed = formIndex.field(named: field)
-        if let listed {
+        if let listed = formIndex.field(named: field) {
             if listed.readOnly { return refuse(Strings.editNotAllowed) }
             if FormFilling.holds(fieldAsFilled(listed), value) { return Task { false } }
         }
-        let pages = listed.map { Set($0.widgets.map { Int($0.page) }) }
-        let id = UUID()
-        fillsOnTheirWay[field] = FillOnItsWay(id: id, value: value)
-        let made = enqueue([.setFieldValue(name: field, value: value)], named: Strings.actionFillField, touching: pages,
-                           unless: { document in
-                               document.formFields().first { $0.name == field }.map { FormFilling.holds($0, value) } ?? false
+        let id = fillWillStart(field, value: value)
+        // The pages are worked out when its turn comes.
+        let made = enqueue([.setFieldValue(name: field, value: value)], named: Strings.actionFillField, touching: nil,
+                           atItsTurn: { model in
+                               guard let now = model.formIndex.field(named: field) else { return .touching(nil) }
+                               if FormFilling.holds(now, value) { return .alreadyMade }
+                               return .touching(Set(now.widgets.map { Int($0.page) }))
                            })
         return Task { [weak self] in
             let ok = await made.value
-            if self?.fillsOnTheirWay[field]?.id == id { self?.fillsOnTheirWay[field] = nil }
+            self?.fillDidFinish(field, id: id)
             return ok
         }
     }
@@ -269,12 +271,19 @@ extension DocumentModel {
         return FormFilling.filled(field, with: onItsWay.value)
     }
 
-    /// The sheet of options's Done: fills the list box `draft` is up for with the export values
-    /// `values`, in the options' order, as one change, and puts the sheet away. Says whether it changed.
+    /// The sheet of options's Done: puts the sheet away and fills the list box `draft` is up for with
+    /// the export values `values` checked, in the options' order, as one change. The values the field
+    /// has that are not among the options listed (a list longer than the engine lists) are kept after
+    /// them: the sheet cannot show them, so the reader cannot have meant to uncheck them. When that is
+    /// what the field has already, in whatever order, nothing changes. Says whether it changed.
     @discardableResult
     func saveChoice(_ draft: ChoiceDraft, choosing values: Set<String>) async -> Bool {
         if choiceDraft?.id == draft.id { choiceDraft = nil }
-        let chosen = draft.options.map(\.export).filter { values.contains($0) }
+        let listed = draft.options.map(\.export)
+        let shown = Set(listed)
+        let unlisted = draft.selected.filter { !shown.contains($0) }
+        let chosen = listed.filter { values.contains($0) } + unlisted
+        guard Set(chosen) != Set(draft.selected) else { return false }
         return await fill(draft.field, with: .choice(values: chosen))
     }
 }

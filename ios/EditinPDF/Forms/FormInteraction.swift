@@ -210,8 +210,11 @@ final class FormInteraction: NSObject {
         return (field, field.widgets[button.spot.widget])
     }
 
-    /// A tap on `button`'s widget: see the type's description.
+    /// A tap on `button`'s widget: see the type's description. What was typed in a field fills it first,
+    /// and the tap is worked out from the form as it will then be: a second widget of the same field
+    /// opens with the text just typed, and a tap on a widget that does nothing still ends the typing.
     func tapped(_ button: FormWidgetButton) {
+        commitPendingField()
         guard let (field, widget) = fieldAndWidget(of: button) else { return }
         let action = FormFilling.action(for: field, widget: widget)
         guard action != .none else { return }
@@ -225,10 +228,8 @@ final class FormInteraction: NSObject {
             beginEditing(FieldEdit(field: name, page: Int(widget.page), rect: button.box, original: current,
                                    maxLength: maxLength ?? FormFilling.maxTextLength, multiline: multiline, asChoice: false, label: label))
         case .set(let name, let value):
-            commitPendingField()
             model.enqueueFill(name, with: value)
         case .choose(let name, let options, let selected, let multiple, _):
-            commitPendingField()
             // One choice is the button's menu; several, the sheet with checkmarks.
             if multiple { model.choiceDraft = ChoiceDraft(field: name, title: label, options: options, selected: selected) }
         case .none:

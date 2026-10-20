@@ -171,10 +171,10 @@ final class FormFillingTests: XCTestCase {
 
     func testFillingATextFieldPersists() async throws {
         let (m, u) = try makeModel(fixture: "form")
-        let made1 = await m.fill("name", with: .text(text: "Ada"))
-        XCTAssertTrue(made1)
-        let made2 = await m.fill("name", with: .text(text: "Ada"))
-        XCTAssertFalse(made2)          // unchanged: no undo step
+        let filled = await m.fill("name", with: .text(text: "Ada"))
+        XCTAssertTrue(filled)
+        let filledAgain = await m.fill("name", with: .text(text: "Ada"))
+        XCTAssertFalse(filledAgain)          // unchanged: no undo step
         XCTAssertEqual(u.undoActionName, Strings.actionFillField)
         let saved = try XCTUnwrap(m.document()).save(mode: .incremental)
         XCTAssertEqual(try PdfDocument.open(bytes: saved, password: nil).formFields().first { $0.name == "name" }?.value, ["Ada"])
@@ -184,23 +184,23 @@ final class FormFillingTests: XCTestCase {
     /// to undo; each change is one step, which redraws the widget's page and is named Fill Form.
     func testFillingWithTheCurrentValueIsNoChange() async throws {
         let (m, u) = try await settledModel()
-        let made3 = await m.fill("agree", with: .checked(on: true))
-        XCTAssertTrue(made3)
+        let checked = await m.fill("agree", with: .checked(on: true))
+        XCTAssertTrue(checked)
         XCTAssertEqual(m.lastChange?.pages, [0], "the widget's page is redrawn")
-        let made4 = await m.fill("agree", with: .checked(on: true))
-        XCTAssertFalse(made4)
-        let made5 = await m.fill("size", with: .radio(state: "L"))
-        XCTAssertTrue(made5)
-        let made6 = await m.fill("size", with: .radio(state: "L"))
-        XCTAssertFalse(made6)
-        let made7 = await m.fill("color", with: .choice(values: ["Green"]))
-        XCTAssertTrue(made7)
-        let made8 = await m.fill("color", with: .choice(values: ["Green"]))
-        XCTAssertFalse(made8)
-        let made9 = await m.fill("name", with: .text(text: ""))
-        XCTAssertFalse(made9, "empty is what it has")
-        let made10 = await m.fill("agree", with: .checked(on: true))
-        XCTAssertFalse(made10)
+        let checkedAgain = await m.fill("agree", with: .checked(on: true))
+        XCTAssertFalse(checkedAgain)
+        let chose = await m.fill("size", with: .radio(state: "L"))
+        XCTAssertTrue(chose)
+        let choseAgain = await m.fill("size", with: .radio(state: "L"))
+        XCTAssertFalse(choseAgain)
+        let picked = await m.fill("color", with: .choice(values: ["Green"]))
+        XCTAssertTrue(picked)
+        let pickedAgain = await m.fill("color", with: .choice(values: ["Green"]))
+        XCTAssertFalse(pickedAgain)
+        let emptied = await m.fill("name", with: .text(text: ""))
+        XCTAssertFalse(emptied, "empty is what it has")
+        let checkedOnceMore = await m.fill("agree", with: .checked(on: true))
+        XCTAssertFalse(checkedOnceMore)
         XCTAssertNil(m.failure)
         XCTAssertEqual(u.undoActionName, Strings.actionFillField)
 
@@ -208,8 +208,8 @@ final class FormFillingTests: XCTestCase {
         await m.settle()
         XCTAssertEqual(value("color", m), [])
         XCTAssertEqual(m.lastChange?.pages, [0], "undo redraws the widget's page")
-        let steps1 = await undoSteps(u, m)
-        XCTAssertEqual(steps1, 2, "one step for each change made")
+        let stepsLeft = await undoSteps(u, m)
+        XCTAssertEqual(stepsLeft, 2, "one step for each change made")
         XCTAssertEqual(value("agree", m), [])
     }
 
@@ -224,8 +224,25 @@ final class FormFillingTests: XCTestCase {
         XCTAssertFalse(b)
         XCTAssertNil(m.failure)
         XCTAssertEqual(m.revision, 1, "the engine made one change, not an empty second one")
-        let steps2 = await undoSteps(u, m)
-        XCTAssertEqual(steps2, 1)
+        let stepsMade = await undoSteps(u, m)
+        XCTAssertEqual(stepsMade, 1)
+    }
+
+    /// A fill handed over behind an undo that gives the field that value already: when its turn comes
+    /// the field has it, so it is no change, and no empty step (the model still showed the old value
+    /// when it was handed over).
+    func testAFillAnUndoAheadOfItAlreadyMadeIsNoChange() async throws {
+        let (m, u) = try await settledModel()
+        let filled = await m.fill("name", with: .text(text: "Ada"))
+        XCTAssertTrue(filled)
+        u.undo()                                          // queued: the field is "" once it runs
+        let again = m.enqueueFill("name", with: .text(text: ""))
+        let made = await again.value
+        XCTAssertFalse(made)
+        XCTAssertNil(m.failure)
+        XCTAssertEqual(value("name", m), [])
+        XCTAssertEqual(m.revision, 2, "the fill and its undo; nothing more")
+        XCTAssertFalse(u.canUndo, "the fill that changed nothing left nothing to undo")
     }
 
     /// A check box tapped twice before the engine has made the first: the second tap turns it back
@@ -253,19 +270,35 @@ final class FormFillingTests: XCTestCase {
 
     /// A field is addressed by its name, which no page change alters: a fill worked out before pages
     /// were inserted (or deleted, moved, turned) is made on the document as it then is, never refused
-    /// as stale.
+    /// as stale. The page it redraws, made, undone and redone, is the one its widget is on then, not
+    /// the one it was on when the fill was handed over.
     func testAFillWorkedOutBeforeAPageChangeIsStillMade() async throws {
-        let (m, _) = try await settledModel()
-        let before = m.revision
+        let (m, u) = try await settledModel()
+        // Two taps, two undo groups (both are handed over in one event here).
+        u.groupsByEvent = false
+        u.beginUndoGrouping()
         let insert = m.enqueue([.insertBlankPage(at: 0, widthPt: 612, heightPt: 792)], named: Strings.actionInsertBlank, touching: nil)
-        let fill = m.enqueue([.setFieldValue(name: "name", value: .text(text: "Ada"))], named: Strings.actionFillField,
-                             touching: [0], workedOutAt: before)
+        u.endUndoGrouping()
+        // Worked out against the page as it is now (the field on page 0), and handed over behind the insert.
+        u.beginUndoGrouping()
+        let fill = m.enqueueFill("name", with: .text(text: "Ada"))
+        u.endUndoGrouping()
         let (inserted, filled) = await (insert.value, fill.value)
         XCTAssertTrue(inserted)
         XCTAssertTrue(filled)
         XCTAssertNil(m.failure)
         XCTAssertEqual(value("name", m), ["Ada"])
         XCTAssertEqual(m.formFields.first { $0.name == "name" }?.widgets[0].page, 1)
+        XCTAssertEqual(m.lastChange?.pages, [1], "the fill redraws the page its widget is on now")
+
+        u.undo()
+        await m.settle()
+        XCTAssertEqual(value("name", m), [])
+        XCTAssertEqual(m.lastChange?.pages, [1], "its undo redraws that page")
+        u.redo()
+        await m.settle()
+        XCTAssertEqual(value("name", m), ["Ada"])
+        XCTAssertEqual(m.lastChange?.pages, [1], "its redo redraws that page")
     }
 
     /// A document whose security settings forbid filling: the fill is refused with our sentence, never
@@ -274,14 +307,14 @@ final class FormFillingTests: XCTestCase {
         let (m, u) = try await settledModel("restricted-form")
         XCTAssertFalse(m.canFillForms)
         XCTAssertFalse(m.formFields.isEmpty, "its fields are listed")
-        let made11 = await m.fill("name", with: .text(text: "x"))
-        XCTAssertFalse(made11)
+        let refused = await m.fill("name", with: .text(text: "x"))
+        XCTAssertFalse(refused)
         XCTAssertEqual(m.failure?.message, Strings.formNotAllowed)
         XCTAssertFalse(u.canUndo)
 
         let (open, _) = try await settledModel()
-        let made12 = await open.fill("read_only_note", with: .text(text: "x"))
-        XCTAssertFalse(made12)
+        let readOnlyFilled = await open.fill("read_only_note", with: .text(text: "x"))
+        XCTAssertFalse(readOnlyFilled)
         XCTAssertEqual(open.failure?.message, Strings.editNotAllowed)
     }
 
@@ -338,8 +371,8 @@ final class FormFillingTests: XCTestCase {
     func testOnlyLoadedPagesHaveOverlays() async throws {
         let (controller, model, _) = try await makeController()
         for _ in 0..<6 {
-            let made13 = await model.performAll([.insertBlankPage(at: 0, widthPt: 612, heightPt: 792)], named: Strings.actionInsertBlank, touching: nil)
-            XCTAssertTrue(made13)
+            let inserted = await model.performAll([.insertBlankPage(at: 0, widthPt: 612, heightPt: 792)], named: Strings.actionInsertBlank, touching: nil)
+            XCTAssertTrue(inserted)
         }
         model.currentPage = 0
         sync(model, controller)
@@ -367,14 +400,14 @@ final class FormFillingTests: XCTestCase {
         XCTAssertEqual(try button("size", 1, in: controller).accessibilityLabel, Strings.radioButtonLabel(field: "size", option: "L"))
         XCTAssertTrue(try button("read_only_note", in: controller).accessibilityTraits.contains(.notEnabled))
 
-        let made14 = await model.fill("name", with: .text(text: "Ada"))
-        XCTAssertTrue(made14)
-        let made15 = await model.fill("agree", with: .checked(on: true))
-        XCTAssertTrue(made15)
-        let made16 = await model.fill("size", with: .radio(state: "L"))
-        XCTAssertTrue(made16)
-        let made17 = await model.fill("color", with: .choice(values: ["Green"]))
-        XCTAssertTrue(made17)
+        let typed = await model.fill("name", with: .text(text: "Ada"))
+        XCTAssertTrue(typed)
+        let ticked = await model.fill("agree", with: .checked(on: true))
+        XCTAssertTrue(ticked)
+        let chosen = await model.fill("size", with: .radio(state: "L"))
+        XCTAssertTrue(chosen)
+        let colored = await model.fill("color", with: .choice(values: ["Green"]))
+        XCTAssertTrue(colored)
         sync(model, controller)
         XCTAssertEqual(try button("name", in: controller).accessibilityValue, "Ada")
         XCTAssertEqual(try button("agree", in: controller).accessibilityValue, Strings.fieldChecked)
@@ -387,8 +420,8 @@ final class FormFillingTests: XCTestCase {
     /// field editor at any zoom, lie where the page shows them.
     func testOverlaysAndTheEditorLieWhereTheWidgetsAreOnATurnedPage() async throws {
         let (controller, model, _) = try await makeController()
-        let made18 = await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
-        XCTAssertTrue(made18)
+        let turned = await model.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        XCTAssertTrue(turned)
         sync(model, controller)
         let page = try XCTUnwrap(controller.pageView(for: 0))
         XCTAssertEqual(page.pointSize, CGSize(width: 792, height: 612))
@@ -436,8 +469,8 @@ final class FormFillingTests: XCTestCase {
         await model.settle()
         XCTAssertEqual(value("name", model), ["Ada"])
         XCTAssertEqual(undoManager.undoActionName, Strings.actionFillField)
-        let steps4 = await undoSteps(undoManager, model)
-        XCTAssertEqual(steps4, 1)
+        let stepsMade = await undoSteps(undoManager, model)
+        XCTAssertEqual(stepsMade, 1)
     }
 
     /// What is typed is added by every way out of the field: the end of editing, a tap on the pages, a
@@ -491,11 +524,40 @@ final class FormFillingTests: XCTestCase {
         XCTAssertEqual(try field("agree", in: model.formFields).widgets[0].isOn, true)
     }
 
+    /// A tap on another widget fills in what was typed before working out what the tap does: a second
+    /// widget of the same field opens with the text just typed, and a tap on a widget that does nothing
+    /// (a read-only field) still ends the typing.
+    func testATapOnAnyWidgetFillsInWhatWasTypedFirst() async throws {
+        let (controller, model, _) = try await makeController()
+        // `name` shown twice, as a field's widgets may be: the second 100 points below the first.
+        let fields = model.formFields.map { field -> FormField in
+            guard field.name == "name", let first = field.widgets.first else { return field }
+            var twice = field
+            var second = first
+            second.rect = Rect(x: first.rect.x, y: first.rect.y + 100, width: first.rect.width, height: first.rect.height)
+            twice.widgets = [first, second]
+            return twice
+        }
+        controller.forms = FormDisplay(index: FormIndex(fields), canFill: true)
+        controller.formInteraction.tapped(try button("name", 0, in: controller))
+        try type("Ada", into: controller.formInteraction.editor)
+        controller.formInteraction.tapped(try button("name", 1, in: controller))
+        let second = try XCTUnwrap(controller.formInteraction.editor)
+        XCTAssertEqual(second.edit.rect.minY, 172, accuracy: 0.5, "the editor is over the second widget")
+        XCTAssertEqual(second.typedText, "Ada", "it opens with the text just typed")
+        try type("Ada Lovelace", into: second)
+
+        controller.formInteraction.tapped(try button("read_only_note", in: controller))
+        XCTAssertNil(controller.formInteraction.editor, "a tap on a read-only field ends the typing")
+        await model.settle()
+        XCTAssertEqual(value("name", model), ["Ada Lovelace"])
+    }
+
     /// Leaving a field as it was is no change.
     func testAFieldLeftAsItWasIsNoChange() async throws {
         let (controller, model, undoManager) = try await makeController()
-        let made19 = await model.fill("name", with: .text(text: "Ada"))
-        XCTAssertTrue(made19)
+        let filled = await model.fill("name", with: .text(text: "Ada"))
+        XCTAssertTrue(filled)
         sync(model, controller)
         controller.formInteraction.tapped(try button("name", in: controller))
         XCTAssertEqual(controller.formInteraction.editor?.typedText, "Ada", "the editor starts with the field's text")
@@ -503,8 +565,8 @@ final class FormFillingTests: XCTestCase {
         XCTAssertFalse(model.hasPendingFieldText)
         XCTAssertNil(controller.formInteraction.commitPendingField())
         await model.settle()
-        let steps5 = await undoSteps(undoManager, model)
-        XCTAssertEqual(steps5, 1, "only the first fill")
+        let stepsMade = await undoSteps(undoManager, model)
+        XCTAssertEqual(stepsMade, 1, "only the first fill")
     }
 
     /// A field with a limit takes no more than it: what is typed past it is cut, and what is added is
@@ -570,12 +632,12 @@ final class FormFillingTests: XCTestCase {
         XCTAssertEqual(draft.field, "toppings")
         XCTAssertEqual(draft.options.map(\.display), ["Cheese", "Olives", "Peppers"])
         XCTAssertEqual(draft.selected, [])
-        let made20 = await model.saveChoice(draft, choosing: ["Peppers", "Cheese"])
-        XCTAssertTrue(made20)
+        let saved = await model.saveChoice(draft, choosing: ["Peppers", "Cheese"])
+        XCTAssertTrue(saved)
         XCTAssertNil(model.choiceDraft)
         XCTAssertEqual(value("toppings", model), ["Cheese", "Peppers"])
-        let steps6 = await undoSteps(undoManager, model)
-        XCTAssertEqual(steps6, 1)
+        let stepsMade = await undoSteps(undoManager, model)
+        XCTAssertEqual(stepsMade, 1)
 
         sync(model, controller)
         controller.formInteraction.tapped(try button("toppings", in: controller))
@@ -583,6 +645,32 @@ final class FormFillingTests: XCTestCase {
         model.choiceDraft = nil
         await model.settle()
         XCTAssertFalse(undoManager.canUndo)
+    }
+
+    /// Done with nothing changed is no change, whatever order the field holds its values in; and Done
+    /// keeps the values the field has that are not among the options listed (a list longer than is
+    /// listed), checked or not by the reader, since the sheet cannot show them.
+    func testDoneKeepsWhatTheSheetDoesNotListAndChangesNothingWhenNothingChanged() async throws {
+        let (m, u) = try await settledModel("form-kinds")
+        let filled = await m.fill("toppings", with: .choice(values: ["Peppers", "Cheese"]))
+        XCTAssertTrue(filled)
+        let toppings = try field("toppings", in: m.formFields)
+        let unchanged = ChoiceDraft(field: "toppings", title: "toppings", options: toppings.options, selected: toppings.value)
+        m.choiceDraft = unchanged
+        let none = await m.saveChoice(unchanged, choosing: Set(toppings.value))
+        XCTAssertFalse(none, "nothing changed")
+        XCTAssertNil(m.choiceDraft, "Done puts the sheet away all the same")
+        XCTAssertEqual(value("toppings", m), ["Peppers", "Cheese"])
+        await m.settle()
+        XCTAssertEqual(m.revision, 1, "no edit for an unchanged Done")
+
+        // Only Cheese and Olives listed: Peppers, which the field has, is kept.
+        let short = ChoiceDraft(field: "toppings", title: "toppings", options: Array(toppings.options.prefix(2)), selected: toppings.value)
+        let made = await m.saveChoice(short, choosing: ["Olives", "Peppers"])
+        XCTAssertTrue(made)
+        XCTAssertEqual(value("toppings", m), ["Olives", "Peppers"])
+        let steps = await undoSteps(u, m)
+        XCTAssertEqual(steps, 2, "the first fill and the change; nothing for the unchanged Done")
     }
 
     // MARK: Permissions and the form's size
