@@ -34,10 +34,15 @@ pub struct PdfDocument {
     /// Whether saving writes the document out in full (`EditCapabilities::rewrites_on_save`),
     /// decided when it opened.
     rewrites_on_save: bool,
-    /// Whether the bridge refuses every change and every save, though the engine could make them:
-    /// the document was signed when it opened and saving rewrites it, so the first change saved
-    /// would break its signatures (`locks_for_signatures`). Decided when it opened.
+    /// Whether the bridge refuses every change and every save but the unchanged incremental one
+    /// (`saves_as_opened`), though the engine could make them: the document was signed when it
+    /// opened and saving rewrites it, so the first change saved would break its signatures
+    /// (`locks_for_signatures`). Decided when it opened.
     locked_for_signatures: bool,
+    /// The bytes the document was opened from, kept only when it is `locked_for_signatures`: what an
+    /// incremental save of it gives while it is unchanged (`saves_as_opened`). Shared with the
+    /// engine, which holds the same bytes, so keeping them costs no copy.
+    opened_bytes_if_locked: Option<Arc<Vec<u8>>>,
 }
 
 /// Why a document `PdfDocument::locked_for_signatures` is not changed, as `read_only_reason` and the
@@ -312,12 +317,19 @@ fn rewrites_on_save(doc: &pdfcraft_engine::Document, original: &Arc<Vec<u8>>) ->
     .unwrap_or(true)
 }
 
-/// Whether the bridge refuses every change to a document and every save of it, given whether it
-/// was `signed` when it opened and whether saving `rewrites` it: then the first change saved would
-/// break the signatures. A signed document that is appended to keeps them, and an unsigned one
-/// that is rewritten loses nothing the reader sees.
+/// Whether the bridge refuses every change to a document and every save of it that could write one
+/// (`saves_as_opened`), given whether it was `signed` when it opened and whether saving `rewrites`
+/// it: then the first change saved would break the signatures. A signed document that is appended
+/// to keeps them, and an unsigned one that is rewritten loses nothing the reader sees.
 fn locks_for_signatures(signed: bool, rewrites: bool) -> bool {
     signed && rewrites
+}
+
+/// Whether a save in `mode` of a document `locked_for_signatures` gives back the bytes it was opened
+/// from: an incremental save while it is unchanged (not `dirty`), which is the file as it is. Any
+/// other save is refused: it would rewrite the file and break its signatures.
+fn saves_as_opened(mode: SaveMode, dirty: bool) -> bool {
+    mode == SaveMode::Incremental && !dirty
 }
 
 /// The document `id` names in `session`; `Failed` when it is no longer open.
@@ -447,6 +459,7 @@ impl PdfDocument {
         let (rewrites, signed) = session.get(id).map_or((false, false), |doc| {
             (rewrites_on_save(doc, &original), doc.is_signed())
         });
+        let locked = locks_for_signatures(signed, rewrites);
         Ok(Arc::new(Self {
             inner: Mutex::new(Inner {
                 session,
@@ -456,7 +469,8 @@ impl PdfDocument {
                 text_cache: TextCache::default(),
             }),
             rewrites_on_save: rewrites,
-            locked_for_signatures: locks_for_signatures(signed, rewrites),
+            locked_for_signatures: locked,
+            opened_bytes_if_locked: locked.then_some(original),
         }))
     }
 
@@ -763,15 +777,24 @@ impl PdfDocument {
     /// edit under way to finish, so it never sees half of one, and does not mark the document as
     /// saved.
     ///
-    /// Fails with `Signed` for a `Full` save of a signed document and for any save of a signed one
-    /// that saving would rewrite (either would invalidate the signatures), `ReadOnly` for a `Full`
-    /// save of a document that cannot be edited, and `Failed` when the engine cannot write the
-    /// document.
+    /// A signed document that saving would rewrite is never changed (`EditCapabilities::rewrites_on_save`):
+    /// its incremental save gives back the bytes it was opened from, exactly, while it is unchanged.
+    ///
+    /// Fails with `Signed` for a `Full` save of a signed document and for a save of a signed one that
+    /// saving would rewrite once it has changed (either would invalidate the signatures), `ReadOnly`
+    /// for a `Full` save of a document that cannot be edited, and `Failed` when the engine cannot
+    /// write the document.
     pub fn save(&self, mode: SaveMode) -> Result<Vec<u8>, SaveError> {
         // The bridge never changes such a document, so this is a second line of defence: were a
-        // change to get through, writing it would break the signatures.
+        // change to get through, writing it would break the signatures. Unchanged, it is the file as
+        // it is, which writing breaks nothing of.
         if self.locked_for_signatures {
-            return Err(SaveError::Signed);
+            return match &self.opened_bytes_if_locked {
+                Some(opened) if saves_as_opened(mode, self.is_dirty()) => {
+                    Ok(opened.as_ref().clone())
+                }
+                _ => Err(SaveError::Signed),
+            };
         }
         let inner = self.lock();
         let id = inner.id;
@@ -983,6 +1006,17 @@ mod tests {
         );
         assert!(!locks_for_signatures(false, true), "no signature to break");
         assert!(!locks_for_signatures(false, false));
+    }
+
+    #[test]
+    fn a_locked_document_is_saved_only_unchanged_and_incrementally() {
+        assert!(saves_as_opened(SaveMode::Incremental, false));
+        assert!(
+            !saves_as_opened(SaveMode::Incremental, true),
+            "a change would be written, rewriting the file"
+        );
+        assert!(!saves_as_opened(SaveMode::Full, false), "a rewrite");
+        assert!(!saves_as_opened(SaveMode::Full, true));
     }
 
     #[test]

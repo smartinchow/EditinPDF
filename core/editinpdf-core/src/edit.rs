@@ -95,8 +95,8 @@ pub enum FieldValue {
 pub enum SaveMode {
     /// The file as opened, with the changes appended: quick, and keeps signatures valid. A file
     /// whose cross-reference data the engine had to rebuild when it opened it has nothing to append
-    /// to (`EditCapabilities::rewrites_on_save`): once it has changed it is written out in full, and
-    /// a signed one is refused.
+    /// to (`EditCapabilities::rewrites_on_save`): once it has changed it is written out in full. A
+    /// signed one is never changed, and its save gives back the bytes it was opened from.
     Incremental,
     /// A complete, compact rewrite. Refused for a signed document.
     Full,
@@ -137,7 +137,7 @@ pub struct EditCapabilities {
     ///
     /// A signed document like this cannot be changed at all (`can_edit` and the rest are false,
     /// with a `read_only_reason`): the first change saved would rewrite it and break its
-    /// signatures.
+    /// signatures. Its incremental save, unchanged, gives back the bytes it was opened from.
     pub rewrites_on_save: bool,
 }
 

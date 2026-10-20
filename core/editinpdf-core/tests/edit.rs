@@ -323,14 +323,12 @@ fn a_document_whose_cross_reference_data_was_rebuilt_is_written_out_in_full() {
 }
 
 /// The same damage in a signed file: the first change saved would rewrite it and break its
-/// signatures, so the bridge refuses every change, and every save, and says why.
+/// signatures, so the bridge refuses every change, and every save that would write one, and says
+/// why. Unchanged, an incremental save gives the bytes as opened back.
 #[test]
 fn a_signed_document_whose_cross_reference_data_was_rebuilt_is_read_only() {
-    let doc = PdfDocument::open(
-        fixtures::with_damaged_startxref(fixtures::signed_doc()),
-        None,
-    )
-    .unwrap();
+    let original = fixtures::with_damaged_startxref(fixtures::signed_doc());
+    let doc = PdfDocument::open(original.clone(), None).unwrap();
     let caps = doc.capabilities();
     assert!(caps.is_signed && caps.rewrites_on_save);
     assert!(!caps.can_edit && !caps.can_organize && !caps.can_annotate && !caps.can_fill_forms);
@@ -359,9 +357,12 @@ fn a_signed_document_whose_cross_reference_data_was_rebuilt_is_read_only() {
     );
     assert_eq!(doc.revision(), 0);
     assert!(!doc.is_dirty() && !doc.can_undo());
-    for mode in [SaveMode::Incremental, SaveMode::Full] {
-        assert_eq!(doc.save(mode), Err(SaveError::Signed), "{mode:?}");
-    }
+    assert_eq!(
+        doc.save(SaveMode::Incremental),
+        Ok(original),
+        "unchanged: the file as it was opened, signatures and all"
+    );
+    assert_eq!(doc.save(SaveMode::Full), Err(SaveError::Signed));
     // Taking pages out into a new PDF changes nothing here.
     assert!(doc.extract_pages(vec![0]).is_ok());
 }

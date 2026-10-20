@@ -110,7 +110,8 @@ ends, and only when it finds none, a second read of the file) and reports it as
 `EditCapabilities.rewrites_on_save`. An unsigned such file stays editable: the first save of a change writes it out
 in full, a whole, repaired copy of what the reader sees, and the README says so. A **signed** one would lose its
 signatures with that save, with nothing refusing it, so the bridge refuses every change to it (`ReadOnly`, the
-capabilities all false, a `read_only_reason`) and, as a second line of defence, every save of it (`Signed`). The app
+capabilities all false, a `read_only_reason`) and, as a second line of defence, every save that would write a
+change or rewrite it (`Signed`); unchanged, its incremental save is the bytes it was opened from. The app
 says why in one sentence of its own (`Strings.signedDocumentDamaged`), in place of each tool's own refusal
 (`DocumentModel.signatureLock`).
 
