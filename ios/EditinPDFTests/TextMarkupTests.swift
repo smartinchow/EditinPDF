@@ -100,7 +100,7 @@ final class TextMarkupTests: XCTestCase {
 
     /// `pages` US Letter pages in a 400 x 800 view (see `PageSelectionTests`).
     func makeController(pages: Int = 3) async -> (PageScrollViewController, DocumentModel) {
-        let model = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(pages))
+        let model = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(pages))
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()
@@ -146,7 +146,7 @@ final class TextMarkupTests: XCTestCase {
     }
 
     func testAToolThatIsRefusedTakesNoTouch() async throws {
-        let model = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(2))
+        let model = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(2))
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()
@@ -282,7 +282,7 @@ final class TextMarkupTests: XCTestCase {
     /// The same down the line of a turned page, where the text runs down and a finger just above the
     /// line's first glyph is level with no line of text (the UI test `testDraggingDownTheTextOfATurnedPageMarksIt`).
     func testADragThatStartsJustBeforeATurnedLineMarksFromIt() async throws {
-        let model = DocumentModel(bytes: try fixtureData("rotated"))
+        let model = isolatedModel(bytes: try fixtureData("rotated"))
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()
@@ -363,7 +363,7 @@ final class TextMarkupTests: XCTestCase {
             context.beginPage()
             ("Corner" as NSString).draw(at: .zero, withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
         }
-        let model = DocumentModel(bytes: bytes)
+        let model = isolatedModel(bytes: bytes)
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()
@@ -423,7 +423,7 @@ final class TextMarkupTests: XCTestCase {
 
     /// Nothing is read ahead for a tool that does not mark text, or one that may not be used.
     func testNothingIsReadAheadWithoutAUsableTextTool() async throws {
-        let model = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(3))
+        let model = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(3))
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()
@@ -513,7 +513,7 @@ final class TextMarkupTests: XCTestCase {
 
     /// A selection across two lines is marked with one quad for each line, not one box over both.
     func testAMarkOverTwoLinesHasAQuadForEachLine() async throws {
-        let model = DocumentModel(bytes: Self.linesPage(["First line", "Second line"]))
+        let model = isolatedModel(bytes: Self.linesPage(["First line", "Second line"]))
         await model.settle()
         let document = try XCTUnwrap(model.document())
         let glyphs = try document.pageText(page: 0).glyphs

@@ -3,24 +3,35 @@ import SwiftUI
 /// The sheet a note is written and read in (`DocumentModel.noteDraft`): its text, Save and Cancel.
 /// For a new note, Save is there once something other than spaces is written; for a note on the page,
 /// once its text is changed. While the text differs from what the sheet opened with, a swipe does not
-/// put the sheet away (and what was written with it): Cancel does, on purpose.
+/// put the sheet away (and what was written with it): Cancel does, on purpose. Save puts it away once
+/// the note is saved; a save that is refused leaves it up, with what was written, and says why here,
+/// over the sheet (`failure`).
 ///
 /// The text is the reader's, and is never logged.
 struct NoteEditorSheet: View {
     let draft: NoteDraft
-    /// Saves the text written: the screen closes the sheet and has the model add or change the note.
-    let save: (String) -> Void
+    /// Why a change was not made, for the sheet to show while it is up (the screen's own alert waits).
+    @Binding var failure: EditFailure?
+    /// Saves the text written (the model adds or changes the note, and puts the sheet away once it has).
+    let save: (String) async -> Void
     /// Closes the sheet; nothing changes.
     let cancel: () -> Void
 
     @State private var text: String
+    @State private var isSaving = false
     @FocusState private var isWriting: Bool
 
-    init(draft: NoteDraft, save: @escaping (String) -> Void, cancel: @escaping () -> Void) {
+    init(draft: NoteDraft, failure: Binding<EditFailure?>, save: @escaping (String) async -> Void, cancel: @escaping () -> Void) {
         self.draft = draft
+        _failure = failure
         self.save = save
         self.cancel = cancel
         _text = State(initialValue: draft.text)
+    }
+
+    /// Whether the alert about a refused save is up: while there is a failure to show.
+    private var showsFailure: Binding<Bool> {
+        Binding(get: { failure != nil }, set: { isShown in if !isShown { failure = nil } })
     }
 
     /// Whether Save does something: a new note with something written, or a note whose text changed.
@@ -59,12 +70,23 @@ struct NoteEditorSheet: View {
                             .accessibilityIdentifier("noteCancelButton")
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(Strings.save) { save(text) }
-                            .disabled(!canSave)
+                        Button(Strings.save) {
+                            isSaving = true
+                            Task {
+                                await save(text)
+                                isSaving = false
+                            }
+                        }
+                        .disabled(!canSave || isSaving)
                             .accessibilityIdentifier("noteSaveButton")
                     }
                 }
                 .onAppear { isWriting = true }
+                // A save refused: why, over the sheet, which stays with what was written.
+                .alert(failure?.title ?? "", isPresented: showsFailure, presenting: failure) { _ in
+                } message: { failure in
+                    if !failure.message.isEmpty { Text(failure.message) }
+                }
         }
         .presentationDetents([.medium, .large])
         .interactiveDismissDisabled(text != draft.text)

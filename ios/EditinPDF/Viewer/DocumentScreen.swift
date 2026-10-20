@@ -160,10 +160,16 @@ struct DocumentScreen: View {
         Binding(get: { model.noteDraft }, set: { model.noteDraft = $0 })
     }
 
-    /// Whether the alert about a change that was not made is up: while the model has one to show.
+    /// Why a change was not made, for the note sheet to show over itself while it is up.
+    private var editFailure: Binding<EditFailure?> {
+        Binding(get: { model.failure }, set: { model.failure = $0 })
+    }
+
+    /// Whether the alert about a change that was not made is up: while the model has one to show, and
+    /// the note sheet, which shows its own, is not up.
     private var showsEditFailure: Binding<Bool> {
         Binding(
-            get: { model.failure != nil },
+            get: { model.failure != nil && model.noteDraft == nil },
             set: { isShown in if !isShown { model.failure = nil } }
         )
     }
@@ -243,12 +249,12 @@ struct DocumentScreen: View {
                         SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
                     }
                 }
-                // A tap with Note opens its note here: Save adds or changes it (a refusal says why, as
-                // every change's does), Cancel leaves it as it was.
+                // A tap with Note opens its note here: Save adds or changes it, and the sheet goes once it
+                // has; a refusal says why over the sheet, which stays with what was written. Cancel leaves
+                // the note as it was.
                 .sheet(item: noteDraft) { draft in
-                    NoteEditorSheet(draft: draft, save: { text in
-                        model.noteDraft = nil
-                        Task { await model.saveNote(draft, text: text) }
+                    NoteEditorSheet(draft: draft, failure: editFailure, save: { text in
+                        await model.saveNoteDraft(text: text)
                     }, cancel: {
                         model.noteDraft = nil
                     })

@@ -65,7 +65,7 @@ final class InkSavingTests: XCTestCase {
     // MARK: A touch outside the pages adds the strokes
 
     func makeController() async -> (PageScrollViewController, DocumentModel) {
-        let model = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(2))
+        let model = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(2))
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()

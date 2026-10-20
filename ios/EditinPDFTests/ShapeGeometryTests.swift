@@ -269,6 +269,10 @@ final class ShapeGeometryTests: XCTestCase {
         m.toolStyles[.line] = ToolStyle(color: RGBA(r: 0, g: 0, b: 0), width: 90, fontSize: 14, fill: false)
         let made = await m.addShape(page: 0, draft: .line(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 300, y: 100), arrow: false))
         XCTAssertTrue(made)
+        // The width written to the file is the bridge's widest, 50 points.
+        let saved = try XCTUnwrap(m.document()).save(mode: .incremental)
+        let line = try XCTUnwrap(PDFDocument(data: saved)?.page(at: 0)?.annotations.first { $0.type == "Line" })
+        XCTAssertEqual(try XCTUnwrap(line.border).lineWidth, 50, accuracy: 0.001)
     }
 
     /// On a page turned by `/Rotate 90`, a rectangle, a line and a note come back where they were put,
@@ -344,6 +348,32 @@ final class ShapeGeometryTests: XCTestCase {
         XCTAssertEqual(note.kind, .note); XCTAssertEqual(note.contents, "Ask")
         XCTAssertEqual(note.rect.x, 50, accuracy: 1); XCTAssertEqual(note.rect.y, 60, accuracy: 1)
         XCTAssertEqual(try XCTUnwrap(note.color).green, 0.8, accuracy: 0.01)
+    }
+
+    /// The note sheet's Save that is refused leaves the sheet up (its draft, and with it what was
+    /// written), and the reader is told why; one that is made puts the sheet away.
+    func testARefusedNoteSaveKeepsTheSheetAndWhatWasWritten() async throws {
+        let (m, _) = try makeModel()
+        _ = await m.addNote(page: 0, at: CGPoint(x: 10, y: 10), contents: "First")
+        _ = await m.addNote(page: 0, at: CGPoint(x: 100, y: 10), contents: "Second")
+        let second = try XCTUnwrap(m.annotationIndex.annotations(onPage: 0).last)
+        let draft = NoteDraft(page: 0, point: .zero, existing: AnnotationRef(page: 0, index: second.index), text: "Second", revision: m.revision)
+        m.noteDraft = draft
+        // The first note goes while the sheet is up: the second is numbered again under it.
+        let deleted = await m.perform(.deleteAnnotation(page: 0, index: 0), named: Strings.actionDeleteAnnotation, touching: [0])
+        XCTAssertTrue(deleted)
+        let saved = await m.saveNoteDraft(text: "Written meanwhile")
+        XCTAssertFalse(saved)
+        XCTAssertEqual(m.noteDraft?.id, draft.id, "the sheet went, and what was written with it")
+        XCTAssertEqual(m.failure?.message, Strings.documentChangedTryAgain)
+        XCTAssertEqual(m.annotationIndex.annotations(onPage: 0).map(\.contents), ["Second"])
+
+        m.failure = nil
+        m.noteDraft = NoteDraft(page: 0, point: CGPoint(x: 300, y: 300), existing: nil, text: "", revision: m.revision)
+        let added = await m.saveNoteDraft(text: "New")
+        XCTAssertTrue(added)
+        XCTAssertNil(m.noteDraft, "a saved note's sheet goes")
+        XCTAssertNil(m.failure)
     }
 
     /// A note sheet opened before an annotation before it on the page was deleted names another one

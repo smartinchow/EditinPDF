@@ -327,6 +327,18 @@ final class DocumentModel {
         return await enqueue([edit], named: Strings.actionEditAnnotation, touching: [existing.page], workedOutAt: draft.revision).value
     }
 
+    /// The note sheet's Save: saves the note the sheet is open for (`noteDraft`) with `text`
+    /// (`saveNote`). The sheet goes (`noteDraft` nil) once the note is saved. A save that is refused
+    /// (stale, say, or a note the file forbids changing) leaves the sheet up, with what was written in
+    /// it, and `failure` says why: the reader's words are not lost with the change. Says whether it saved.
+    @discardableResult
+    func saveNoteDraft(text: String) async -> Bool {
+        guard let draft = noteDraft else { return false }
+        let saved = await saveNote(draft, text: text)
+        if saved, noteDraft?.id == draft.id { noteDraft = nil }
+        return saved
+    }
+
     /// Tells the reader why a change is not made (`message`, one of our sentences), and makes none.
     private func refuse(_ message: String) -> Task<Bool, Never> {
         failure = EditFailure(message: message)

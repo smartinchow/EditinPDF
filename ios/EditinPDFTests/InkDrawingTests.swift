@@ -12,7 +12,7 @@ import XCTest
 final class InkDrawingTests: XCTestCase {
     /// `pages` US Letter pages in a 400 x 800 view, Draw picked, with an undo manager.
     func makeController(pages: Int = 3, tool: Tool? = .ink) async -> (PageScrollViewController, DocumentModel, UndoManager) {
-        let model = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(pages))
+        let model = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(pages))
         let undoManager = UndoManager()
         model.undoManager = undoManager
         let controller = PageScrollViewController(model: model)
@@ -98,7 +98,7 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertEqual(markup.drawing.ink?.page, 0, "the canvas stays where it was")
 
         // Before the permissions are read, nothing may be drawn.
-        let fresh = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(2))
+        let fresh = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(2))
         let other = PageScrollViewController(model: fresh)
         other.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         other.view.layoutIfNeeded()
@@ -199,7 +199,7 @@ final class InkDrawingTests: XCTestCase {
 
     /// On the page turned by `/Rotate 90` the drawing comes back where it was drawn on screen.
     func testWhatIsDrawnOnATurnedPageLandsWhereItWasDrawn() async throws {
-        let model = DocumentModel(bytes: try fixtureData("rotated"))
+        let model = isolatedModel(bytes: try fixtureData("rotated"))
         let controller = PageScrollViewController(model: model)
         controller.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         controller.view.layoutIfNeeded()

@@ -38,6 +38,12 @@ func isolatedToolStyles() -> ToolStyleStore {
     return ToolStyleStore(defaults: defaults)
 }
 
+/// A model of `bytes` whose tools' styles are the tests' own (`isolatedToolStyles`), not the app's.
+@MainActor
+func isolatedModel(bytes: Data) -> DocumentModel {
+    DocumentModel(outcome: OpenOutcome(bytes: bytes), toolStyles: isolatedToolStyles())
+}
+
 /// The middle of the first glyph on page 0 of the model's document, in view space.
 @MainActor
 func firstGlyphCenter(_ m: DocumentModel) throws -> CGPoint {

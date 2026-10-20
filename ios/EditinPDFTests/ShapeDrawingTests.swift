@@ -12,8 +12,7 @@ import XCTest
 final class ShapeDrawingTests: XCTestCase {
     /// `pages` US Letter pages in a 400 x 800 view, `tool` picked, with an undo manager.
     func makeController(pages: Int = 3, tool: Tool? = .rectangle, data: Data? = nil) async -> (PageScrollViewController, DocumentModel, UndoManager) {
-        let model = DocumentModel(outcome: OpenOutcome(bytes: data ?? PageScrollViewControllerTests.letterPages(pages)),
-                                  toolStyles: isolatedToolStyles())
+        let model = isolatedModel(bytes: data ?? PageScrollViewControllerTests.letterPages(pages))
         let undoManager = UndoManager()
         model.undoManager = undoManager
         let controller = PageScrollViewController(model: model)
@@ -87,7 +86,7 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertEqual(controller.scrollView.panGestureRecognizer.minimumNumberOfTouches, 1, "one finger off the pages scrolls")
 
         // Before the permissions are read, nothing is taken.
-        let fresh = DocumentModel(bytes: PageScrollViewControllerTests.letterPages(2))
+        let fresh = isolatedModel(bytes: PageScrollViewControllerTests.letterPages(2))
         let other = PageScrollViewController(model: fresh)
         other.view.frame = CGRect(origin: .zero, size: CGSize(width: 400, height: 800))
         other.view.layoutIfNeeded()
@@ -505,7 +504,7 @@ private extension Data {
     /// This PDF with its first page turned a quarter (`/Rotate 90`), through the engine.
     @MainActor
     func rotated() -> Data {
-        let model = DocumentModel(bytes: self)
+        let model = isolatedModel(bytes: self)
         guard let document = model.document(),
               (try? document.apply(edit: .rotatePages(pages: [0], degrees: 90), baseRevision: document.revision())) != nil,
               let saved = try? document.save(mode: .full) else { return self }
