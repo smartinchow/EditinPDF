@@ -114,26 +114,33 @@ final class InkSavingTests: XCTestCase {
 
     /// A finger going down while another is already held (a palm on the page, the Pencil drawing) is
     /// still reported: the observer stays listening until every finger it heard of has lifted, and only
-    /// then fails, ready for the next touches.
+    /// then fails, ready for the next touches. It hears every kind of touch together: a finger while
+    /// the Pencil is down, the Pencil while a palm is.
     func testAFingerDownWhileAnotherIsHeldIsStillReported() {
+        // Through the recognizer's own touch handlers, as UIKit calls them.
+        let event = UIEvent()
         let observer = FingerDownObserver()
-        var reported: [UIView?] = []
-        observer.fingerWentDown = { reported.append($0) }
-        let page = UIView(), back = UIView()
+        var reported = 0
+        observer.fingerWentDown = { _ in reported += 1 }
         let palm = UITouch(), tap = UITouch()
-        observer.touchWentDown(palm, on: page)
-        XCTAssertEqual(observer.state, .possible, "still listening")
-        observer.touchWentDown(tap, on: back)
-        XCTAssertEqual(reported.count, 2, "the second finger is heard though the first is down")
-        XCTAssertTrue(reported.last ?? nil === back)
-        observer.touchLifted(tap)
-        XCTAssertEqual(observer.state, .possible, "a finger is still held")
+        observer.touchesBegan([palm], with: event)
+        XCTAssertEqual(observer.failCount, 0, "still listening after the first finger")
+        XCTAssertEqual(observer.state, .possible)
+        observer.touchesBegan([tap], with: event)
+        XCTAssertEqual(reported, 2, "the second finger is heard though the first is down")
+        observer.touchesEnded([tap], with: event)
+        XCTAssertEqual(observer.failCount, 0, "a finger is still held")
         XCTAssertEqual(observer.heldCount, 1)
-        // Every finger lifted: it fails, done with these touches. (Outside a real touch sequence UIKit
-        // puts a failed recognizer straight back to possible, so its state cannot be read here.)
-        observer.touchLifted(palm)
+        observer.touchesCancelled([palm], with: event)
         XCTAssertEqual(observer.heldCount, 0)
+        XCTAssertEqual(observer.failCount, 1, "every finger lifted: done with these touches")
+        // The next sequence is heard too.
+        observer.touchesBegan([UITouch()], with: event)
+        XCTAssertEqual(reported, 3)
         XCTAssertFalse(observer.canBePrevented(by: UIPanGestureRecognizer()), "another gesture recognizing does not stop it listening")
+        XCTAssertFalse(observer.requiresExclusiveTouchType, "a finger is heard while the Pencil is down, and the other way round")
+        let types = Set(observer.allowedTouchTypes.map(\.intValue))
+        XCTAssertTrue(types.isSuperset(of: [UITouch.TouchType.direct, .pencil, .indirectPointer].map(\.rawValue)))
     }
 
     /// A save whose wait for a change runs out still writes (what the engine has), and says so in the

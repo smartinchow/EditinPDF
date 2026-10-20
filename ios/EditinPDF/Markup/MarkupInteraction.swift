@@ -545,12 +545,25 @@ final class FingerDownObserver: UIGestureRecognizer {
     private var held = Set<ObjectIdentifier>()
     /// How many fingers it heard of are still down.
     var heldCount: Int { held.count }
+    /// How many times it has given up on a sequence of touches (been set to failed). For tests: never
+    /// before the last finger it heard of lifts. (Counted as the state is set: outside a real touch
+    /// sequence UIKit does not keep the state it is given.)
+    private(set) var failCount = 0
+
+    override var state: UIGestureRecognizer.State {
+        willSet { if newValue == .failed { failCount += 1 } }
+    }
 
     init() {
         super.init(target: nil, action: nil)
         cancelsTouchesInView = false
         delaysTouchesBegan = false
         delaysTouchesEnded = false
+        // Every kind of touch, together: a finger tapping Back while the Pencil rests on the page, and
+        // the Pencil tapping it while a palm does. (By default a recognizer holding a touch of one type
+        // ignores new touches of other types until it resets.)
+        requiresExclusiveTouchType = false
+        allowedTouchTypes = [UITouch.TouchType.direct, .pencil, .indirectPointer].map { NSNumber(value: $0.rawValue) }
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
@@ -571,13 +584,13 @@ final class FingerDownObserver: UIGestureRecognizer {
     }
 
     /// `touch` went down on `view`: reported, and held until it lifts.
-    func touchWentDown(_ touch: UITouch, on view: UIView?) {
+    private func touchWentDown(_ touch: UITouch, on view: UIView?) {
         held.insert(ObjectIdentifier(touch))
         fingerWentDown?(view)
     }
 
     /// `touch` lifted (or was cancelled): once none is held, the recognizer is done with these touches.
-    func touchLifted(_ touch: UITouch) {
+    private func touchLifted(_ touch: UITouch) {
         held.remove(ObjectIdentifier(touch))
         if held.isEmpty, state == .possible { state = .failed }
     }
