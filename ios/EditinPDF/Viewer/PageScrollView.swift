@@ -96,9 +96,10 @@ struct PageScrollView: UIViewControllerRepresentable {
         // every update is harmless. Followed just after the update, not in it: laying the pages out
         // again adds the strokes and text waiting, a change to the model, and SwiftUI's state must not
         // change while it updates views. Tasks on the main actor start in the order they are made, so
-        // the changes are followed in the order they came (and an older one is ignored anyway).
+        // the changes are followed in the order they came (and an older one is ignored anyway). Held
+        // weakly: a screen gone by then has nothing to follow, and is not kept for it.
         if let lastChange {
-            Task { @MainActor in controller.apply(lastChange) }
+            Task { @MainActor [weak controller] in controller?.apply(lastChange) }
         }
         controller.forms = forms
         controller.selectedAnnotation = selectedAnnotation
@@ -109,12 +110,12 @@ struct PageScrollView: UIViewControllerRepresentable {
         // change while it updates views: both happen just after the update instead.
         let targetRequest = $scrollTarget
         let revealRequest = $revealRect
-        Task { @MainActor in
-            if let target { controller.scroll(to: target) }
+        Task { @MainActor [weak controller] in
+            if let target { controller?.scroll(to: target) }
             // After the jump, so that the page is where it belongs and the box is only moved into view.
-            if let reveal { controller.reveal(reveal) }
+            if let reveal { controller?.reveal(reveal) }
             // An annotation picked in the Comments list is in view now: its menu can come up over it.
-            controller.markupInteraction.selecting.selectionDidChange()
+            controller?.markupInteraction.selecting.selectionDidChange()
             targetRequest.wrappedValue = nil
             revealRequest.wrappedValue = nil
         }
