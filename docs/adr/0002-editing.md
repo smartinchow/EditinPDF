@@ -73,8 +73,11 @@ on the scene's undo manager directly, ⇧⌘Z even while the toolbar's Redo was 
 and `redo`, which add what waits first, under one rule (`UndoAvailability`). The menu names the change each makes, as
 the system's did ("Undo Add Markup"), by the same rule: what waits, when something does, else the undo manager's
 last change (`undoTitle`, `redoTitle`). The commands find the document through
-`FrontDocument`, which each screen keeps up to date (its scene active, its window the key one): SwiftUI's focused
-values never reached them from a document scene's view. While a field outside the pages is typed in (the search, a
+`FrontDocument`: SwiftUI's focused values never reached them from a document scene's view. Each screen says which
+scene it is shown in, and the document in front is the one shown in the key window's scene, found again as a
+window becomes key and as a command runs; not the scene that became active last (two side by side on an iPad are
+both active, and only the key window takes the keyboard's commands), and none when the key window shows the
+document browser. While a field outside the pages is typed in (the search, a
 note), they are that field's, as in any field. Shake to undo and the three-finger undo gesture act on the first
 responder's undo manager. On the iOS 26.5 simulator that was never the scene's: a shake with strokes waiting and a
 change to undo brought no alert, and the first responder, logged every two seconds, was none (on an iPhone and an

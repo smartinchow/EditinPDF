@@ -231,7 +231,6 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         self.model = model
         followedRevision = model.lastChange?.revision ?? model.revision
         super.init(nibName: nil, bundle: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(windowBecameKey(_:)), name: UIWindow.didBecomeKeyNotification, object: nil)
     }
 
     @available(*, unavailable)
@@ -261,10 +260,11 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
     }
 
     /// On screen, the window tells the markup of every finger going down, outside the pages too
-    /// (`MarkupInteraction.fingerWentDown`).
+    /// (`MarkupInteraction.fingerWentDown`), and the document is on display in the window's scene, for
+    /// the Edit menu's Undo and Redo (`FrontDocument`).
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if view.window?.isKeyWindow == true { FrontDocument.shared.bringForward(model) }
+        FrontDocument.shared.show(model, in: view.window?.windowScene)
         let observer = markupInteraction.fingersDown
         guard let window = view.window, observer.view !== window else { return }
         observer.view?.removeGestureRecognizer(observer)
@@ -286,12 +286,6 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         while let current = responder, !(current is UIDocumentViewController) { responder = current.next }
         guard let document = (responder as? UIDocumentViewController)?.document, !document.hasUnsavedChanges else { return }
         document.updateChangeCount(.done)
-    }
-
-    /// A window became the key one: when it is this one, its document is in front, for the Edit menu's
-    /// Undo and Redo (two documents side by side on an iPad).
-    @objc private func windowBecameKey(_ notification: Notification) {
-        if let window = notification.object as? UIWindow, window === viewIfLoaded?.window { FrontDocument.shared.bringForward(model) }
     }
 
     override func viewDidDisappear(_ animated: Bool) {

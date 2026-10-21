@@ -80,10 +80,7 @@ struct DocumentScreen: View {
 
     var body: some View {
         content
-            .onAppear {
-                adoptUndoManager()
-                FrontDocument.shared.bringForward(model)
-            }
+            .onAppear { adoptUndoManager() }
             // Strokes drawn with Draw and waiting are added as the screen goes. (Going back to the
             // documents closes the file before this: the strokes were added as the back button was
             // touched, see `MarkupInteraction.fingerWentDown`.)
@@ -95,7 +92,6 @@ struct DocumentScreen: View {
             // Strokes left waiting on the page are added before the scene goes to the background (and
             // the file is saved): they would not be in it otherwise.
             .onChange(of: scenePhase) {
-                if scenePhase == .active { FrontDocument.shared.bringForward(model) }
                 if scenePhase != .active { model.commitPendingInk() }
                 // A note being written is saved as the scene goes to the background (and the file is
                 // saved): the app may not come back to it.
@@ -620,10 +616,14 @@ struct UndoAvailability: Equatable {
     }
 }
 
-/// The document in front (its screen on display in the key window): what the Edit menu's Undo and
-/// Redo act on (`UndoRedoCommands`). SwiftUI's focused values do not reach the app's commands from a
-/// document scene's view (the commands read none, on the iOS 26.5 simulator, iPhone and iPad), so the
-/// screen says itself when its document comes to the front, and when it goes.
+/// The document in front (its screen on display in the key window's scene): what the Edit menu's Undo
+/// and Redo act on (`UndoRedoCommands`). SwiftUI's focused values do not reach the app's commands from
+/// a document scene's view (the commands read none, on the iOS 26.5 simulator, iPhone and iPad), so
+/// each screen says which scene it is shown in (`show`) and when it goes (`leave`), and the document
+/// in front is found again from the key window (`front(of:keyScene:)`): as a window becomes key, and
+/// as a command runs. Not from the scene that became active last: two side by side on an iPad are both
+/// active, and only the key window takes the keyboard's commands; a key window showing the document
+/// browser has no document in front.
 ///
 /// While a field outside the pages is typed in (the search, a note, a password), Undo and Redo are
 /// that field's, as in any field (`fieldIsBeingTyped`). The text box and form field editors on the
@@ -639,6 +639,7 @@ final class FrontDocument: NSObject {
     override init() {
         super.init()
         let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(windowBecameKey(_:)), name: UIWindow.didBecomeKeyNotification, object: nil)
         for name in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
             center.addObserver(self, selector: #selector(editingBegan(_:)), name: name, object: nil)
         }
@@ -670,12 +671,14 @@ final class FrontDocument: NSObject {
         return responder
     }
 
-    /// The Edit menu's Undo: the field's, while one outside the pages is typed in; the document's
-    /// otherwise (`DocumentModel.undo`, which adds what waits first).
+    /// The Edit menu's Undo: the field's, while one outside the pages is typed in; otherwise the
+    /// document's in front, found again as the command runs (`DocumentModel.undo`, which adds what
+    /// waits first).
     func undo() {
         if let field = Self.fieldBeingTyped() {
             field.undoManager?.undo()
         } else {
+            refresh()
             model?.undo()
         }
     }
@@ -685,6 +688,7 @@ final class FrontDocument: NSObject {
         if let field = Self.fieldBeingTyped() {
             field.undoManager?.redo()
         } else {
+            refresh()
             model?.redo()
         }
     }
@@ -702,14 +706,55 @@ final class FrontDocument: NSObject {
         init(_ model: DocumentModel) { self.model = model }
     }
 
-    /// `model`'s document came to the front: its scene became active, or its window the key one.
-    func bringForward(_ model: DocumentModel) {
-        if self.model !== model { self.model = model }
+    /// A document's screen on display: its model, and the scene its window is in. Both held weakly:
+    /// the scene owns the model, and the system the scene.
+    struct Display {
+        weak var model: DocumentModel?
+        weak var scene: AnyObject?
     }
 
-    /// `model`'s screen went: it is not in front any more.
+    /// The documents' screens on display, the last shown last.
+    @ObservationIgnored private var displays: [Display] = []
+
+    /// The scene of the key window, the one the keyboard's commands and the menu bar act in
+    /// (`keyWindowScene`); a test puts its own in its place.
+    @ObservationIgnored var keyScene: @MainActor () -> AnyObject? = { FrontDocument.keyWindowScene() }
+
+    /// `model`'s screen is on display in `scene` (its window's): it appeared, or came back on screen.
+    func show(_ model: DocumentModel, in scene: AnyObject?) {
+        displays.removeAll { $0.model == nil || $0.model === model }
+        displays.append(Display(model: model, scene: scene))
+        refresh()
+    }
+
+    /// `model`'s screen went: it is not on display any more.
     func leave(_ model: DocumentModel) {
-        if self.model === model { self.model = nil }
+        displays.removeAll { $0.model == nil || $0.model === model }
+        refresh()
+    }
+
+    /// Finds the document in front again, from the key window's scene.
+    func refresh() {
+        let front = Self.front(of: displays, keyScene: keyScene())
+        if model !== front { model = front }
+    }
+
+    @objc private func windowBecameKey(_ notification: Notification) {
+        refresh()
+    }
+
+    /// The document in front among `displays`: the one shown in `keyScene`, the key window's, the last
+    /// shown when several are (one closing as another opens). None when no window is key, or the key
+    /// window's scene shows no document (the document browser, in a window of its own).
+    static func front(of displays: [Display], keyScene: AnyObject?) -> DocumentModel? {
+        guard let keyScene else { return nil }
+        return displays.last { $0.scene === keyScene && $0.model != nil }?.model
+    }
+
+    /// The scene of the app's key window; nil when no window is key.
+    static func keyWindowScene() -> UIWindowScene? {
+        UIApplication.shared.connectedScenes.lazy.compactMap { $0 as? UIWindowScene }
+            .first { $0.windows.contains(where: \.isKeyWindow) }
     }
 }
 

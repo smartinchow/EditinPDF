@@ -441,16 +441,18 @@ final class DocumentEditingTests: XCTestCase {
     /// and are a field's while one outside the pages is typed in.
     func testTheEditMenuActsOnTheDocumentInFront() throws {
         let front = FrontDocument()
+        let scene = NSObject()
+        front.keyScene = { scene }
         var (first, _) = try makeModel()
         let (second, _) = try makeModel()
-        front.bringForward(first)
+        front.show(first, in: scene)
         XCTAssertTrue(front.model === first)
-        front.bringForward(second)
+        front.show(second, in: scene)
         front.leave(first)
         XCTAssertTrue(front.model === second, "the one in front stays when another goes")
         front.leave(second)
         XCTAssertNil(front.model)
-        front.bringForward(first)
+        front.show(first, in: scene)
         first = DocumentModel(bytes: Data())
         XCTAssertNil(front.model, "a model gone is in front no more")
 
@@ -473,6 +475,50 @@ final class DocumentEditingTests: XCTestCase {
         second.pendingInkDidChange(true)
         XCTAssertTrue(second.undoAvailability.undoEnabled)
         XCTAssertFalse(second.undoAvailability.redoEnabled, "not past the strokes waiting")
+    }
+
+    /// The document in front, for the Edit menu, is the one shown in the key window's scene, not the
+    /// scene that became active last: of two side by side on an iPad, the one whose window is key; none
+    /// when the key window shows the document browser, or no window is key. Of several shown in one
+    /// scene, the last shown. It is found again as a window becomes key, and as a command runs.
+    func testTheDocumentInFrontIsTheOneInTheKeyWindowsScene() async throws {
+        let (first, firstUndo) = try makeModel()
+        let (second, secondUndo) = try makeModel()
+        let left = NSObject(), right = NSObject(), browser = NSObject()
+        let displays = [FrontDocument.Display(model: first, scene: left), FrontDocument.Display(model: second, scene: right)]
+        XCTAssertTrue(FrontDocument.front(of: displays, keyScene: left) === first, "the key one, though the other came last")
+        XCTAssertTrue(FrontDocument.front(of: displays, keyScene: right) === second)
+        XCTAssertNil(FrontDocument.front(of: displays, keyScene: browser), "the key window shows the documents")
+        XCTAssertNil(FrontDocument.front(of: displays, keyScene: nil), "no window is key")
+        let both = displays + [FrontDocument.Display(model: first, scene: right)]
+        XCTAssertTrue(FrontDocument.front(of: both, keyScene: right) === first, "the last shown in the key window's scene")
+
+        // As the app keeps it: the screens shown, then the key window moving from scene to scene.
+        let front = FrontDocument()
+        var key: AnyObject? = left
+        front.keyScene = { key }
+        front.show(first, in: left)
+        front.show(second, in: right)
+        XCTAssertTrue(front.model === first, "the right one came last, but the left window is key")
+        key = right
+        NotificationCenter.default.post(name: UIWindow.didBecomeKeyNotification, object: nil)
+        XCTAssertTrue(front.model === second, "found again as a window becomes key")
+        key = browser
+        NotificationCenter.default.post(name: UIWindow.didBecomeKeyNotification, object: nil)
+        XCTAssertNil(front.model, "the document browser's window is key")
+
+        // A command finds the key window's document as it runs.
+        await first.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        await second.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        key = left
+        front.undo()
+        XCTAssertTrue(firstUndo.canRedo, "the left one's change taken back")
+        XCTAssertFalse(secondUndo.canRedo)
+        await first.settle()
+        XCTAssertEqual(first.pages[0].rotationDegrees, 0)
+        XCTAssertEqual(second.pages[0].rotationDegrees, 90)
+        front.leave(first)
+        XCTAssertNil(front.model, "its screen went")
     }
 
     /// The Edit menu names the change its Undo and Redo make, as the system's menu did ("Undo Add
