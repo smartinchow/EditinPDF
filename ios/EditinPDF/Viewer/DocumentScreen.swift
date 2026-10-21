@@ -716,9 +716,11 @@ final class FrontDocument: NSObject {
     /// The documents' screens on display, the last shown last.
     @ObservationIgnored private var displays: [Display] = []
 
-    /// The scene of the key window, the one the keyboard's commands and the menu bar act in
-    /// (`keyWindowScene`); a test puts its own in its place.
-    @ObservationIgnored var keyScene: @MainActor () -> AnyObject? = { FrontDocument.keyWindowScene() }
+    /// The scene of the key window, the one the keyboard's commands and the menu bar act in, for a test
+    /// to give; nil for the app's own (`keyWindowScene`).
+    @ObservationIgnored var keyScene: (() -> AnyObject?)?
+    /// The window that last became key, held weakly (`keyWindowScene`).
+    @ObservationIgnored private weak var lastKeyWindow: UIWindow?
 
     /// `model`'s screen is on display in `scene` (its window's): it appeared, or came back on screen.
     func show(_ model: DocumentModel, in scene: AnyObject?) {
@@ -735,11 +737,13 @@ final class FrontDocument: NSObject {
 
     /// Finds the document in front again, from the key window's scene.
     func refresh() {
-        let front = Self.front(of: displays, keyScene: keyScene())
+        let scene: AnyObject? = if let keyScene { keyScene() } else { Self.keyWindowScene(lastBecameKey: lastKeyWindow) }
+        let front = Self.front(of: displays, keyScene: scene)
         if model !== front { model = front }
     }
 
     @objc private func windowBecameKey(_ notification: Notification) {
+        if let window = notification.object as? UIWindow { lastKeyWindow = window }
         refresh()
     }
 
@@ -751,9 +755,11 @@ final class FrontDocument: NSObject {
         return displays.last { $0.scene === keyScene && $0.model != nil }?.model
     }
 
-    /// The scene of the app's key window; nil when no window is key.
-    static func keyWindowScene() -> UIWindowScene? {
-        UIApplication.shared.connectedScenes.lazy.compactMap { $0 as? UIWindowScene }
+    /// The scene of the app's key window: `lastBecameKey`'s while it is still key, otherwise the scene
+    /// with a key window; nil when no window is key.
+    static func keyWindowScene(lastBecameKey: UIWindow?) -> UIWindowScene? {
+        if let lastBecameKey, lastBecameKey.isKeyWindow, let scene = lastBecameKey.windowScene { return scene }
+        return UIApplication.shared.connectedScenes.lazy.compactMap { $0 as? UIWindowScene }
             .first { $0.windows.contains(where: \.isKeyWindow) }
     }
 }
