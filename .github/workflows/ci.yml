@@ -45,9 +45,10 @@ jobs:
     # simulator runtime, but not XcodeGen. Use the plain macOS label once it ships Xcode 27;
     # `xcode-27-xlarge` is the bigger machine, if this one turns out too small for the Rust link steps.
     runs-on: xcode-27
-    # On a 10-core Mac the Rust half takes 7 minutes cold (clippy 47 s, tests 110 s, XCFramework 253 s)
-    # and the app's UI tests about 90 s; expect three to four times as long on this runner's 3 cores.
-    timeout-minutes: 120
+    # On a 10-core Mac the Rust half takes 7 minutes cold (clippy 47 s, tests 110 s, XCFramework 253 s).
+    # The app's tests take about 40 minutes on this runner's 3 cores, most of it the editor's UI tests
+    # (1-2.5 minutes each there).
+    timeout-minutes: 200
 
     steps:
       - name: Check out, with the engine submodule
@@ -180,7 +181,7 @@ jobs:
         run: xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: App tests (unit and UI) on the simulator
-        timeout-minutes: 45
+        timeout-minutes: 100
         working-directory: ios
         env:
           NSUnbufferedIO: "YES"
