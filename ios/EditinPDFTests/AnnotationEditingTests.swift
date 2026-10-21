@@ -454,6 +454,7 @@ final class AnnotationEditingTests: XCTestCase {
         XCTAssertFalse(model.hasPendingText, "nothing changed yet")
         type("New text", into: editor)
         XCTAssertTrue(model.hasPendingText)
+        XCTAssertEqual(model.undoAvailability.undoTitle, Strings.undoAction(Strings.actionEditAnnotation), "the Edit menu's Undo")
         markup.place(atContentPoint: try contentPoint(CGPoint(x: 400, y: 600), in: controller))
         XCTAssertNil(markup.textBoxes.textEditor)
         await model.settle()
@@ -481,6 +482,7 @@ final class AnnotationEditingTests: XCTestCase {
         XCTAssertTrue(markup.textBoxes.beginEditing(box))
         type("", into: try XCTUnwrap(markup.textBoxes.textEditor))
         XCTAssertTrue(model.hasPendingText, "taking the text away is a change")
+        XCTAssertEqual(model.undoAvailability.undoTitle, Strings.undoAction(Strings.actionDeleteAnnotation), "the Edit menu's Undo")
         let made = await markup.commitPendingText()?.value
         XCTAssertEqual(made, true)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)

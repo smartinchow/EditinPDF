@@ -181,7 +181,7 @@ extension TextBoxInteraction: UITextViewDelegate {
     func textViewDidChange(_ textView: UITextView) {
         guard let editor = textView as? InlineTextEditor, editor === textEditor else { return }
         editor.holdToTextLimit()
-        model.pendingTextDidChange(editor.isWaiting)
+        model.pendingTextDidChange(editor.isWaiting, named: editor.actionName)
         layoutTextEditor()
         keyboard.reveal()
     }

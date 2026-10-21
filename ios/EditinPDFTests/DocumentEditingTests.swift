@@ -468,11 +468,43 @@ final class DocumentEditingTests: XCTestCase {
         XCTAssertFalse(front.fieldIsBeingTyped)
 
         XCTAssertEqual(second.undoAvailability, UndoAvailability())
-        second.undoStackDidChange(canUndo: true, canRedo: true)
+        second.undoStackDidChange(canUndo: true, canRedo: true, undoName: "", redoName: "")
         XCTAssertEqual(second.undoAvailability, UndoAvailability(canUndo: true, canRedo: true))
         second.pendingInkDidChange(true)
         XCTAssertTrue(second.undoAvailability.undoEnabled)
         XCTAssertFalse(second.undoAvailability.redoEnabled, "not past the strokes waiting")
+    }
+
+    /// The Edit menu names the change its Undo and Redo make, as the system's menu did ("Undo Add
+    /// Markup"), under the toolbar's rule: what waits, when something does (Undo adds it, then takes it
+    /// back, and Redo waits), else the undo manager's last change. Plain while they are off.
+    func testTheEditMenuNamesTheChangeUndoAndRedoMake() async throws {
+        let (m, u) = try makeModel()
+        func read() {
+            m.undoStackDidChange(canUndo: u.canUndo, canRedo: u.canRedo, undoName: u.undoActionName, redoName: u.redoActionName)
+        }
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undo)
+        XCTAssertEqual(m.undoAvailability.redoTitle, Strings.redo)
+        await m.perform(.rotatePages(pages: [0], degrees: 90), named: Strings.actionRotate, touching: [0])
+        read()
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undoAction(Strings.actionRotate))
+        XCTAssertEqual(m.undoAvailability.redoTitle, Strings.redo, "nothing to redo")
+        u.undo(); await m.settle(); read()
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undo, "nothing left to undo")
+        XCTAssertEqual(m.undoAvailability.redoTitle, Strings.redoAction(Strings.actionRotate))
+
+        m.pendingInkDidChange(true)
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undoAction(Strings.actionAddAnnotation), "the strokes waiting")
+        XCTAssertEqual(m.undoAvailability.redoTitle, Strings.redo, "Redo waits for them")
+        m.pendingInkDidChange(false)
+        m.pendingTextDidChange(true, named: Strings.actionEditAnnotation)
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undoAction(Strings.actionEditAnnotation), "a text box's text changed")
+        m.pendingTextDidChange(false)
+        m.pendingFieldTextDidChange(true)
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undoAction(Strings.actionFillField))
+        m.pendingFieldTextDidChange(false)
+        XCTAssertEqual(m.undoAvailability.undoTitle, Strings.undo)
+        XCTAssertEqual(m.undoAvailability.redoTitle, Strings.redoAction(Strings.actionRotate))
     }
 
     /// A note being written when the scene goes to the background is saved, handed over at once (the

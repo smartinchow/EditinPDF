@@ -381,10 +381,14 @@ final class DocumentModel {
     /// Whether text typed in a box on the page (Text Box) is waiting to be added as a text box: added
     /// with the strokes waiting (`commitPendingInk`). Only spaces and new lines are not waiting.
     private(set) var hasPendingText = false
+    /// The name of the change that text makes (`InlineTextEditor.actionName`): a new text box is added;
+    /// over one on the page, its text is changed, or it is deleted.
+    private(set) var pendingTextName = Strings.actionAddAnnotation
 
-    /// The text being typed in a text box came or went.
-    func pendingTextDidChange(_ pending: Bool) {
+    /// The text being typed in a text box came or went, or changed what it makes (`actionName`).
+    func pendingTextDidChange(_ pending: Bool, named actionName: String = Strings.actionAddAnnotation) {
         if hasPendingText != pending { hasPendingText = pending }
+        if pendingTextName != actionName { pendingTextName = actionName }
     }
 
     /// Whether strokes or text are waiting to be added (`hasPendingInk`, `hasPendingText`): the palette
@@ -606,20 +610,38 @@ final class DocumentModel {
     /// (typing in a field, then a tap on a checkbox, in one turn of the run loop): then it holds more
     /// than the engine, and an undo past the engine's history is quiet (`move`).
     static let undoLimit = 100
-    /// Whether the undo manager has a change to take back, and one to make again, as last read
-    /// (`undoStackDidChange`): it is not observable itself.
+    /// Whether the undo manager has a change to take back, and one to make again, and their names
+    /// (`Strings.actionRotate`, ...; empty for none), as last read (`undoStackDidChange`): it is not
+    /// observable itself.
     private(set) var undoManagerCanUndo = false
     private(set) var undoManagerCanRedo = false
+    private(set) var undoManagerUndoName = ""
+    private(set) var undoManagerRedoName = ""
 
     /// The screen read the undo manager's stacks again.
-    func undoStackDidChange(canUndo: Bool, canRedo: Bool) {
+    func undoStackDidChange(canUndo: Bool, canRedo: Bool, undoName: String, redoName: String) {
         if undoManagerCanUndo != canUndo { undoManagerCanUndo = canUndo }
         if undoManagerCanRedo != canRedo { undoManagerCanRedo = canRedo }
+        if undoManagerUndoName != undoName { undoManagerUndoName = undoName }
+        if undoManagerRedoName != redoName { undoManagerRedoName = redoName }
     }
 
-    /// Whether Undo and Redo may be chosen now, in the toolbar and in the Edit menu.
+    /// Whether Undo and Redo may be chosen now, in the toolbar and in the Edit menu, and what the
+    /// menu calls them.
     var undoAvailability: UndoAvailability {
-        UndoAvailability(canUndo: undoManagerCanUndo, canRedo: undoManagerCanRedo, hasPendingEdit: hasPendingEdit)
+        UndoAvailability(canUndo: undoManagerCanUndo, canRedo: undoManagerCanRedo, hasPendingEdit: hasPendingEdit,
+                         undoName: undoManagerUndoName, redoName: undoManagerRedoName, pendingName: pendingEditName)
+    }
+
+    /// The name of the change what waits makes, nil with nothing waiting: Undo adds it, then takes it
+    /// back. The strokes, the text box's text and the field's text are added in that order
+    /// (`commitPendingInk`), in one turn of the run loop, so in one step of the undo manager, which
+    /// bears the last name given.
+    var pendingEditName: String? {
+        if hasPendingFieldText { return Strings.actionFillField }
+        if hasPendingText { return pendingTextName }
+        if hasPendingInk { return Strings.actionAddAnnotation }
+        return nil
     }
 
     /// Whether a change, undo or redo is waiting or running.

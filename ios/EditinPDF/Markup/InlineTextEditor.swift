@@ -151,6 +151,13 @@ final class InlineTextEditor: UITextView {
         let typed = ShapeGeometry.committedText(text ?? "")
         return existing == nil ? !typed.isEmpty : typed != ShapeGeometry.committedText(originalText)
     }
+
+    /// The name of the change what is typed makes (`TextBoxInteraction.commitPendingText`): a new text
+    /// box is added; over one on the page, its text is changed, or, all of it taken away, it is deleted.
+    var actionName: String {
+        guard existing != nil else { return Strings.actionAddAnnotation }
+        return ShapeGeometry.committedText(text ?? "").isEmpty ? Strings.actionDeleteAnnotation : Strings.actionEditAnnotation
+    }
 }
 
 extension RGBA {

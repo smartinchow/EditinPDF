@@ -139,12 +139,13 @@ struct DocumentScreen: View {
         readUndoState(nil)
     }
 
-    /// Reads whether there is something to undo and redo, after `notification` from an undo manager:
-    /// only the scene's own matters (other ones, a text field's, post the same notifications). The
-    /// undo manager is not observable, so the model is told (`undoStackDidChange`).
+    /// Reads whether there is something to undo and redo, and its name, after `notification` from an
+    /// undo manager: only the scene's own matters (other ones, a text field's, post the same
+    /// notifications). The undo manager is not observable, so the model is told (`undoStackDidChange`).
     private func readUndoState(_ notification: Notification?) {
         if let notification, (notification.object as? UndoManager) !== undoManager { return }
-        model.undoStackDidChange(canUndo: undoManager?.canUndo ?? false, canRedo: undoManager?.canRedo ?? false)
+        model.undoStackDidChange(canUndo: undoManager?.canUndo ?? false, canRedo: undoManager?.canRedo ?? false,
+                                 undoName: undoManager?.undoActionName ?? "", redoName: undoManager?.redoActionName ?? "")
     }
 
     /// Whether the document is waiting for its password.
@@ -587,16 +588,36 @@ struct DocumentScreen: View {
 /// Whether Undo and Redo may be chosen: the toolbar's buttons and the Edit menu's (and their keys)
 /// follow the same rule. Undo, when the undo manager has a change to take back or something is
 /// waiting to be added (it adds that, then takes it back); Redo, when the undo manager has a change to
-/// make again and nothing is waiting (adding it would leave nothing to redo).
+/// make again and nothing is waiting (adding it would leave nothing to redo). The Edit menu names the
+/// change each makes, under the same rule (`undoTitle`, `redoTitle`).
 struct UndoAvailability: Equatable {
     var canUndo = false
     var canRedo = false
     /// Strokes, or text typed in a text box or a form field, waiting to be added
     /// (`DocumentModel.hasPendingEdit`).
     var hasPendingEdit = false
+    /// The names of the changes the undo manager would take back and make again (empty for none), and
+    /// of the change what waits makes (`DocumentModel.pendingEditName`).
+    var undoName = ""
+    var redoName = ""
+    var pendingName: String?
 
     var undoEnabled: Bool { canUndo || hasPendingEdit }
     var redoEnabled: Bool { canRedo && !hasPendingEdit }
+
+    /// The Edit menu's Undo: "Undo" and the change it takes back, as the system's menu has it. That is
+    /// what waits, when something does (added, then taken back), or else the undo manager's last change.
+    /// Plain "Undo" while it is off, or for a change with no name.
+    var undoTitle: String {
+        let name = hasPendingEdit ? pendingName ?? "" : undoName
+        return undoEnabled && !name.isEmpty ? Strings.undoAction(name) : Strings.undo
+    }
+
+    /// The Edit menu's Redo: "Redo" and the change it makes again; plain "Redo" while it is off
+    /// (nothing to redo, or something waiting).
+    var redoTitle: String {
+        redoEnabled && !redoName.isEmpty ? Strings.redoAction(redoName) : Strings.redo
+    }
 }
 
 /// The document in front (its screen on display in the key window): what the Edit menu's Undo and
@@ -696,8 +717,9 @@ final class FrontDocument: NSObject {
 /// place of the system's. Those act on the scene's undo manager directly, and so would undo past
 /// strokes, or text, waiting to be added (the strokes then refused as stale, and lost), and ⇧⌘Z would
 /// redo while the toolbar's Redo is off. These go through the model, as the toolbar's buttons do,
-/// under the same rule (`UndoAvailability`), or, while a field outside the pages is typed in, to that
-/// field (`FrontDocument`).
+/// under the same rule (`UndoAvailability`), named as the system's are ("Undo Add Markup":
+/// `undoTitle`, `redoTitle`), or, while a field outside the pages is typed in, to that field
+/// (`FrontDocument`), plain "Undo" and "Redo" then (the field's undo manager is not observed).
 struct UndoRedoCommands: Commands {
     private var front: FrontDocument { FrontDocument.shared }
 
@@ -705,10 +727,10 @@ struct UndoRedoCommands: Commands {
         let availability = front.model?.undoAvailability ?? UndoAvailability()
         let typing = front.fieldIsBeingTyped
         CommandGroup(replacing: .undoRedo) {
-            Button(Strings.undo) { front.undo() }
+            Button(typing ? Strings.undo : availability.undoTitle) { front.undo() }
                 .keyboardShortcut("z", modifiers: .command)
                 .disabled(!(availability.undoEnabled || typing))
-            Button(Strings.redo) { front.redo() }
+            Button(typing ? Strings.redo : availability.redoTitle) { front.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!(availability.redoEnabled || typing))
         }

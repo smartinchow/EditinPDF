@@ -70,7 +70,9 @@ not on the undo manager, so whatever undoes must add them first, or the undo mov
 them and they are refused as stale when they come. The toolbar's Undo and Redo and the Edit menu's (the iPad's
 menu bar, and ⌘Z and ⇧⌘Z on a hardware keyboard: `UndoRedoCommands`, in place of the system's group, which acted
 on the scene's undo manager directly, ⇧⌘Z even while the toolbar's Redo was off) go through `DocumentModel.undo`
-and `redo`, which add what waits first, under one rule (`UndoAvailability`). The commands find the document through
+and `redo`, which add what waits first, under one rule (`UndoAvailability`). The menu names the change each makes, as
+the system's did ("Undo Add Markup"), by the same rule: what waits, when something does, else the undo manager's
+last change (`undoTitle`, `redoTitle`). The commands find the document through
 `FrontDocument`, which each screen keeps up to date (its scene active, its window the key one): SwiftUI's focused
 values never reached them from a document scene's view. While a field outside the pages is typed in (the search, a
 note), they are that field's, as in any field. Shake to undo and the three-finger undo gesture act on the first

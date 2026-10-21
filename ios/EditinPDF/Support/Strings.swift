@@ -201,6 +201,17 @@ enum Strings {
         String(localized: "Redo", comment: "Toolbar button that makes again the change last taken back")
     }
 
+    /// The Edit menu's Undo (the iPad's menu bar, ⌘Z), naming the change it takes back: `name` is one of
+    /// the names below (`actionRotate`, `actionAddAnnotation`, ...), as the system's menu shows them.
+    static func undoAction(_ name: String) -> String {
+        String(localized: "Undo \(name)", comment: "Edit menu item that takes back the last change to the PDF; the name of the change follows, such as Add Markup")
+    }
+
+    /// The Edit menu's Redo (⇧⌘Z), naming the change it makes again, as `undoAction`.
+    static func redoAction(_ name: String) -> String {
+        String(localized: "Redo \(name)", comment: "Edit menu item that makes again the change last taken back; the name of the change follows, such as Add Markup")
+    }
+
     /// The title of the alert about a change that was not made.
     static var editFailed: String {
         String(localized: "That change could not be made.", comment: "Title of the alert shown when a change to the PDF was refused or failed")

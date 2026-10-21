@@ -101,6 +101,8 @@ final class StringsTests: XCTestCase {
     func testTheEditingSentencesAndActionNames() {
         XCTAssertEqual(Strings.undo, "Undo")
         XCTAssertEqual(Strings.redo, "Redo")
+        XCTAssertEqual(Strings.undoAction(Strings.actionAddAnnotation), "Undo Add Markup")
+        XCTAssertEqual(Strings.redoAction(Strings.actionRotate), "Redo Rotate Pages")
         XCTAssertEqual(Strings.editFailed, "That change could not be made.")
         XCTAssertEqual(Strings.editNotAllowed, "This document doesn't allow that change.")
         XCTAssertEqual(Strings.signedDocumentDamaged, "This signed document is damaged. Changing it would break its signatures.")

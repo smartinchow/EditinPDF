@@ -329,6 +329,7 @@ final class ShapeDrawingTests: XCTestCase {
         // It grows with what is typed.
         type("A first line\nand a second", into: editor)
         XCTAssertTrue(model.hasPendingText)
+        XCTAssertEqual(model.undoAvailability.undoTitle, Strings.undoAction(Strings.actionAddAnnotation), "the Edit menu's Undo")
         try assertFrame(of: editor, is: ShapeGeometry.textBoxRect(at: editor.origin, text: "A first line\nand a second", fontSize: 14,
                                                                    pageSize: CGSize(width: 612, height: 792)), in: controller)
     }
