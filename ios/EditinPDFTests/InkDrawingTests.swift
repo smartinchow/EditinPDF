@@ -499,6 +499,43 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "what waited was added")
     }
 
+    /// The paths after which the document or the screen may go before a stroke being drawn is over
+    /// (Back touched, the scene leaving the screen, the screen going, focus leaving the pages) add the
+    /// strokes drawn at once, even mid-stroke: they are not lost with the document. The stroke being
+    /// drawn may be cut.
+    func testAClosingPathMidStrokeAddsTheStrokesDrawnAtOnce() async throws {
+        let lower = line.map { CGPoint(x: $0.x, y: $0.y + 200) }
+        let routes: [(String, @MainActor (PageScrollViewController, DocumentModel) -> Void)] = [
+            ("a finger on Back", { controller, _ in controller.markupInteraction.fingerWentDown(on: UIView()) }),
+            ("the scene leaving, the screen going", { _, model in model.commitPendingInk(closing: true) }),
+            ("the scroll view dismantled", { controller, _ in PageScrollView.dismantleUIViewController(controller, coordinator: ()) }),
+            ("focus leaving the pages", { controller, _ in
+                let back = UIButton()
+                controller.view.window?.addSubview(back)
+                controller.markupInteraction.focusMoved(to: back)
+            }),
+        ]
+        for (route, close) in routes {
+            let (controller, model, _) = await makeController()
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 900))
+            window.addSubview(controller.view)
+            controller.view.layoutIfNeeded()
+            await model.settle()
+            let drawing = controller.markupInteraction.drawing
+            XCTAssertTrue(drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)), route)
+            let ink = try XCTUnwrap(drawing.ink)
+            draw([line, lower], on: ink)
+            drawing.canvasViewDrawingDidChange(ink)
+            drawing.canvasViewDidBeginUsingTool(ink)
+            close(controller, model)
+            XCTAssertFalse(model.hasPendingInk, "\(route): handed over at once")
+            XCTAssertTrue(ink.drawing.strokes.isEmpty, route)
+            await model.settle()
+            XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "\(route): both strokes, as one drawing")
+            window.isHidden = true
+        }
+    }
+
     /// The canvas is one element to VoiceOver that takes touches straight away, as the signature pad's
     /// is: a stroke is drawn, not read out.
     func testTheCanvasTakesTouchesDirectlyUnderVoiceOver() async throws {

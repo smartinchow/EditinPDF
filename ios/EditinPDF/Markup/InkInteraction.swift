@@ -27,9 +27,12 @@ import UIKit
 ///   page was on its way is refused as stale, leaves nothing on the screen, and the reader is told it
 ///   was not added. One refused as stale while its page stayed as it was (another page turned, pages
 ///   added after it) is put back on the canvas, waiting (`putBack`), or added again.
-/// - Never while a stroke is being drawn (`InkCaptureView.isDrawing`): emptying the canvas, or moving
+/// - Not while a stroke is being drawn (`InkCaptureView.isDrawing`): emptying the canvas, or moving
 ///   it, then would cut the stroke. What is asked meanwhile (the strokes added, the canvas put away) is
-///   done once the stroke is on the canvas, the stroke added with the others (`strokeDidLand`).
+///   done once the stroke is on the canvas, the stroke added with the others (`strokeDidLand`). The
+///   paths after which the document or the screen may go first (Back touched, the scene leaving the
+///   screen, the screen going, focus leaving the pages) add the strokes drawn at once even then
+///   (`closing`), cutting the stroke being drawn: losing strokes drawn would be worse.
 @MainActor
 final class InkInteraction: NSObject {
     private weak var host: PageScrollViewController?
@@ -119,11 +122,14 @@ final class InkInteraction: NSObject {
     /// left that looks drawn. The task says whether they were made; nil with none waiting.
     ///
     /// Not while a stroke is being drawn: then they are added once it is on the canvas, with it
-    /// (`strokeDidLand`), and this returns nil.
+    /// (`strokeDidLand`), and this returns nil. Unless `closing` (Back touched, the scene leaving the
+    /// screen, the screen going, focus leaving the pages: `DocumentModel.commitPendingInk`): the strokes
+    /// drawn are added at once, since the document may go before the stroke is over, and the stroke
+    /// being drawn may be cut.
     @discardableResult
-    func commitPendingInk() -> Task<Bool, Never>? {
+    func commitPendingInk(closing: Bool = false) -> Task<Bool, Never>? {
         guard let ink, !ink.drawing.strokes.isEmpty, let host else { return nil }
-        guard !ink.isDrawing else {
+        guard closing || !ink.isDrawing else {
             addsWhenStrokeLands = true
             return nil
         }

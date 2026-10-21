@@ -201,12 +201,17 @@ final class DocumentModel {
     /// box and waiting, if any, as another, and the text typed in a form field, if any, as a third, each
     /// handed over before this returns: Done does it, and so does everything that must come after them
     /// (another tool, any other change, Undo and Redo, the scene leaving the screen). Nothing happens
-    /// with none waiting. Strokes on a canvas a stroke is being drawn on wait for it to be over, and are
-    /// added with it then (`InkInteraction.commitPendingInk`). Says whether a change was handed over.
+    /// with none waiting. Says whether a change was handed over.
+    ///
+    /// Strokes on a canvas a stroke is being drawn on wait for it to be over, and are added with it
+    /// then (`InkInteraction.commitPendingInk`), unless `closing`: the paths after which the document or
+    /// the screen may go before then (Back touched, the scene leaving the screen, the screen going, focus
+    /// leaving the pages) add the strokes drawn at once, and the stroke being drawn may be cut. Losing
+    /// strokes drawn would be worse.
     @discardableResult
-    func commitPendingInk() -> Bool {
+    func commitPendingInk(closing: Bool = false) -> Bool {
         let before = changesHandedOver
-        inkHolder?.commitPendingInk()
+        inkHolder?.commitPendingInk(closing: closing)
         inkHolder?.commitPendingText()
         fieldHolder?.commitPendingField()
         return changesHandedOver != before
@@ -1125,9 +1130,10 @@ final class DocumentModel {
 @MainActor
 protocol PendingInkHolder: AnyObject {
     /// Adds the strokes waiting, if any, as one change, handed over before this returns; the task says
-    /// whether it was made. Nil with none waiting.
+    /// whether it was made. Nil with none waiting. While a stroke is being drawn, only when `closing`
+    /// (`DocumentModel.commitPendingInk`); otherwise they wait for it, and this is nil.
     @discardableResult
-    func commitPendingInk() -> Task<Bool, Never>?
+    func commitPendingInk(closing: Bool) -> Task<Bool, Never>?
 
     /// Ends the text box being typed in, if any, adding its text as a text box (handed over before this
     /// returns); the task says whether it was made. Nil with none being typed in.

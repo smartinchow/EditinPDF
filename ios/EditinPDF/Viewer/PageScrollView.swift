@@ -78,9 +78,10 @@ struct PageScrollView: UIViewControllerRepresentable {
     /// passed in, as `lastChange` is, for the form's overlays.
     var forms = FormDisplay.empty
 
-    /// The screen is going: strokes drawn with Draw and waiting are added (the canvas goes with it).
+    /// The screen is going: strokes drawn with Draw and waiting are added (the canvas goes with it), at
+    /// once, even while a stroke is being drawn.
     static func dismantleUIViewController(_ controller: PageScrollViewController, coordinator: ()) {
-        controller.model.commitPendingInk()
+        controller.model.commitPendingInk(closing: true)
     }
 
     func makeUIViewController(context: Context) -> PageScrollViewController {

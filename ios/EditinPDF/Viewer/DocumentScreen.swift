@@ -85,14 +85,14 @@ struct DocumentScreen: View {
             // documents closes the file before this: the strokes were added as the back button was
             // touched, see `MarkupInteraction.fingerWentDown`.)
             .onDisappear {
-                model.commitPendingInk()
+                model.commitPendingInk(closing: true)
                 FrontDocument.shared.leave(model)
             }
             .onChange(of: undoManager) { adoptUndoManager() }
             // Strokes left waiting on the page are added before the scene goes to the background (and
             // the file is saved): they would not be in it otherwise.
             .onChange(of: scenePhase) {
-                if scenePhase != .active { model.commitPendingInk() }
+                if scenePhase != .active { model.commitPendingInk(closing: true) }
                 // A note being written is saved as the scene goes to the background (and the file is
                 // saved): the app may not come back to it.
                 if scenePhase == .background { model.saveNoteDraftOnLeaving() }

@@ -217,9 +217,11 @@ failure counts as everything) and so whether a page is still the page it was at 
 waiting where they were drawn (`InkInteraction.putBack`), or, when the canvas cannot take them (Draw put down, the
 screen gone, a stroke being drawn on it), are handed over again for the page as it is now, which is the same; a
 text box's text is handed over again. Handing them over adds what waits first, but the strokes on a canvas a stroke
-is being drawn on are never added, nor the canvas emptied or moved, then: that would cut the stroke. They wait
+is being drawn on are not added, nor the canvas emptied or moved, then: that would cut the stroke. They wait
 until it is over (PencilKit puts a stroke on the drawing a moment after it ends using the tool), and are added with
-it. When it is not, the reader is told the drawing was not added (`Strings.drawingNotAdded`); a text box's text,
+it. The paths after which the document or the screen may go first (Back touched, the scene leaving the screen, the
+screen going, focus leaving the pages) do not wait: they add the strokes drawn at once and may cut the stroke being
+drawn, since losing strokes drawn would be worse (`commitPendingInk(closing:)`). When it is not, the reader is told the drawing was not added (`Strings.drawingNotAdded`); a text box's text,
 like the changed text of a text box another change numbered again, is put on the pasteboard, and the reader is
 told so (`Strings.typedTextCopied`). It goes there as plain text for this device only (`DocumentModel.keepLocally`,
 `.localOnly`): the reader did not copy it, so Universal Clipboard does not hand it to their other devices.

@@ -524,11 +524,12 @@ final class MarkupInteraction: NSObject {
     /// editor itself, or on the pages, is not outside them.
     /// The document is told of the change at once (`PageScrollViewController.countChangeNow`): the
     /// finger lifting from Back can be handled in this same turn of the run loop, before the undo
-    /// manager would have told it.
+    /// manager would have told it. A path that may close the document: the strokes drawn are added even
+    /// while a stroke is being drawn (`DocumentModel.commitPendingInk(closing:)`).
     func fingerWentDown(on view: UIView?) {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
         if let view, view.isDescendant(of: host.scrollView) { return }
-        if model.commitPendingInk() { host.countChangeNow() }
+        if model.commitPendingInk(closing: true) { host.countChangeNow() }
     }
 
     /// Listens for focus moving: VoiceOver's and Switch Control's (an element focused), and the focus
@@ -554,7 +555,7 @@ final class MarkupInteraction: NSObject {
     /// Full Keyboard Access), and the document closes at once then too.
     func focusMoved(to item: Any?) {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
-        if Self.focusLeavesPages(item, pages: host.scrollView) { model.commitPendingInk() }
+        if Self.focusLeavesPages(item, pages: host.scrollView) { model.commitPendingInk(closing: true) }
     }
 
     /// Whether focus moving to `item` takes it off `pages` (the scroll view) to something else in their
@@ -584,8 +585,8 @@ final class MarkupInteraction: NSObject {
 
     /// Adds the strokes drawn with Draw and waiting, if any (`InkInteraction.commitPendingInk`).
     @discardableResult
-    func commitPendingInk() -> Task<Bool, Never>? {
-        drawing.commitPendingInk()
+    func commitPendingInk(closing: Bool = false) -> Task<Bool, Never>? {
+        drawing.commitPendingInk(closing: closing)
     }
 
     /// Ends the box being typed in, if any, adding its text (`TextBoxInteraction.commitPendingText`).
