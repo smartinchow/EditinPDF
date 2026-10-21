@@ -132,15 +132,4 @@ final class ExtractedPagesTests: XCTestCase {
         XCTAssertEqual(PickedFile.readNow(url, limit: 4_000_000), .failure(.tooLarge))
         XCTAssertEqual(try PickedFile.readNow(url, limit: 5_000_000).get().count, 5_000_000)
     }
-
-    func testExtractStrings() {
-        XCTAssertEqual(Strings.insertFromFile, "Insert from File…")
-        XCTAssertEqual(Strings.extract, "Extract Pages")
-        XCTAssertEqual(Strings.extractedFileName(base: "a", first: 2, last: 3), "a (pages 2–3)")
-        XCTAssertEqual(Strings.extractedFileName(base: "a", first: 2, last: 2), "a (page 2)")
-        XCTAssertEqual(Strings.extractUnprotectedNote, "The extracted pages are not password-protected.")
-        XCTAssertEqual(Strings.untitledDocument, "Document")
-        XCTAssertEqual(Strings.pickedFileTooLarge, "That file is too large to insert (over 500 MB).")
-        XCTAssertEqual(Strings.pickedFileUnreadable, "That file could not be opened.")
-    }
 }

@@ -23,9 +23,10 @@ import XCTest
         XCTAssertEqual(try PdfDocument.open(bytes: data, password: nil).pageInfo(page: 0)?.rotationDegrees, 90)
     }
 
-    func testSnapshotOfLockedOrFailedDocumentThrows() {
+    func testSnapshotOfLockedOrFailedDocumentThrows() throws {
         XCTAssertThrowsError(try PDFFileDocument(bytes: Data("garbage".utf8)).snapshot(contentType: .pdf))
-        XCTAssertThrowsError(try PDFFileDocument(bytes: (try? fixtureData("locked")) ?? Data()).snapshot(contentType: .pdf))
+        let locked = try fixtureData("locked")
+        XCTAssertThrowsError(try PDFFileDocument(bytes: locked).snapshot(contentType: .pdf))
     }
 
     func testUnlockingAdoptsTheDocumentForSaving() async throws {

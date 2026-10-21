@@ -93,8 +93,13 @@ struct PageScrollView: UIViewControllerRepresentable {
         controller.selection = selection
         controller.markupTool = tool
         // A change the controller has followed already is ignored, so handing the same one over with
-        // every update is harmless.
-        if let lastChange { controller.apply(lastChange) }
+        // every update is harmless. Followed just after the update, not in it: laying the pages out
+        // again adds the strokes and text waiting, a change to the model, and SwiftUI's state must not
+        // change while it updates views. Tasks on the main actor start in the order they are made, so
+        // the changes are followed in the order they came (and an older one is ignored anyway).
+        if let lastChange {
+            Task { @MainActor in controller.apply(lastChange) }
+        }
         controller.forms = forms
         controller.selectedAnnotation = selectedAnnotation
         guard scrollTarget != nil || revealRect != nil else { return }

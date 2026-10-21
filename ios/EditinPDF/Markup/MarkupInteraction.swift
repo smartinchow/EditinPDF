@@ -756,9 +756,9 @@ final class FingerDownObserver: UIGestureRecognizer {
         delaysTouchesEnded = false
         // Every kind of touch, together: a finger tapping Back while the Pencil rests on the page, and
         // the Pencil tapping it while a palm does. (By default a recognizer holding a touch of one type
-        // ignores new touches of other types until it resets.)
+        // ignores new touches of other types until it resets.) Every type is heard, the default: a
+        // finger, the Pencil, a pointer, and an indirect touch (a trackpad's).
         requiresExclusiveTouchType = false
-        allowedTouchTypes = [UITouch.TouchType.direct, .pencil, .indirectPointer].map { NSNumber(value: $0.rawValue) }
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {

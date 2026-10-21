@@ -115,7 +115,7 @@ final class InkSavingTests: XCTestCase {
     /// A finger going down while another is already held (a palm on the page, the Pencil drawing) is
     /// still reported: the observer stays listening until every finger it heard of has lifted, and only
     /// then fails, ready for the next touches. It hears every kind of touch together: a finger while
-    /// the Pencil is down, the Pencil while a palm is.
+    /// the Pencil is down, the Pencil while a palm is, and an indirect touch too.
     func testAFingerDownWhileAnotherIsHeldIsStillReported() {
         // Through the recognizer's own touch handlers, as UIKit calls them.
         let event = UIEvent()
@@ -140,7 +140,8 @@ final class InkSavingTests: XCTestCase {
         XCTAssertFalse(observer.canBePrevented(by: UIPanGestureRecognizer()), "another gesture recognizing does not stop it listening")
         XCTAssertFalse(observer.requiresExclusiveTouchType, "a finger is heard while the Pencil is down, and the other way round")
         let types = Set(observer.allowedTouchTypes.map(\.intValue))
-        XCTAssertTrue(types.isSuperset(of: [UITouch.TouchType.direct, .pencil, .indirectPointer].map(\.rawValue)))
+        XCTAssertTrue(types.isSuperset(of: [UITouch.TouchType.direct, .pencil, .indirectPointer, .indirect].map(\.rawValue)),
+                      "every kind of touch, an indirect one (a trackpad's) too")
     }
 
     /// A save whose wait for a change runs out still writes (what the engine has), and says so in the
