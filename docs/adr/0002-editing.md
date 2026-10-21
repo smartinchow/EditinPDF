@@ -20,7 +20,8 @@ Three things pull against each other.
 - **Edits name their target by position.** An edit says "page 3" or "the comment at place 2 of page 1", and
   points are in view space (page rotation applied). Any change in between can make those mean something else.
   The reader can tap faster than the engine answers, and the engine's save holds the document's lock for the
-  whole write, so nothing on the main thread may call the engine.
+  whole write, so changes, undos, redos and saves must not call the engine on the main thread (the few quick
+  reads made there are listed under Consequences).
 
 ## Decision
 
@@ -56,9 +57,27 @@ to undo or redo, the two histories no longer match: every live token's entries a
 every live token's entries off, not only its own.
 
 The engine keeps only the last 100 changes (`MAX_UNDO` in the pinned PdfCraft release; `PdfDocument.undo` says
-so), while the undo manager keeps them all. An undo past the engine's history finds `NothingToUndo` (and a redo,
-`NothingToRedo`): that is no mismatch, only a change the engine has no step for any more, so `move` takes that
-token's entries off, quietly, with no alert, and the rest of the history (what can be redone, above all) stays.
+so), and the model tells the undo manager to keep as many (`levelsOfUndo`, `DocumentModel.undoLimit`), so that
+Undo is off past them rather than a tap that does nothing. A group of the undo manager can hold more than one
+change, though: typing in a form field and then tapping a checkbox in the same turn of the run loop are one undo
+step, which is accepted. So the undo manager can still hold a change the engine has no step for. An undo past the
+engine's history finds `NothingToUndo` (and a redo, `NothingToRedo`): that is no mismatch, only a change the
+engine has no step for any more, so `move` takes that token's entries off, quietly, with no alert, and the rest of
+the history (what can be redone, above all) stays.
+
+**The ways to the undo manager.** Strokes, or text typed in a text box or a form field, waiting to be added are
+not on the undo manager, so whatever undoes must add them first, or the undo moves the engine's history under
+them and they are refused as stale when they come. The toolbar's Undo and Redo and the Edit menu's (the iPad's
+menu bar, and ⌘Z and ⇧⌘Z on a hardware keyboard: `UndoRedoCommands`, in place of the system's group, which acted
+on the scene's undo manager directly, ⇧⌘Z even while the toolbar's Redo was off) go through `DocumentModel.undo`
+and `redo`, which add what waits first, under one rule (`UndoAvailability`). The commands find the document through
+`FrontDocument`, which each screen keeps up to date (its scene active, its window the key one): SwiftUI's focused
+values never reached them from a document scene's view. While a field outside the pages is typed in (the search, a
+note), they are that field's, as in any field. Shake to undo and the three-finger undo gesture act on the first
+responder's undo manager. On the iOS 26.5 simulator that was never the scene's: a shake with strokes waiting and a
+change to undo brought no alert, and the first responder, logged every two seconds, was none (on an iPhone and an
+iPad), but for the text box and form field editors, whose undo managers are their own. An undo that reaches the
+scene's undo manager some other way meets what section 6 does with strokes and text refused as stale.
 
 The engine's undo has no identity, only order. The token's job is to make sure that the undo manager never holds
 an entry the engine has no step for, and that the order of entries is the order of steps.
@@ -78,7 +97,8 @@ background queue (observed to run off the main thread on the iOS 26.5 simulator)
 write sees whole edits. A snapshot is therefore a live reference, not a frozen copy: a save writes the document as
 it is when the write runs. That is what an autosave should write. To make a save taken just after a change (the
 strokes added as the back button goes down) include it, `savedBytes(of:)` waits, off the main thread only, for up
-to 2 s for the jobs counted by `EngineHandle`, and logs a warning if it gave up. A file that is locked or could not
+to 10 s for the jobs counted by `EngineHandle` (it waits only while one is on its way), and logs a warning if it
+gave up. A file that is locked or could not
 be read has no engine document in the handle, and its snapshot is refused with our own message, so it is never
 written.
 
@@ -160,20 +180,37 @@ The app does not want every second tap to fail just because the first has not be
 revision instead of the one it was worked out at. `canRebase` says yes when nothing since could have made it
 mean something else:
 
-- `lastIndexShift` is the revision made by the last change that can renumber pages or comments: deleting, moving
-  or inserting pages, deleting or moving a comment, and any undo or redo (`shift(of:)`, and `.index` for undo and
-  redo in `move`).
-- `lastGeometryShift` is the later of that and the last rotation of a page.
-- An edit worked out at revision `base` is rebased when `base >= lastIndexShift` and either
-  `base >= lastGeometryShift` or the edit has no point or box in view space (`hasViewSpaceGeometry`). A form fill
-  is always rebased, being addressed by name.
+- A change can shift three things an edit worked out before it depends on (`EditShift`): **page numbers**
+  (deleting, moving or inserting pages), the **places of a page's comments** (deleting or moving a comment), and
+  **points in view space** (turning pages). `shift(of:)` says which for a change. Adding a comment appends it to
+  its page's list, so it shifts nothing.
+- An undo or a redo shifts what its own change did, the other way (`undoShift(of:)`, kept on the change's token,
+  since the edits themselves can carry a PDF's bytes), and for a change that adds a comment, the places too: its
+  undo takes the comment off the end of its page's list. Nothing more: the undo of a highlight moves no page and
+  no point, so strokes drawn meanwhile, or a shape being dragged, are still good.
+- The model keeps the revision of the last shift of each kind (`Shifts`).
+- An edit depends on (`dependence(of:)`) the page numbers when it names a page (every edit but a form fill and
+  the document's information), the places when it names a comment (delete, move, change its text), and the
+  points when it carries a point or a box in view space (every added comment, and a move).
+- An edit worked out at revision `base` is rebased when no shift it depends on was made after `base`. A form
+  fill is always rebased, being addressed by name.
 - Otherwise it keeps its own revision and the engine refuses it as `Stale`. The reader sees "the document changed,
-  try again" (`EditFailure`, `Strings.documentChangedTryAgain`) and the change leaves nothing on the undo manager.
+  try again" (`EditFailure`, `Strings.documentChangedTryAgain`) and the change leaves nothing on the undo manager,
+  except for what was waiting to be added, below.
 
-Adding a comment appends it to its page's list, so it shifts nothing and edits worked out before it still apply.
 Strokes drawn and not yet added are worked out against the revision they were drawn on (`workedOutAt`), so ink
 drawn before a rotation is refused rather than placed turned. Undo and redo take no revision: they move the
 engine's stack, and the queue keeps that in order.
+
+Strokes and typed text refused as stale are not lost (`enqueue`'s `whenStale`). The model knows what each change,
+undo and redo did to which pages (`PageEffect`: from which page on the pages were renumbered, which were turned; a
+failure counts as everything) and so whether a page is still the page it was at a revision, as it was
+(`pageIsUnchanged`, over the last 256 such changes, `PageMoves`). When it is, refused strokes go back on the canvas,
+waiting where they were drawn (`InkInteraction.putBack`), or, when the canvas cannot take them (Draw put down, the
+screen gone), are handed over again for the page as it is now, which is the same; a text box's text is handed over
+again. When it is not, the reader is told the drawing was not added (`Strings.drawingNotAdded`); a text box's text,
+like the changed text of a text box another change numbered again, is put on the pasteboard, and the reader is
+told so (`Strings.typedTextCopied`).
 
 ### 7. Comments are addressed by position, and `DeleteAnnotations` deletes by object
 
@@ -181,8 +218,9 @@ engine's stack, and the queue keeps that in order.
 (`core/editinpdf-core/src/annotations.rs`), because that is how the engine addresses a comment
 (`DeleteAnnotation { page, index }`). The list the app sees skips replies, is sorted by page, then top to bottom,
 and the `index` of each is not that order. A position moves when an earlier comment on the page is deleted, and with
-every undo and redo, so the app reads all comments again after every revision (`EngineState.read`,
-`AnnotationIndex`) and any edit that names a position is only good for the revision it was worked out at: section 6.
+the undo or redo of a change that adds, deletes or moves one, so the app reads all comments again after every
+revision (`EngineState.read`, `AnnotationIndex`) and any edit that names a position is only good for the revision
+it was worked out at: section 6.
 
 Inside a single step, deleting comments by position is where this breaks down: every edit of a step names its
 comment by its place before the step, and a delete moves the places after it. Among the edits the app makes, it
@@ -223,18 +261,20 @@ single `deleteAnnotation`, which is fine on its own.
   when signed: section 4). A long session's autosaves each write the original plus the whole update; shrinking it
   would take a full save, which the app does not offer yet.
 - Every addressed edit is right for exactly one revision. Most are rebased and a few are refused as `Stale`, the
-  alert being the price for never editing the wrong page or comment. The rebase rule is a list of what can shift
-  an index or a point: **a new `Edit` must be added to `shift(of:)`, `hasViewSpaceGeometry`,
-  `OrganizeMath.readerPage` (`ios/EditinPDF/Organize/OrganizeMath.swift`, where the reader's page follows page
-  changes) and the bridge's predicates** (those three Swift `switch`es and the predicates in `edit.rs` are
-  exhaustive, so the compiler says where).
+  alert being the price for never editing the wrong page or comment; strokes and typed text refused so are kept
+  (section 6). The rebase rule is a list of what can shift an index or a point: **a new `Edit` must be added to
+  `shift(of:)`, `addsAnAnnotation`, `dependence(of:)`, `PageEffect(of:)`, `OrganizeMath.readerPage`
+  (`ios/EditinPDF/Organize/OrganizeMath.swift`, where the reader's page follows page changes) and the bridge's
+  predicates** (those Swift `switch`es and the predicates in `edit.rs` are exhaustive, so the compiler says
+  where).
 - Because the engine has no stable comment identity, `DeleteAnnotations` re-derives the engine's delete in the
   bridge. It depends on how the pinned PdfCraft release treats pop-ups and replies
   (`pdfcraft_annot::delete_annotation`); `core/editinpdf-core/tests/delete_annotations.rs` pins the cases (pop-ups
   and replies listed before the comment, locked comments, encrypted files), and `make update-upstream` re-runs it.
 - A snapshot is live, not a copy. SwiftUI can ask for one, and write it a little later, while a change is on its
-  way. The wait in `savedBytes` covers the changes the app knows about; one that arrives after the wait is in the
-  next autosave.
+  way. The wait in `savedBytes` covers the changes the app knows about, for up to 10 s; one that arrives after the
+  wait is in the next autosave, and when the document is closing there is none, which is why the wait is long (it
+  waits only while a change is on its way, and off the main thread).
 - No script a document carries is run. Every engine session the bridge makes has the engine's JavaScript off
   (`document::session`): with it on, every fill would run the field's keystroke, validate, calculate and format
   scripts, and an XFA form its scripts as it opens, with no time or memory limit, under the document's lock. The

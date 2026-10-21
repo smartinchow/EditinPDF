@@ -77,6 +77,11 @@ tracking and no data collected.
   adding the changes after them. A damaged file that is digitally signed can't be changed at all, since that would
   break its signatures; the app says so.
 - Undo goes back at most 100 changes.
+- Text outside the Latin alphabet (Greek, Cyrillic, Chinese, Japanese, Korean, emoji and the like) typed in a text
+  box shows on the page as "?": the engine draws text boxes in a standard font that has only Western European
+  letters. The text itself is kept as typed (the Comments list shows it). A form field is drawn the same way,
+  unless the form brings a font for such text, as many Japanese forms do (even then, not emoji); its value is kept
+  as typed, and the file asks other PDF apps to draw the field again.
 - The iOS 27 SDK marks `ReferenceFileDocument` and the `DocumentGroup` initializer the app uses as deprecated, in
   favour of a `Document` protocol that needs iOS 27. The app supports iOS 17, so it keeps them. The build prints
   no warning for this today; the switch comes when the minimum moves to iOS 27.
