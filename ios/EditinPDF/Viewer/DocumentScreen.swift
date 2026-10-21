@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The screen for one document: its pages, once it is open, with Undo and Redo at the leading end of
-/// the toolbar and the Markup, search, Comments, thumbnails and Organize Pages buttons at the trailing end (and, while text is selected,
-/// a Copy button before them), and the page indicator (and, while a search has hits, the bar to move
-/// between them) over the pages. In Markup mode the tool palette stands over the pages too: above
-/// the page indicator on a compact width, at the leading edge on a regular one. The pages and the thumbnails follow every change, undo and redo.
+/// The screen for one document: its pages, once it is open, with the toolbar's buttons
+/// (`toolbarItems`) and the page indicator (and, while a search has hits, the bar to move between
+/// them) over the pages. In Markup mode the tool palette stands over the pages too: above the page
+/// indicator on a compact width, at the leading edge on a regular one. The pages and the thumbnails
+/// follow every change, undo and redo.
 ///
 /// In reading mode a form's fields are filled in on the pages (`FormInteraction`). When the document
 /// has a form that may be filled in, a hint says so once (`Strings.formHint`), with a note when the
@@ -253,25 +253,7 @@ struct DocumentScreen: View {
                 .animation(.snappy, value: showsFormHint)
                 .animation(.snappy, value: model.tool == nil)
                 .animation(.snappy, value: paletteLayout)
-                // Each button is a Label, title and icon: the bar shows the icon, and when the bar has no
-                // room for them all (a long file name beside the title menu, a narrow phone, large text)
-                // iOS moves them into its "More" menu, which shows the titles. With icons alone (Image
-                // and an accessibility label) the items in that menu were blank, so the menu looked
-                // empty (reported on an iPhone, reproduced on the iOS 26.5 simulator).
-                .toolbar {
-                    ToolbarItemGroup(placement: .topBarLeading) {
-                        undoButton
-                        redoButton
-                    }
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        copyButton
-                        markupButton
-                        searchButton
-                        commentsButton
-                        thumbnailsButton
-                        organizeButton
-                    }
-                }
+                .toolbar { toolbarItems }
                 .sheet(item: $thumbnailsSheet) { presentation in
                     ThumbnailsSheet(model: model, store: presentation.store, scrollTarget: $scrollTarget)
                 }
@@ -438,6 +420,48 @@ struct DocumentScreen: View {
                 Label(Strings.copy, systemImage: "doc.on.doc")
             }
             .accessibilityIdentifier("copyButton")
+        }
+    }
+
+    /// The toolbar's buttons. Each is a Label, title and icon: the bar shows the icon, and when the bar
+    /// has no room for them all (a long file name beside the title menu, a narrow phone, large text)
+    /// iOS moves them into its "More" menu, which shows the titles. With icons alone (Image and an
+    /// accessibility label) the items in that menu were blank, so the menu looked empty (reported on an
+    /// iPhone, reproduced on the iOS 26.5 simulator).
+    ///
+    /// On a regular width Undo and Redo stand at the leading end, the rest at the trailing end. On a
+    /// compact one the bar is short of room, and iOS can move trailing items into its More menu but
+    /// not leading ones: Undo and Redo, alone at the leading end, were reported missing on an iPhone
+    /// after an edit and a scroll (not seen on the iOS 26.5 simulator). There they lead the trailing
+    /// group instead, with Copy, Markup and Search, and Comments, Thumbnails and Organize Pages are in
+    /// the bar's own menu of further actions, listed with their titles.
+    @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
+        if horizontalSizeClass == .compact {
+            ToolbarItemGroup(placement: .primaryAction) {
+                undoButton
+                redoButton
+                copyButton
+                markupButton
+                searchButton
+            }
+            ToolbarItemGroup(placement: .secondaryAction) {
+                commentsButton
+                thumbnailsButton
+                organizeButton
+            }
+        } else {
+            ToolbarItemGroup(placement: .topBarLeading) {
+                undoButton
+                redoButton
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                copyButton
+                markupButton
+                searchButton
+                commentsButton
+                thumbnailsButton
+                organizeButton
+            }
         }
     }
 

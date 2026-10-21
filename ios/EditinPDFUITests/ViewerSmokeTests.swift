@@ -22,13 +22,11 @@ final class ViewerSmokeTests: XCTestCase {
         let indicator = app.staticTexts["pageIndicator"]
         expect(indicator, toRead: "1 / 3", within: 10)
 
-        app.swipeUp()
-        app.swipeUp()
-        expect(indicator, toRead: "3 / 3", within: 5)
+        // As many swipes as the pages take: two on a phone, more where the pages are taller than the
+        // screen is (an iPad, its pages fitted to its width).
+        swipe(app, up: true, until: indicator, reads: "3 / 3")
         // Back to the top, so that a search result has somewhere to take the reader.
-        app.swipeDown()
-        app.swipeDown()
-        expect(indicator, toRead: "1 / 3", within: 5)
+        swipe(app, up: false, until: indicator, reads: "1 / 3")
 
         // Zoomed in and out again, the indicator still names a page of the three.
         let pages = app.scrollViews["pageScrollView"]

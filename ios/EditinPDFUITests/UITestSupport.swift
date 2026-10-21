@@ -52,7 +52,13 @@ extension XCTestCase {
             }
         }
         XCTAssertTrue(cell.exists, "the document browser never listed \(file)")
-        cell.tap()
+        // A cell reached by scrolling the list can still be moving when it is tapped, and the tap then
+        // opens nothing (seen once the folder holds many documents): tapped again while it is still
+        // there to tap, until the browser, and the cell with it, goes.
+        for _ in 0..<3 {
+            cell.tap()
+            if cell.waitForNonExistence(timeout: 4) || !cell.isHittable { return }
+        }
     }
 
     /// Taps the toolbar button `identifier`, or, when the bar has moved it into its More menu, the
@@ -85,6 +91,18 @@ extension XCTestCase {
         let reads = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", text), object: indicator)
         let result = XCTWaiter().wait(for: [reads], timeout: seconds)
         XCTAssertEqual(result, .completed, "the page indicator \(indicator.exists ? "reads \"\(indicator.label)\"" : "is not there"), not \"\(text)\"", file: file, line: line)
+    }
+
+    /// Swipes up (or down) until `indicator` reads `text`, eight swipes at most, then expects it to.
+    func swipe(_ app: XCUIApplication, up: Bool, until indicator: XCUIElement, reads text: String,
+               file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<8 {
+            if indicator.label == text { break }
+            if up { app.swipeUp() } else { app.swipeDown() }
+            let reads = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", text), object: indicator)
+            _ = XCTWaiter().wait(for: [reads], timeout: 1.5)
+        }
+        expect(indicator, toRead: text, within: 5, file: file, line: line)
     }
 
     /// A fresh simulator shows a one-time card over its keyboard ("Speed up your typing"), which has
