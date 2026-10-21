@@ -95,6 +95,38 @@ final class InkSavingTests: XCTestCase {
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink])
     }
 
+    /// What the finger going down outside the pages adds, the document counts as a change at once, not
+    /// only when the undo manager closes the run loop turn's group: the finger lifting from Back can be
+    /// handled in the same turn when the main thread is slow (the keyboard being put away), and the
+    /// document closes then, saving only if it counts a change (seen on the CI runner: the text left in
+    /// a text box or a form field was not in the file). With nothing waiting it counts none.
+    func testAFingerOutsideThePagesTellsTheDocumentOfTheChangeAtOnce() async throws {
+        let (controller, model) = await makeController()
+        let undoManager = UndoManager()
+        model.undoManager = undoManager
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("counted-\(UUID().uuidString).pdf")
+        try fixtureData("sample").write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = DocumentStandIn(fileURL: url)
+        let opened = await withCheckedContinuation { done in document.open { done.resume(returning: $0) } }
+        XCTAssertTrue(opened)
+        document.undoManager = undoManager
+        // The screen in the view controller UIKit keeps the document in, as SwiftUI's document scene has it.
+        let documentController = UIDocumentViewController(document: document)
+        documentController.addChild(controller)
+        documentController.view.addSubview(controller.view)
+        controller.didMove(toParent: documentController)
+
+        controller.markupInteraction.fingerWentDown(on: UIView())
+        XCTAssertFalse(document.hasUnsavedChanges, "nothing waited: no change")
+        try draw(on: controller)
+        controller.markupInteraction.fingerWentDown(on: UIView())
+        XCTAssertFalse(model.hasPendingInk)
+        XCTAssertTrue(document.hasUnsavedChanges, "counted in the turn the finger went down")
+        await model.settle()
+        _ = await withCheckedContinuation { done in document.close { done.resume(returning: $0) } }
+    }
+
     /// The screen's window tells the markup of every finger going down, without taking it.
     func testTheWindowReportsFingersWithoutTakingThem() async throws {
         let (controller, _) = await makeController()
@@ -188,4 +220,13 @@ final class InkSavingTests: XCTestCase {
         XCTAssertEqual(ink.page, 1)
         XCTAssertEqual(ink.undoManager?.canUndo, false, "moved to another page: the history goes")
     }
+}
+
+/// A document as UIKit keeps one, for the count of its changes: it reads its file and writes nothing of
+/// its own.
+private final class DocumentStandIn: UIDocument {
+    override func load(fromContents contents: Any, ofType typeName: String?) throws {}
+    override func contents(forType typeName: String) throws -> Any { Data() }
+    override func writeContents(_ contents: Any, andAttributes additionalFileAttributes: [AnyHashable: Any]? = nil,
+                                safelyTo url: URL, for saveOperation: UIDocument.SaveOperation) throws {}
 }

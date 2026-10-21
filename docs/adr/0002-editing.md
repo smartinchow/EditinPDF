@@ -98,7 +98,10 @@ write sees whole edits. A snapshot is therefore a live reference, not a frozen c
 it is when the write runs. That is what an autosave should write. To make a save taken just after a change (the
 strokes added as the back button goes down) include it, `savedBytes(of:)` waits, off the main thread only, for up
 to 10 s for the jobs counted by `EngineHandle` (it waits only while one is on its way), and logs a warning if it
-gave up. A file that is locked or could not
+gave up. The document saves as it closes only if it counts a change by then, and the undo manager has it count one
+only as it closes the run loop turn's undo group; when the main thread is slow (the keyboard being put away waits on
+the keyboard's process), the finger lifting from Back is handled in the turn the finger went down in, so the change
+handed over then is counted at once (`PageScrollViewController.countChangeNow`). A file that is locked or could not
 be read has no engine document in the handle, and its snapshot is refused with our own message, so it is never
 written.
 

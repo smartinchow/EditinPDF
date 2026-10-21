@@ -200,12 +200,18 @@ final class DocumentModel {
     /// box and waiting, if any, as another, and the text typed in a form field, if any, as a third, each
     /// handed over before this returns: Done does it, and so does everything that must come after them
     /// (another tool, any other change, Undo and Redo, the scene leaving the screen). Nothing happens
-    /// with none waiting.
-    func commitPendingInk() {
+    /// with none waiting. Says whether a change was handed over.
+    @discardableResult
+    func commitPendingInk() -> Bool {
+        let before = changesHandedOver
         inkHolder?.commitPendingInk()
         inkHolder?.commitPendingText()
         fieldHolder?.commitPendingField()
+        return changesHandedOver != before
     }
+
+    /// How many changes have been handed over (`enqueue`) since the model was made.
+    @ObservationIgnored private(set) var changesHandedOver = 0
 
     // MARK: Form fields being typed in
 
@@ -748,6 +754,7 @@ final class DocumentModel {
                  whenStale: (@MainActor () -> EditFailure?)? = nil) -> Task<Bool, Never> {
         guard !edits.isEmpty else { return Task { false } }
         commitPendingInk()
+        changesHandedOver += 1
         let token = EditToken(pages: pages, shift: Self.undoShift(of: edits), pageEffect: PageEffect(of: edits))
         registerStep(.undo, token: token, named: actionName)
         liveChanges.add(token)

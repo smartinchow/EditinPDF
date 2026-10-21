@@ -522,10 +522,13 @@ final class MarkupInteraction: NSObject {
     /// button is the last moment the strokes can become one.
     /// So is the text being typed in a text box, or in a form field: a finger on the box or the field's
     /// editor itself, or on the pages, is not outside them.
+    /// The document is told of the change at once (`PageScrollViewController.countChangeNow`): the
+    /// finger lifting from Back can be handled in this same turn of the run loop, before the undo
+    /// manager would have told it.
     func fingerWentDown(on view: UIView?) {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
         if let view, view.isDescendant(of: host.scrollView) { return }
-        model.commitPendingInk()
+        if model.commitPendingInk() { host.countChangeNow() }
     }
 
     /// Listens for focus moving: VoiceOver's and Switch Control's (an element focused), and the focus
