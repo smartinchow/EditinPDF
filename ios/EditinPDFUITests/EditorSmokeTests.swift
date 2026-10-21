@@ -850,10 +850,9 @@ final class EditorSmokeTests: XCTestCase {
     // MARK: Undo and Redo
 
     /// After an edit, and a scroll down and back that brings the bar's background in and out, Undo and
-    /// Redo are still in the bar, and can be tapped. (Reported missing on a phone, alone at the bar's
-    /// leading end, which iOS cannot fold into its More menu; not seen on the iOS 26.5 simulator, where
-    /// this passes with that layout too. A name long enough to take the bar puts them in the More menu
-    /// now, with the other buttons.)
+    /// Redo are still in the bar, and can be tapped. (Alone at the bar's leading end they went missing:
+    /// reported on a phone, and seen on the iPad simulator, not on the iPhone one. A name long enough
+    /// to take a phone's bar puts them in the More menu now, with the other buttons.)
     func testUndoAndRedoStayAfterAnEditAndAScroll() throws {
         let app = launchAndOpen("sample.pdf")
         let indicator = app.staticTexts["pageIndicator"]

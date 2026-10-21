@@ -429,12 +429,12 @@ struct DocumentScreen: View {
     /// accessibility label) the items in that menu were blank, so the menu looked empty (reported on an
     /// iPhone, reproduced on the iOS 26.5 simulator).
     ///
-    /// On a regular width Undo and Redo stand at the leading end, the rest at the trailing end. On a
-    /// compact one the bar is short of room, and iOS can move trailing items into its More menu but
-    /// not leading ones: Undo and Redo, alone at the leading end, were reported missing on an iPhone
-    /// after an edit and a scroll (not seen on the iOS 26.5 simulator). There they lead the trailing
-    /// group instead, with Copy, Markup and Search, and Comments, Thumbnails and Organize Pages are in
-    /// the bar's own menu of further actions, listed with their titles.
+    /// Undo and Redo lead the trailing group, at every width. Alone at the leading end they went
+    /// missing after an edit and a scroll that brought the bar's background in and out: reported on an
+    /// iPhone, and seen on the iOS 26.5 simulator on an iPad Pro 11, with room to spare (not on the
+    /// iPhone simulator). iOS can also move trailing items into its More menu, and not leading ones.
+    /// On a compact width the bar is short of room: Comments, Thumbnails and Organize Pages are in the
+    /// bar's own menu of further actions there, listed with their titles. On a regular one all are shown.
     @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
         if horizontalSizeClass == .compact {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -450,11 +450,9 @@ struct DocumentScreen: View {
                 organizeButton
             }
         } else {
-            ToolbarItemGroup(placement: .topBarLeading) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 undoButton
                 redoButton
-            }
-            ToolbarItemGroup(placement: .topBarTrailing) {
                 copyButton
                 markupButton
                 searchButton

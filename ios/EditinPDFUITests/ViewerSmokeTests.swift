@@ -72,7 +72,7 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertTrue(app.otherElements["selectionHandleStart"].waitForExistence(timeout: 5), "no selection after a long press on the word")
         XCTAssertTrue(app.otherElements["selectionHandleEnd"].exists)
 
-        // With Undo and Redo at the leading end, a phone's bar has no room for Copy as well: it is in
+        // With Undo and Redo leading the bar, a phone's bar has no room for Copy as well: it is in
         // the More menu then, by its title.
         XCTAssertTrue(tapToolbarButton("copyButton", titled: "Copy", in: app), "nothing to copy")
         XCTAssertTrue(tapToolbarButton("searchButton", titled: "Search", in: app), "no Search")
@@ -115,7 +115,7 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertTrue(app.textFields["searchField"].waitForExistence(timeout: 5), "Search in the More menu did not open the search")
     }
 
-    /// Undo and Redo stand at the leading end of the bar, with their titles (for the More menu), and
+    /// Undo and Redo lead the bar's buttons, with their titles (for the More menu), and
     /// are disabled while there is nothing to undo or redo.
     func testUndoAndRedoAreThereAndDisabledOnAnUnchangedDocument() {
         let app = launchAndOpen("sample.pdf")
