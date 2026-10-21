@@ -105,6 +105,38 @@ extension XCTestCase {
         expect(indicator, toRead: text, within: 5, file: file, line: line)
     }
 
+    /// Types `text` into `element`, then waits until the element holds `expected` (`text` when nil; a
+    /// secure field holds a "•" for each character): the keyboard is a process of its own, and what it
+    /// types reaches the app a moment after `typeText` returns. On a slow machine (the CI runner) a tap
+    /// that follows at once came before the text: Back closed the document with an empty text box, and
+    /// the text was never in the file. (Text ended by the keyboard's own Return needs no wait: the
+    /// keyboard hands it over in order.)
+    func type(_ text: String, into element: XCUIElement, expecting expected: String? = nil, within seconds: TimeInterval = 10,
+              file: StaticString = #filePath, line: UInt = #line) {
+        element.typeText(text)
+        let value = expected ?? text
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: element)
+        XCTAssertEqual(XCTWaiter().wait(for: [arrived], timeout: seconds), .completed,
+                       "\(element.identifier) holds \(String(describing: element.exists ? element.value : nil)), not \"\(value)\", after typing",
+                       file: file, line: line)
+    }
+
+    /// Presses `key` with `modifiers` on the hardware keyboard the test drives, until `predicate` holds
+    /// for `object`, three times at most, waiting `seconds` after each press. On the iOS 27 simulator the
+    /// first key a launch of the app is sent is lost, once an earlier launch has been sent keys: the
+    /// software keyboard steps aside for the hardware one, and nothing else happens (⌘Z in the search
+    /// field did nothing on the CI runner, after the tests before it had pressed ⌘Z and ⇧⌘Z; reproduced
+    /// on an iPhone 18 Pro, iOS 27.0, simulator). The next press arrives. Says whether `predicate` held.
+    func press(_ key: String, modifiers: XCUIElement.KeyModifierFlags, in app: XCUIApplication,
+               until predicate: NSPredicate, holdsFor object: Any, within seconds: TimeInterval = 4) -> Bool {
+        for _ in 0..<3 {
+            app.typeKey(key, modifierFlags: modifiers)
+            let holds = XCTNSPredicateExpectation(predicate: predicate, object: object)
+            if XCTWaiter().wait(for: [holds], timeout: seconds) == .completed { return true }
+        }
+        return false
+    }
+
     /// A fresh simulator shows a one-time card over its keyboard ("Speed up your typing"), which has
     /// to be dismissed before keys can be typed.
     func dismissKeyboardIntroduction(in app: XCUIApplication) {

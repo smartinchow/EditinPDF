@@ -44,7 +44,7 @@ final class ViewerSmokeTests: XCTestCase {
         let field = app.textFields["searchField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5), "the search sheet did not come up")
         dismissKeyboardIntroduction(in: app)
-        field.typeText("three")
+        type("three", into: field)
         let hit = app.buttons["searchHit-0"]
         XCTAssertTrue(hit.waitForExistence(timeout: 5), "no result for \"three\"")
         hit.tap()
@@ -149,14 +149,14 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertFalse(unlock.isEnabled, "nothing to try yet")
 
         dismissKeyboardIntroduction(in: app)
-        field.typeText("nope")
+        type("nope", into: field, expecting: "••••")
         XCTAssertTrue(unlock.isEnabled)
         unlock.tap()
         XCTAssertTrue(refused.waitForExistence(timeout: 5), "a wrong password is not reported")
         XCTAssertFalse(indicator.exists, "a wrong password opens nothing")
 
         // A refused password is typed again, not edited: the field is empty and ready.
-        field.typeText("hunter2")
+        type("hunter2", into: field, expecting: "•••••••")
         unlock.tap()
         expect(indicator, toRead: "1 / 1", within: 10)
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "the prompt goes away once the document is open")
@@ -198,7 +198,7 @@ final class ViewerSmokeTests: XCTestCase {
         enterPassword.tap()
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Enter Password did not bring the prompt back")
         dismissKeyboardIntroduction(in: app)
-        field.typeText("hunter2")
+        type("hunter2", into: field, expecting: "•••••••")
         app.buttons["unlockButton"].tap()
         expect(indicator, toRead: "1 / 1", within: 10)
         XCTAssertFalse(enterPassword.exists, "an open document has nothing to unlock")

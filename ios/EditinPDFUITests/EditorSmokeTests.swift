@@ -246,8 +246,8 @@ final class EditorSmokeTests: XCTestCase {
         pagePoint(CGPoint(x: 150, y: 500), pageWidth: 612, in: app)
             .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 500), pageWidth: 612, in: app))
         XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
-        app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(done.waitForNonExistence(timeout: 5), "⌘Z left the strokes waiting")
+        XCTAssertTrue(press("z", modifiers: .command, in: app, until: NSPredicate(format: "exists == false"), holdsFor: done),
+                      "⌘Z left the strokes waiting")
         XCTAssertTrue(app.buttons["redoButton"].waitForEnabled(timeout: 5), "⌘Z did not take the drawing back")
         sleep(2)
         let undone = pagePoint(CGPoint(x: 300, y: 500), pageWidth: 612, in: app).screenPoint
@@ -350,7 +350,7 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(noteText.waitForExistence(timeout: 5), "no note sheet")
         dismissKeyboardIntroduction(in: app)
         XCTAssertFalse(save.isEnabled, "nothing written to save")
-        noteText.typeText("Never mind")
+        type("Never mind", into: noteText)
         app.buttons["noteCancelButton"].tap()
         XCTAssertTrue(noteText.waitForNonExistence(timeout: 5), "Cancel left the sheet")
         sleep(1)
@@ -359,7 +359,7 @@ final class EditorSmokeTests: XCTestCase {
                        "a cancelled note was added")
         pagePoint(CGPoint(x: 450, y: 150), pageWidth: 612, in: app).tap()
         XCTAssertTrue(noteText.waitForExistence(timeout: 5), "no note sheet")
-        noteText.typeText("Check this")
+        type("Check this", into: noteText)
         XCTAssertTrue(save.waitForEnabled(timeout: 5))
         attach(app, "note-sheet")
         save.tap()
@@ -396,7 +396,7 @@ final class EditorSmokeTests: XCTestCase {
         let editor = app.textViews["inlineTextEditor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "no box to type in")
         dismissKeyboardIntroduction(in: app)
-        editor.typeText(text)
+        type(text, into: editor)
         XCTAssertTrue(app.buttons["doneDrawingButton"].waitForExistence(timeout: 5), "no Done while text waits")
         sleep(1)
         let area = editor.frame.insetBy(dx: -20, dy: -20)
@@ -451,7 +451,7 @@ final class EditorSmokeTests: XCTestCase {
         let editor = app.textViews["inlineTextEditor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "no box to type in")
         dismissKeyboardIntroduction(in: app)
-        editor.typeText("Kept")
+        type("Kept", into: editor)
         let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
         back.tap()
         XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
@@ -552,15 +552,18 @@ final class EditorSmokeTests: XCTestCase {
         point(0.45, 0.3).press(forDuration: 0.05, thenDragTo: point(0.85, 0.6))
         XCTAssertTrue(save.waitForEnabled(timeout: 5), "Save is still off after drawing")
         attach(app, "sign-pad")
-        // On its side the pad is still there to sign on, with what was drawn.
+        // On its side the pad is still there to sign on, with what was drawn. The screen turns a moment
+        // after the device does (more than a second on a busy machine): waited for, ten seconds at most.
         XCUIDevice.shared.orientation = .landscapeLeft
-        sleep(1)
+        for _ in 0..<20 where app.frame.width <= app.frame.height || canvas.frame.width <= canvas.frame.height { usleep(500_000) }
+        XCTAssertGreaterThan(app.frame.width, app.frame.height, "the screen did not turn")
         XCTAssertTrue(canvas.isHittable, "the pad is not there on its side")
         XCTAssertGreaterThan(canvas.frame.width, canvas.frame.height, "on its side the pad is wider than it is high")
         XCTAssertTrue(save.isEnabled, "turning the phone lost the drawing")
         attach(app, "sign-pad-landscape")
         XCUIDevice.shared.orientation = .portrait
-        sleep(1)
+        for _ in 0..<20 where app.frame.width >= app.frame.height { usleep(500_000) }
+        XCTAssertLessThan(app.frame.width, app.frame.height, "the screen did not turn upright again")
         save.tap()
         XCTAssertTrue(canvas.waitForNonExistence(timeout: 5), "Save did not put the pad away")
 
@@ -713,7 +716,7 @@ final class EditorSmokeTests: XCTestCase {
             let editor = app.textViews["formFieldEditor"]
             XCTAssertTrue(editor.waitForExistence(timeout: 5), "no editor for the notes field")
             dismissKeyboardIntroduction(in: app)
-            editor.typeText("Line one\nLine two")
+            type("Line one\nLine two", into: editor)
             let keyboard = app.keyboards.firstMatch
             if keyboard.waitForExistence(timeout: 5) {
                 sleep(1)
@@ -739,7 +742,7 @@ final class EditorSmokeTests: XCTestCase {
         let editor = app.textFields["formFieldEditor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "no editor for the name field")
         dismissKeyboardIntroduction(in: app)
-        editor.typeText("Kept")
+        type("Kept", into: editor)
         let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
         back.tap()
         XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
@@ -884,7 +887,9 @@ final class EditorSmokeTests: XCTestCase {
 
     /// ⇧⌘Z on a hardware keyboard (the Edit menu's Redo) redoes nothing while strokes wait to be added,
     /// as the toolbar's Redo is off then: it went to the scene's undo manager directly, and the strokes
-    /// were then refused as stale and lost. Done adds them, with no alert.
+    /// were then refused as stale and lost. Done adds them, with no alert. (With nothing waiting it
+    /// redoes, as the toolbar's Redo does: so the keys are known to reach the app before it is seen
+    /// that they do nothing.)
     func testTheKeyboardsRedoWaitsForTheStrokesWaiting() throws {
         let app = launchAndOpen("sample.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
@@ -896,6 +901,11 @@ final class EditorSmokeTests: XCTestCase {
         pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
             .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
         XCTAssertTrue(done.waitForExistence(timeout: 5)); done.tap()
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5))
+        undo.tap()
+        XCTAssertTrue(redo.waitForEnabled(timeout: 5), "nothing to redo")
+        XCTAssertTrue(press("z", modifiers: [.command, .shift], in: app, until: NSPredicate(format: "enabled == false"), holdsFor: redo),
+                      "⇧⌘Z did not redo with nothing waiting")
         XCTAssertTrue(undo.waitForEnabled(timeout: 5))
         undo.tap()
         XCTAssertTrue(redo.waitForEnabled(timeout: 5), "nothing to redo")
@@ -936,11 +946,9 @@ final class EditorSmokeTests: XCTestCase {
         let field = app.textFields["searchField"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         dismissKeyboardIntroduction(in: app)
-        field.typeText("three")
-        XCTAssertEqual(field.value as? String, "three")
-        app.typeKey("z", modifierFlags: .command)
-        sleep(1)
-        XCTAssertNotEqual(field.value as? String, "three", "⌘Z did not take back the typing")
+        type("three", into: field)
+        XCTAssertTrue(press("z", modifiers: .command, in: app, until: NSPredicate(format: "value != %@", "three"), holdsFor: field),
+                      "⌘Z did not take back the typing")
         app.buttons["searchDoneButton"].tap()
         XCTAssertTrue(field.waitForNonExistence(timeout: 5))
         XCTAssertTrue(undo.waitForEnabled(timeout: 5), "⌘Z took back the drawing")
