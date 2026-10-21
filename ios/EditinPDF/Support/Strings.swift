@@ -234,7 +234,8 @@ enum Strings {
     }
 
     /// Why text typed in a text box was not added, and where it is: its page (or the text box it was
-    /// for) changed while it was on its way, and the text is on the pasteboard.
+    /// for) changed while it was on its way, and the text is on the pasteboard, on this device only
+    /// (`DocumentModel.keepLocally`), where "copied, ready to paste" holds.
     static var typedTextCopied: String {
         String(localized: "Your text wasn't added because the page changed meanwhile. It's copied, ready to paste.", comment: "Shown when text typed in a text box could not be added because its page changed; the text was put on the pasteboard")
     }

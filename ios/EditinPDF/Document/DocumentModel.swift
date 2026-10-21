@@ -2,6 +2,7 @@ import EditinPDFCore
 import Foundation
 import Observation
 import UIKit
+import UniformTypeIdentifiers
 
 /// What SwiftUI shows for one document: whether it is open, locked behind a password or could not
 /// be read; its pages; which page the reader is on; its search; and the text selected in it. And
@@ -563,8 +564,15 @@ final class DocumentModel {
     }
 
     /// Where text the reader typed is kept when it cannot be added where it was typed: the general
-    /// pasteboard. A test puts its own in its place.
-    @ObservationIgnored var keepOnPasteboard: @MainActor (String) -> Void = { UIPasteboard.general.string = $0 }
+    /// pasteboard, on this device only (`keepLocally`). A test puts its own in its place.
+    @ObservationIgnored var keepOnPasteboard: @MainActor (String) -> Void = { DocumentModel.keepLocally($0, on: UIPasteboard.general) }
+
+    /// Puts `text` on `pasteboard` as plain text that stays on this device: the reader's own typing,
+    /// which they did not copy themselves, is not handed to their other devices (Universal Clipboard).
+    /// It pastes as text in this app and in others here.
+    static func keepLocally(_ text: String, on pasteboard: some ItemPasteboard) {
+        pasteboard.setItems([[UTType.utf8PlainText.identifier: text]], options: [.localOnly: true])
+    }
 
     /// Text the reader typed that could not be added where it was typed (its page, or the text box it
     /// was for, changed while it was on its way): it is put on the pasteboard, so it is not lost, and
@@ -1270,3 +1278,11 @@ struct PageMoves {
         return !moves.contains { $0.revision > revision && $0.effect.changes(page) }
     }
 }
+
+/// What `DocumentModel.keepLocally` writes to: `UIPasteboard`, or a test's own, which records it.
+@MainActor
+protocol ItemPasteboard: AnyObject {
+    func setItems(_ items: [[String: Any]], options: [UIPasteboard.OptionsKey: Any])
+}
+
+extension UIPasteboard: ItemPasteboard {}

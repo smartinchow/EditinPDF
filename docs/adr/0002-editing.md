@@ -213,7 +213,8 @@ waiting where they were drawn (`InkInteraction.putBack`), or, when the canvas ca
 screen gone), are handed over again for the page as it is now, which is the same; a text box's text is handed over
 again. When it is not, the reader is told the drawing was not added (`Strings.drawingNotAdded`); a text box's text,
 like the changed text of a text box another change numbered again, is put on the pasteboard, and the reader is
-told so (`Strings.typedTextCopied`).
+told so (`Strings.typedTextCopied`). It goes there as plain text for this device only (`DocumentModel.keepLocally`,
+`.localOnly`): the reader did not copy it, so Universal Clipboard does not hand it to their other devices.
 
 ### 7. Comments are addressed by position, and `DeleteAnnotations` deletes by object
 

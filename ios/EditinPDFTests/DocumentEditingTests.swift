@@ -1,5 +1,6 @@
 import EditinPDFCore
 import UIKit
+import UniformTypeIdentifiers
 import XCTest
 @testable import EditinPDF
 
@@ -369,6 +370,30 @@ final class DocumentEditingTests: XCTestCase {
         XCTAssertFalse(changed)
         XCTAssertEqual(m.failure?.message, Strings.typedTextCopied)
         XCTAssertEqual(kept, ["Moved", "Changed"])
+    }
+
+    /// Typed text kept on the pasteboard is plain text that stays on this device: the reader did not
+    /// copy it, so it is not handed to their other devices (Universal Clipboard). It pastes as text.
+    func testTypedTextIsKeptOnThisDevicesPasteboardOnly() throws {
+        final class Recorder: ItemPasteboard {
+            var items: [[String: Any]] = []
+            var options: [UIPasteboard.OptionsKey: Any] = [:]
+            func setItems(_ items: [[String: Any]], options: [UIPasteboard.OptionsKey: Any]) {
+                self.items = items
+                self.options = options
+            }
+        }
+        let recorder = Recorder()
+        DocumentModel.keepLocally("Kept", on: recorder)
+        XCTAssertEqual(recorder.items.count, 1)
+        XCTAssertEqual(recorder.items.first?.count, 1, "one representation")
+        XCTAssertEqual(recorder.items.first?[UTType.utf8PlainText.identifier] as? String, "Kept")
+        XCTAssertEqual(recorder.options[.localOnly] as? Bool, true, "this device only")
+
+        let pasteboard = UIPasteboard.withUniqueName()
+        defer { UIPasteboard.remove(withName: pasteboard.name) }
+        DocumentModel.keepLocally("Kept", on: pasteboard)
+        XCTAssertEqual(pasteboard.string, "Kept")
     }
 
     /// Whether a page is the page it was: what moves pages, adds or deletes them before it, or turns
