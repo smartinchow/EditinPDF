@@ -206,19 +206,22 @@ final class AnnotationSelectInteraction: NSObject {
 
     /// Does what the menu's `action` says to `info`: Edit opens the note sheet for a note, or puts the
     /// box to type in over a text box, with its text (the selection goes: the box takes its place);
-    /// Delete deletes it.
-    func perform(_ action: AnnotationAction, on info: AnnotationInfo) {
+    /// Delete deletes it. `info` is as the document had it at `revision`, the one the menu was made at
+    /// (the model's now when nil): the change is worked out against it, so a menu left up while another
+    /// change numbered the page's annotations again changes no other one (it is refused as stale).
+    func perform(_ action: AnnotationAction, on info: AnnotationInfo, workedOutAt revision: UInt64? = nil) {
         menu.dismissMenu()
+        let revision = revision ?? model.revision
         switch action {
         case .edit:
             model.selectedAnnotation = nil
             if info.kind == .note {
-                model.editNote(info)
+                model.editNote(info, workedOutAt: revision)
             } else {
-                textBoxes.beginEditing(info)
+                textBoxes.beginEditing(info, workedOutAt: revision)
             }
         case .delete:
-            model.enqueueDelete(AnnotationRef(page: Int(info.page), index: info.index))
+            model.enqueueDelete(AnnotationRef(page: Int(info.page), index: info.index), workedOutAt: revision)
         }
     }
 
@@ -285,13 +288,17 @@ extension AnnotationSelectInteraction: @preconcurrency UIEditMenuInteractionDele
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         guard let info = model.selectedAnnotationInfo else { return nil }
+        // What the menu does is worked out for the document it was made for.
+        let builtAt = model.revision
         let items = actions(for: info).map { action -> UIAction in
             switch action {
             case .edit:
-                UIAction(title: Strings.edit, image: UIImage(systemName: "pencil")) { [weak self] _ in self?.perform(.edit, on: info) }
+                UIAction(title: Strings.edit, image: UIImage(systemName: "pencil")) { [weak self] _ in
+                    self?.perform(.edit, on: info, workedOutAt: builtAt)
+                }
             case .delete:
                 UIAction(title: Strings.delete, image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
-                    self?.perform(.delete, on: info)
+                    self?.perform(.delete, on: info, workedOutAt: builtAt)
                 }
             }
         }

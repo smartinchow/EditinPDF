@@ -24,7 +24,9 @@ import UIKit
 ///   what keeps them when the document is closed: the scene closes the file as soon as the back button
 ///   is tapped, before the screen hears it is going, and saves it only if a change has been registered
 ///   by then. Each is worked out against the revision it was drawn on: one drawn while a turn of its
-///   page was on its way is refused as stale, and leaves nothing on the screen.
+///   page was on its way is refused as stale, leaves nothing on the screen, and the reader is told it
+///   was not added. One refused as stale while its page stayed as it was (another page turned, pages
+///   added after it) is put back on the canvas, waiting (`putBack`), or added again.
 @MainActor
 final class InkInteraction: NSObject {
     private weak var host: PageScrollViewController?
@@ -124,8 +126,35 @@ final class InkInteraction: NSObject {
         ink.drawnAt = nil
         ink.forgetStrokeHistory()
         model.pendingInkDidChange(false)
-        let made = model.enqueueInk(page: ink.page, strokes: strokes, drawnAt: revision, style: ink.style)
+        let page = ink.page, style = ink.style, scale = 1 / ink.pointsPerCanvasPoint
+        let made = model.enqueueInk(page: page, strokes: strokes, drawnAt: revision, style: style) { [weak self] in
+            self?.putBack(drawing, onPage: page, style: style, drawnAtScale: scale) ?? false
+        }
         return MarkupInteraction.settlePreview(of: made) { [weak self] in self?.removePreview(preview) }
+    }
+
+    /// Puts `drawing` back on the canvas, waiting to be added again: strokes drawn on `page` with the
+    /// canvas at `scale` (layout points per page point), in `style`, that the engine refused as stale
+    /// while the page stayed the page they were drawn on, as it was (the model has made sure:
+    /// `DocumentModel.enqueueInk`). Done once Draw is still picked and may be used there, and the
+    /// canvas is free for them: empty, or holding strokes on the same page in the same style, not being
+    /// drawn. They are scaled to the layout as it is now. Says whether they are back.
+    func putBack(_ drawing: PKDrawing, onPage page: Int, style: ToolStyle?, drawnAtScale scale: CGFloat) -> Bool {
+        guard let host, drawsOn(page: page), let place = host.layoutPlace(ofPage: page),
+              scale > 0, scale.isFinite, place.scale > 0 else { return false }
+        let style = style ?? model.toolStyles[.ink]
+        if let ink, ink.superview === host.contentView, ink.isDrawing || !ink.drawing.strokes.isEmpty {
+            guard !ink.isDrawing, ink.page == page, ink.style == style else { return false }
+        } else if !placeCanvas(onPage: page, style: style) {
+            return false
+        }
+        guard let ink else { return false }
+        var waiting = ink.drawing
+        waiting.append(drawing.transformed(using: CGAffineTransform(scaleX: place.scale / scale, y: place.scale / scale)))
+        ink.drawing = waiting
+        if ink.drawnAt == nil { ink.drawnAt = model.revision }
+        model.pendingInkDidChange(true)
+        return true
     }
 
     /// A picture of `drawing` where it is on `canvas`, over the page, in the content view: what was

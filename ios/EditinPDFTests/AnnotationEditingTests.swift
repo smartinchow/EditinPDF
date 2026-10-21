@@ -528,6 +528,23 @@ final class AnnotationEditingTests: XCTestCase {
         XCTAssertEqual(undoManager.undoActionName, Strings.actionDeleteAnnotation)
     }
 
+    /// The menu's Delete is worked out for the document the menu was made for: left up while another
+    /// change numbered the page's annotations again, it deletes no other one (refused as stale).
+    func testTheMenusDeleteIsWorkedOutForTheRevisionItWasMadeAt() async throws {
+        let (controller, model, _) = await makeController()
+        for x in [50.0, 150.0, 250.0] { _ = await model.addShape(page: 0, draft: .rect(CGRect(x: x, y: 100, width: 60, height: 60), oval: false)) }
+        let shapes = model.annotationIndex.annotations(onPage: 0).sorted { $0.index < $1.index }
+        XCTAssertEqual(shapes.count, 3)
+        let middle = shapes[1]
+        let menuMadeAt = model.revision
+        await model.perform(.deleteAnnotation(page: 0, index: shapes[0].index), named: Strings.actionDeleteAnnotation, touching: [0])
+        controller.markupInteraction.selecting.perform(.delete, on: middle, workedOutAt: menuMadeAt)
+        await model.settle()
+        XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map { $0.rect.x }.sorted(), [shapes[1].rect.x, shapes[2].rect.x],
+                       "the one the menu was for, and the one after it, are both there")
+    }
+
     /// With the eraser, one finger on a page erases: what the stroke crosses is deleted when the finger
     /// comes up, as one change. In the gap between pages it scrolls.
     func testTheEraserDeletesWhatItsStrokeCrossesAsOneChange() async throws {

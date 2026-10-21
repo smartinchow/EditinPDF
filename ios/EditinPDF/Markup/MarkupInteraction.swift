@@ -64,7 +64,8 @@ import UIKit.UIGestureRecognizerSubclass
 /// one change (`placeSignature`); with none saved, the tap opens the pad to draw one.
 ///
 /// Strokes waiting and text being typed are added (`commitPendingInk`, `commitPendingText`, which the
-/// model calls together) whenever a finger goes down anywhere outside the pages (`fingerWentDown`).
+/// model calls together) whenever a finger goes down anywhere outside the pages (`fingerWentDown`), and
+/// whenever focus moves off the pages to something else in their window (`focusMoved`).
 @MainActor
 final class MarkupInteraction: NSObject {
     /// How far outside an annotation's box, in points on screen, a touch still lands on it: a finger is
@@ -176,6 +177,7 @@ final class MarkupInteraction: NSObject {
         textBoxes.install()
         selecting.install()
         model.inkHolder = self
+        listenForFocus()
         toolDidChange()
     }
 
@@ -524,6 +526,57 @@ final class MarkupInteraction: NSObject {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
         if let view, view.isDescendant(of: host.scrollView) { return }
         model.commitPendingInk()
+    }
+
+    /// Listens for focus moving: VoiceOver's and Switch Control's (an element focused), and the focus
+    /// system's (Full Keyboard Access, a hardware keyboard's Tab): see `focusMoved(to:)`.
+    private func listenForFocus() {
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(accessibilityFocusMoved(_:)), name: UIAccessibility.elementFocusedNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardFocusMoved(_:)), name: UIFocusSystem.didUpdateNotification, object: nil)
+    }
+
+    @objc private func accessibilityFocusMoved(_ notification: Notification) {
+        focusMoved(to: notification.userInfo?[UIAccessibility.focusedElementUserInfoKey])
+    }
+
+    @objc private func keyboardFocusMoved(_ notification: Notification) {
+        let context = notification.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey] as? UIFocusUpdateContext
+        focusMoved(to: context?.nextFocusedItem)
+    }
+
+    /// Focus moved to `item`: when it left the pages for something else in their window (the back
+    /// button, the toolbar, the palette), what waits is added, as when a finger goes down there
+    /// (`fingerWentDown`). Back can be reached and pressed without a touch (VoiceOver, Switch Control,
+    /// Full Keyboard Access), and the document closes at once then too.
+    func focusMoved(to item: Any?) {
+        guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
+        if Self.focusLeavesPages(item, pages: host.scrollView) { model.commitPendingInk() }
+    }
+
+    /// Whether focus moving to `item` takes it off `pages` (the scroll view) to something else in their
+    /// window: a view, or an accessibility element or a focus item, followed up to the view it is in.
+    /// Not an item in another window (the keyboard's, as a text box is typed in with VoiceOver), nor
+    /// one whose view cannot be found: what waits is added only when focus is surely elsewhere.
+    static func focusLeavesPages(_ item: Any?, pages: UIView) -> Bool {
+        guard let window = pages.window, let view = view(holding: item), view.window === window else { return false }
+        return !view.isDescendant(of: pages)
+    }
+
+    /// The view `item` is, or is in: an accessibility element's container, or a focus item's parent
+    /// environment, followed up, a few dozen steps at most. Nil when none is found.
+    static func view(holding item: Any?) -> UIView? {
+        var current = item
+        for _ in 0..<32 {
+            switch current {
+            case let view as UIView: return view
+            case let controller as UIViewController: return controller.viewIfLoaded
+            case let element as UIAccessibilityElement: current = element.accessibilityContainer
+            case let environment as UIFocusEnvironment: current = environment.parentFocusEnvironment
+            default: return nil
+            }
+        }
+        return nil
     }
 
     /// Adds the strokes drawn with Draw and waiting, if any (`InkInteraction.commitPendingInk`).

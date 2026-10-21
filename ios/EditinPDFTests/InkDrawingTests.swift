@@ -341,7 +341,7 @@ final class InkDrawingTests: XCTestCase {
         let rotated = await rotate.value
         let made = await commit.value
         XCTAssertTrue(rotated); XCTAssertFalse(made)
-        XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
+        XCTAssertEqual(model.failure?.message, Strings.drawingNotAdded)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
         XCTAssertTrue(ink.drawing.strokes.isEmpty)
         XCTAssertTrue(markup.drawing.inkPreviews.isEmpty, "no ghost of the refused strokes")
@@ -363,7 +363,7 @@ final class InkDrawingTests: XCTestCase {
         controller.apply(try XCTUnwrap(model.lastChange))
         await model.settle()
         for _ in 0..<5 { await Task.yield() }
-        XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
+        XCTAssertEqual(model.failure?.message, Strings.drawingNotAdded)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
         XCTAssertNil(ink.superview, "the canvas of the old layout is gone")
         XCTAssertTrue(markup.drawing.inkPreviews.isEmpty)
@@ -380,5 +380,91 @@ final class InkDrawingTests: XCTestCase {
         controller.scrollView.contentOffset = .zero
         XCTAssertNotNil(controller.pageView(for: 0))
         XCTAssertTrue(controller.contentView.subviews.last === ink, "the page's new view is under the canvas")
+    }
+
+    // MARK: Strokes refused as stale, focus, VoiceOver
+
+    /// Strokes refused as stale while their page stayed as it was (another page's turn was on its way
+    /// as they were drawn) go back on the canvas, waiting, where they were drawn: no alert, no ghost,
+    /// and Done adds them.
+    func testInkRefusedWhileItsPageStayedGoesBackOnTheCanvas() async throws {
+        let (controller, model, undoManager) = await makeController()
+        let markup = controller.markupInteraction
+        let turn = model.enqueue([.rotatePages(pages: [1], degrees: 90)], named: Strings.actionRotate, touching: [1])
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
+        draw([line], on: ink)
+        let drawn = ink.drawing.bounds
+        let commit = try XCTUnwrap(markup.commitPendingInk())
+        _ = await turn.value
+        let made = await commit.value
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertFalse(made)
+        XCTAssertNil(model.failure)
+        XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+        XCTAssertTrue(markup.drawing.inkPreviews.isEmpty, "no picture of them on their way")
+        XCTAssertTrue(model.hasPendingInk, "waiting again")
+        XCTAssertTrue(ink.superview === controller.contentView)
+        XCTAssertEqual(ink.page, 0)
+        XCTAssertEqual(ink.drawing.bounds.minX, drawn.minX, accuracy: 0.5, "where they were drawn")
+        XCTAssertEqual(ink.drawing.bounds.minY, drawn.minY, accuracy: 0.5)
+
+        let again = try XCTUnwrap(markup.commitPendingInk())
+        let added = await again.value
+        XCTAssertTrue(added)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink])
+        undoManager.undo(); await model.settle()
+        XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+    }
+
+    /// The canvas is one element to VoiceOver that takes touches straight away, as the signature pad's
+    /// is: a stroke is drawn, not read out.
+    func testTheCanvasTakesTouchesDirectlyUnderVoiceOver() async throws {
+        let (controller, _, _) = await makeController()
+        let ink = try XCTUnwrap(controller.markupInteraction.drawing.ink)
+        XCTAssertTrue(ink.isAccessibilityElement)
+        XCTAssertTrue(ink.accessibilityTraits.contains(.allowsDirectInteraction))
+        XCTAssertEqual(ink.accessibilityLabel, Strings.toolInk)
+    }
+
+    /// Focus leaving the pages for something else in their window (Back, reached with VoiceOver, Switch
+    /// Control or a keyboard) adds the strokes waiting, as a finger going down there does. Focus on the
+    /// pages, or in another window (the keyboard's), does not.
+    func testFocusLeavingThePagesAddsTheStrokesWaiting() async throws {
+        let (controller, model, _) = await makeController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 900))
+        window.addSubview(controller.view)
+        let back = UIButton(frame: CGRect(x: 0, y: 820, width: 80, height: 40))
+        window.addSubview(back)
+        controller.view.layoutIfNeeded()
+        await model.settle()
+        let elsewhere = UIWindow(frame: window.frame)
+        let key = UIView()
+        elsewhere.addSubview(key)
+        let markup = controller.markupInteraction
+        let pages = controller.scrollView
+
+        XCTAssertFalse(MarkupInteraction.focusLeavesPages(nil, pages: pages))
+        XCTAssertFalse(MarkupInteraction.focusLeavesPages(controller.contentView, pages: pages), "on the pages")
+        XCTAssertFalse(MarkupInteraction.focusLeavesPages(key, pages: pages), "another window")
+        XCTAssertTrue(MarkupInteraction.focusLeavesPages(back, pages: pages))
+        let element = UIAccessibilityElement(accessibilityContainer: back)
+        XCTAssertTrue(MarkupInteraction.focusLeavesPages(element, pages: pages), "an element followed up to its view")
+        XCTAssertTrue(MarkupInteraction.view(holding: element) === back)
+
+        XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(markup.drawing.ink)
+        draw([line], on: ink)
+        model.pendingInkDidChange(true)
+        markup.focusMoved(to: ink)
+        XCTAssertTrue(model.hasPendingInk, "focus on the canvas: still waiting")
+        markup.focusMoved(to: key)
+        XCTAssertTrue(model.hasPendingInk, "the keyboard's window: still waiting")
+        markup.focusMoved(to: element)
+        XCTAssertFalse(model.hasPendingInk, "added as focus left the pages")
+        await model.settle()
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink])
+        window.isHidden = true
+        elsewhere.isHidden = true
     }
 }

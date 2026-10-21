@@ -198,7 +198,8 @@ final class InkGeometryTests: XCTestCase {
     }
 
     /// Ink is placed in view space: drawn before a turn of its page that is still on its way, it is
-    /// refused as stale, and the reader is told why; nothing is left to undo but the turn.
+    /// refused as stale, and the reader is told it was not added, and why; nothing is left to undo
+    /// but the turn.
     func testInkDrawnBeforeATurnOfItsPageIsRefusedAsStale() async throws {
         let (m, u) = try makeModel()
         await m.settle()
@@ -207,7 +208,7 @@ final class InkGeometryTests: XCTestCase {
         let made = await m.addInk(page: 0, strokes: [[CGPoint(x: 10, y: 10), CGPoint(x: 60, y: 40)]], drawnAt: drawnAt)
         let rotated = await rotate.value
         XCTAssertTrue(rotated); XCTAssertFalse(made)
-        XCTAssertEqual(m.failure?.message, Strings.documentChangedTryAgain)
+        XCTAssertEqual(m.failure?.message, Strings.drawingNotAdded)
         XCTAssertTrue(m.annotationIndex.annotations(onPage: 0).isEmpty)
         u.undo(); await m.settle()
         XCTAssertFalse(u.canUndo, "the refused drawing left nothing to undo")

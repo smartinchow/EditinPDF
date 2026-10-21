@@ -74,8 +74,17 @@ final class EditToken {
     /// and its redo redraw. Set when it is handed over, and again when its turn comes for a change
     /// that works them out then (`DocumentModel.enqueue`'s `atItsTurn`).
     var pages: Set<Int>?
+    /// What its undo and its redo can do to edits worked out before them (`DocumentModel.undoShift`):
+    /// what the change itself can, and for a change that adds an annotation, the places of its page's
+    /// annotations too, since its undo takes the annotation off again. Kept in place of the edits, which
+    /// can hold a whole PDF's bytes (an insert from a file).
+    let shift: EditShift
+    /// What its undo and its redo do to the pages: what the change does (`PageEffect`), the other way.
+    let pageEffect: PageEffect
 
-    init(pages: Set<Int>? = nil) {
+    init(pages: Set<Int>? = nil, shift: EditShift = .all, pageEffect: PageEffect = .everything) {
         self.pages = pages
+        self.shift = shift
+        self.pageEffect = pageEffect
     }
 }

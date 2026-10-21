@@ -20,8 +20,15 @@ struct EditinPDFApp: App {
         // iOS 27, so the app keeps them until its minimum moves there (the build prints no warning for
         // them today).
         DocumentGroup(newDocument: { PDFFileDocument() }) { configuration in
-            DocumentScreen(model: configuration.document.model,
+            let model = configuration.document.model
+            DocumentScreen(model: model,
                            documentName: configuration.fileURL?.deletingPathExtension().lastPathComponent ?? Strings.untitledDocument)
+                // A document the scene replaces (the file changed on disk, another version restored)
+                // has a model of its own: the screen is made again for it, its pages' controller and
+                // its state with it. The model is kept for the file's life (`PDFFileDocument.model`),
+                // so nothing else makes the screen again.
+                .id(ObjectIdentifier(model))
         }
+        .commands { UndoRedoCommands() }
     }
 }

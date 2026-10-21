@@ -47,10 +47,8 @@ struct DocumentScreen: View {
     @Environment(\.undoManager) private var undoManager
     /// Whether the scene is on screen and active: strokes drawn with Draw are added as it leaves.
     @Environment(\.scenePhase) private var scenePhase
-    /// Whether the undo manager has something to undo, and to redo. It is not observable, so these are
-    /// read again whenever it says its stacks moved.
-    @State private var canUndo = false
-    @State private var canRedo = false
+    /// Whether Undo and Redo may be tapped now, here and in the Edit menu (`DocumentModel.undoAvailability`).
+    private var undoAvailability: UndoAvailability { model.undoAvailability }
     /// Whether a change has been in the making long enough to show a spinner by the page indicator.
     @State private var showsProgress = false
     /// Closes the document, back to the document browser, on the iOS versions where `dismiss` does
@@ -82,16 +80,26 @@ struct DocumentScreen: View {
 
     var body: some View {
         content
-            .onAppear { adoptUndoManager() }
+            .onAppear {
+                adoptUndoManager()
+                FrontDocument.shared.bringForward(model)
+            }
             // Strokes drawn with Draw and waiting are added as the screen goes. (Going back to the
             // documents closes the file before this: the strokes were added as the back button was
             // touched, see `MarkupInteraction.fingerWentDown`.)
-            .onDisappear { model.commitPendingInk() }
+            .onDisappear {
+                model.commitPendingInk()
+                FrontDocument.shared.leave(model)
+            }
             .onChange(of: undoManager) { adoptUndoManager() }
             // Strokes left waiting on the page are added before the scene goes to the background (and
             // the file is saved): they would not be in it otherwise.
             .onChange(of: scenePhase) {
+                if scenePhase == .active { FrontDocument.shared.bringForward(model) }
                 if scenePhase != .active { model.commitPendingInk() }
+                // A note being written is saved as the scene goes to the background (and the file is
+                // saved): the app may not come back to it.
+                if scenePhase == .background { model.saveNoteDraftOnLeaving() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { readUndoState($0) }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { readUndoState($0) }
@@ -132,11 +140,11 @@ struct DocumentScreen: View {
     }
 
     /// Reads whether there is something to undo and redo, after `notification` from an undo manager:
-    /// only the scene's own matters (other ones, a text field's, post the same notifications).
+    /// only the scene's own matters (other ones, a text field's, post the same notifications). The
+    /// undo manager is not observable, so the model is told (`undoStackDidChange`).
     private func readUndoState(_ notification: Notification?) {
         if let notification, (notification.object as? UndoManager) !== undoManager { return }
-        canUndo = undoManager?.canUndo ?? false
-        canRedo = undoManager?.canRedo ?? false
+        model.undoStackDidChange(canUndo: undoManager?.canUndo ?? false, canRedo: undoManager?.canRedo ?? false)
     }
 
     /// Whether the document is waiting for its password.
@@ -306,6 +314,8 @@ struct DocumentScreen: View {
                         await model.saveNoteDraft(text: text)
                     }, cancel: {
                         model.noteDraft = nil
+                    }, written: { text in
+                        model.noteTextDidChange(text)
                     })
                 }
                 // Sign picked or tapped with no signature saved, or Change Signature, opens the pad here:
@@ -449,30 +459,28 @@ struct DocumentScreen: View {
 
     /// Takes back the last change. Changes stay tappable while one is being made: the model makes
     /// them in order. Strokes drawn with Draw, or text typed in a text box or a form field, waiting
-    /// count as a change: Undo adds them, then takes them back.
+    /// count as a change: Undo adds them, then takes them back (`UndoAvailability`). ⌘Z is the Edit
+    /// menu's (`UndoRedoCommands`), which does the same.
     private var undoButton: some View {
         Button {
             model.undo()
         } label: {
             Label(Strings.undo, systemImage: "arrow.uturn.backward")
         }
-        .disabled(!canUndo && !model.hasPendingEdit)
-        // ⌘Z on a hardware keyboard comes here, so strokes waiting are added first, as with a tap.
-        .keyboardShortcut("z", modifiers: .command)
+        .disabled(!undoAvailability.undoEnabled)
         .accessibilityIdentifier("undoButton")
     }
 
     /// Makes again the change last taken back. Not while strokes drawn with Draw, or text typed in a
     /// text box or a form field, are waiting: they are a change after it, and adding them leaves
-    /// nothing to redo.
+    /// nothing to redo. ⇧⌘Z is the Edit menu's, under the same rule.
     private var redoButton: some View {
         Button {
             model.redo()
         } label: {
             Label(Strings.redo, systemImage: "arrow.uturn.forward")
         }
-        .disabled(!canRedo || model.hasPendingEdit)
-        .keyboardShortcut("z", modifiers: [.command, .shift])
+        .disabled(!undoAvailability.redoEnabled)
         .accessibilityIdentifier("redoButton")
     }
 
@@ -551,5 +559,149 @@ struct DocumentScreen: View {
         store.reload(pages: model.pages, revision: model.revision)
         thumbnails = store
         return store
+    }
+}
+
+/// Whether Undo and Redo may be chosen: the toolbar's buttons and the Edit menu's (and their keys)
+/// follow the same rule. Undo, when the undo manager has a change to take back or something is
+/// waiting to be added (it adds that, then takes it back); Redo, when the undo manager has a change to
+/// make again and nothing is waiting (adding it would leave nothing to redo).
+struct UndoAvailability: Equatable {
+    var canUndo = false
+    var canRedo = false
+    /// Strokes, or text typed in a text box or a form field, waiting to be added
+    /// (`DocumentModel.hasPendingEdit`).
+    var hasPendingEdit = false
+
+    var undoEnabled: Bool { canUndo || hasPendingEdit }
+    var redoEnabled: Bool { canRedo && !hasPendingEdit }
+}
+
+/// The document in front (its screen on display in the key window): what the Edit menu's Undo and
+/// Redo act on (`UndoRedoCommands`). SwiftUI's focused values do not reach the app's commands from a
+/// document scene's view (the commands read none, on the iOS 26.5 simulator, iPhone and iPad), so the
+/// screen says itself when its document comes to the front, and when it goes.
+///
+/// While a field outside the pages is typed in (the search, a note, a password), Undo and Redo are
+/// that field's, as in any field (`fieldIsBeingTyped`). The text box and form field editors on the
+/// pages are not such fields: there Undo adds what was typed, then takes it back, as the toolbar's does.
+@MainActor
+@Observable
+final class FrontDocument: NSObject {
+    static let shared = FrontDocument()
+
+    /// Whether a field outside the pages is being typed in.
+    private(set) var fieldIsBeingTyped = false
+
+    override init() {
+        super.init()
+        let center = NotificationCenter.default
+        for name in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
+            center.addObserver(self, selector: #selector(editingBegan(_:)), name: name, object: nil)
+        }
+        for name in [UITextField.textDidEndEditingNotification, UITextView.textDidEndEditingNotification] {
+            center.addObserver(self, selector: #selector(editingEnded(_:)), name: name, object: nil)
+        }
+    }
+
+    @objc private func editingBegan(_ notification: Notification) {
+        if let field = notification.object as? UIView, !Self.isOnThePages(field) { fieldIsBeingTyped = true }
+    }
+
+    @objc private func editingEnded(_ notification: Notification) {
+        if let field = notification.object as? UIView, !Self.isOnThePages(field) { fieldIsBeingTyped = false }
+    }
+
+    /// Whether `view` is in a page scroll view: a text box's or a form field's editor.
+    static func isOnThePages(_ view: UIView) -> Bool {
+        sequence(first: view, next: \.superview).contains { $0 is PagesScrollView }
+    }
+
+    /// The field being typed in outside the pages: the first responder, when it takes text and is in
+    /// no page scroll view. Nil when there is none.
+    static func fieldBeingTyped() -> UIResponder? {
+        FirstResponder.found = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.editinPDFReportFirstResponder), to: nil, from: nil, for: nil)
+        guard let responder = FirstResponder.found, responder is UITextInput else { return nil }
+        if let view = responder as? UIView, isOnThePages(view) { return nil }
+        return responder
+    }
+
+    /// The Edit menu's Undo: the field's, while one outside the pages is typed in; the document's
+    /// otherwise (`DocumentModel.undo`, which adds what waits first).
+    func undo() {
+        if let field = Self.fieldBeingTyped() {
+            field.undoManager?.undo()
+        } else {
+            model?.undo()
+        }
+    }
+
+    /// The Edit menu's Redo, as `undo`.
+    func redo() {
+        if let field = Self.fieldBeingTyped() {
+            field.undoManager?.redo()
+        } else {
+            model?.redo()
+        }
+    }
+
+    /// The model of the document in front; nil when none is.
+    private(set) var model: DocumentModel? {
+        get { held?.model }
+        set { held = newValue.map(Held.init) }
+    }
+    /// Holds the model weakly: the scene owns it.
+    private var held: Held?
+
+    private final class Held {
+        weak var model: DocumentModel?
+        init(_ model: DocumentModel) { self.model = model }
+    }
+
+    /// `model`'s document came to the front: its scene became active, or its window the key one.
+    func bringForward(_ model: DocumentModel) {
+        if self.model !== model { self.model = model }
+    }
+
+    /// `model`'s screen went: it is not in front any more.
+    func leave(_ model: DocumentModel) {
+        if self.model === model { self.model = nil }
+    }
+}
+
+/// The Edit menu's Undo and Redo (the menu bar on an iPad, ⌘Z and ⇧⌘Z on a hardware keyboard), in
+/// place of the system's. Those act on the scene's undo manager directly, and so would undo past
+/// strokes, or text, waiting to be added (the strokes then refused as stale, and lost), and ⇧⌘Z would
+/// redo while the toolbar's Redo is off. These go through the model, as the toolbar's buttons do,
+/// under the same rule (`UndoAvailability`), or, while a field outside the pages is typed in, to that
+/// field (`FrontDocument`).
+struct UndoRedoCommands: Commands {
+    private var front: FrontDocument { FrontDocument.shared }
+
+    var body: some Commands {
+        let availability = front.model?.undoAvailability ?? UndoAvailability()
+        let typing = front.fieldIsBeingTyped
+        CommandGroup(replacing: .undoRedo) {
+            Button(Strings.undo) { front.undo() }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!(availability.undoEnabled || typing))
+            Button(Strings.redo) { front.redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!(availability.redoEnabled || typing))
+        }
+    }
+}
+
+/// Where `FrontDocument.fieldBeingTyped` finds the first responder: it answers an action sent to no
+/// one in particular, which UIKit hands to the first responder.
+@MainActor
+private enum FirstResponder {
+    static var found: UIResponder?
+}
+
+extension UIResponder {
+    @objc fileprivate func editinPDFReportFirstResponder() {
+        FirstResponder.found = self
     }
 }

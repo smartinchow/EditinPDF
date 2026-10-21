@@ -140,24 +140,34 @@ extension DocumentModel {
 
     /// `setContents`, handed over at once: one change named `Strings.actionEditAnnotation`, addressed
     /// as at `revision` (the model's now when nil, and then only an annotation the document has now,
-    /// whose text is not `text` already). The text is the reader's, and never logged.
+    /// whose text is not `text` already). The text is the reader's, and never logged. Refused as stale
+    /// with `keepingText`, the text is kept on the pasteboard and the reader told so
+    /// (`keepTypedText`): the box it was typed in is gone (the text box being typed in, changed in
+    /// place). Without, the reader is told the document changed (the note sheet, which stays up with
+    /// the text).
     @discardableResult
-    func enqueueContents(of ref: AnnotationRef, to text: String, workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
+    func enqueueContents(of ref: AnnotationRef, to text: String, workedOutAt revision: UInt64? = nil,
+                         keepingText: Bool = false) -> Task<Bool, Never> {
         guard let pageNumber = UInt32(exactly: ref.page) else { return Task { false } }
         if revision == nil {
             guard let info = annotationIndex.annotation(ref), (info.contents ?? "") != text else { return Task { false } }
         }
         if let refusal = changeRefusal(onPage: ref.page) { return refuse(refusal) }
         let edit = Edit.setAnnotationContents(page: pageNumber, index: ref.index, contents: text)
-        return enqueue([edit], named: Strings.actionEditAnnotation, touching: [ref.page], workedOutAt: revision)
+        var whenStale: (@MainActor () -> EditFailure?)?
+        if keepingText {
+            whenStale = { [weak self] in self?.keepTypedText(text) }
+        }
+        return enqueue([edit], named: Strings.actionEditAnnotation, touching: [ref.page], workedOutAt: revision,
+                       whenStale: whenStale)
     }
 
     /// Opens the note sheet (`noteDraft`) for `note`, a note on its page, with its text: Save changes
-    /// that text, worked out against the revision the sheet opened at.
-    func editNote(_ note: AnnotationInfo) {
+    /// that text, worked out against `revision`, the one `note` was read at (the model's now when nil).
+    func editNote(_ note: AnnotationInfo, workedOutAt revision: UInt64? = nil) {
         noteDraft = NoteDraft(page: Int(note.page), point: CGPoint(x: note.rect.x, y: note.rect.y),
                               existing: AnnotationRef(page: Int(note.page), index: note.index), text: note.contents ?? "",
-                              revision: revision)
+                              revision: revision ?? self.revision)
     }
 
     // MARK: The eraser

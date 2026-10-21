@@ -204,14 +204,14 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
     }
 
-    /// A shape is placed in view space: one dragged out while a turn of its page was on its way is
-    /// refused as stale, and nothing that looks drawn is left.
+    /// A shape is placed in view space: one dragged out while its page moved is refused as stale,
+    /// and nothing that looks drawn is left.
     func testAShapeRefusedAsStaleLeavesNoGhost() async throws {
         let (controller, model, undoManager) = await makeController()
         let markup = controller.markupInteraction
-        // Something to take back, then a drag begun before it is taken back behind the toolbar's back
-        // (a shake, say): the page's annotations are numbered again under the drag.
-        _ = await model.addNote(page: 0, at: CGPoint(x: 500, y: 700), contents: "x")
+        // A page put before it, then a drag begun before that is taken back behind the toolbar's back
+        // (the undo manager itself): the page under the drag is numbered again.
+        _ = await model.perform(.insertBlankPage(at: 0, widthPt: 612, heightPt: 792), named: Strings.actionInsertBlank, touching: nil)
         XCTAssertTrue(markup.beginShape(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller)))
         undoManager.undo(); await model.settle()
         markup.moveShape(toContentPoint: try contentPoint(CGPoint(x: 300, y: 300), in: controller))
@@ -221,6 +221,22 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
         XCTAssertNil(try XCTUnwrap(controller.pageView(for: 0)).overlay.draft, "no ghost of the refused shape")
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+    }
+
+    /// A drag begun before a mark is taken back behind the toolbar's back is added: the undo of a mark
+    /// moves no page and no point (only the places of the page's annotations).
+    func testAShapeDraggedAcrossTheUndoOfAMarkIsAdded() async throws {
+        let (controller, model, undoManager) = await makeController()
+        let markup = controller.markupInteraction
+        _ = await model.addNote(page: 0, at: CGPoint(x: 500, y: 700), contents: "x")
+        XCTAssertTrue(markup.beginShape(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller)))
+        undoManager.undo(); await model.settle()
+        markup.moveShape(toContentPoint: try contentPoint(CGPoint(x: 300, y: 300), in: controller))
+        let made = try XCTUnwrap(markup.endShape(atContentPoint: try contentPoint(CGPoint(x: 300, y: 300), in: controller)))
+        let ok = await made.value
+        XCTAssertTrue(ok)
+        XCTAssertNil(model.failure)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.rectangle], "the note taken back, the shape added")
     }
 
     /// The same, with the page turned: the drag is refused and the page shows nothing of it.
@@ -442,9 +458,30 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertEqual(model.refusal(of: .textBox), Strings.textBoxNeedsUprightPage)
     }
 
-    /// Text typed on a box placed before the page's annotations were numbered again (an undo behind
-    /// the toolbar's back) is refused as stale; nothing of it is left on the page.
-    func testATextBoxRefusedAsStaleLeavesNothing() async throws {
+    /// Text typed on a box placed before its page moved (a page before it taken back behind the
+    /// toolbar's back) is refused as stale: nothing of it is left on the page, and the text is kept on
+    /// the pasteboard, which the reader is told.
+    func testATextBoxRefusedAsStaleLeavesNothingAndKeepsItsText() async throws {
+        let (controller, model, undoManager) = await makeController(tool: .textBox)
+        var kept: [String] = []
+        model.keepOnPasteboard = { kept.append($0) }
+        let markup = controller.markupInteraction
+        _ = await model.perform(.insertBlankPage(at: 0, widthPt: 612, heightPt: 792), named: Strings.actionInsertBlank, touching: nil)
+        markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 100), in: controller))
+        type("Late", into: try XCTUnwrap(markup.textBoxes.textEditor))
+        undoManager.undo(); await model.settle()
+        let made = try XCTUnwrap(markup.commitPendingText())
+        let ok = await made.value
+        XCTAssertFalse(ok)
+        XCTAssertEqual(model.failure?.message, Strings.typedTextCopied)
+        XCTAssertEqual(kept, ["Late"])
+        XCTAssertTrue(markup.textBoxes.textPreviews.isEmpty, "no ghost of the refused text")
+        XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+    }
+
+    /// Text typed on a box placed before a mark on its page is taken back behind the toolbar's back is
+    /// added where it was typed: that undo moves no page and no point.
+    func testATextBoxTypedAcrossTheUndoOfAMarkIsAdded() async throws {
         let (controller, model, undoManager) = await makeController(tool: .textBox)
         let markup = controller.markupInteraction
         _ = await model.addNote(page: 0, at: CGPoint(x: 500, y: 700), contents: "x")
@@ -453,10 +490,9 @@ final class ShapeDrawingTests: XCTestCase {
         undoManager.undo(); await model.settle()
         let made = try XCTUnwrap(markup.commitPendingText())
         let ok = await made.value
-        XCTAssertFalse(ok)
-        XCTAssertEqual(model.failure?.message, Strings.documentChangedTryAgain)
-        XCTAssertTrue(markup.textBoxes.textPreviews.isEmpty, "no ghost of the refused text")
-        XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+        XCTAssertTrue(ok)
+        XCTAssertNil(model.failure)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.contents), ["Late"])
     }
 
     // MARK: The overlay's draft

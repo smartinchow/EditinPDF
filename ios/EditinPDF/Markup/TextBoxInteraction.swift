@@ -58,16 +58,17 @@ final class TextBoxInteraction: NSObject {
     /// Puts the box to type in over `info`, a text box on a page shown upright, with its text, in its
     /// colour (Text Box's when it has none) at Text Box's size, and brings up the keyboard; the box
     /// being typed in before, if any, is ended first. Says whether it is there: not for another kind,
-    /// nor on a turned page, where the text would be typed sideways.
+    /// nor on a turned page, where the text would be typed sideways. What is typed is worked out
+    /// against `revision`, the one `info` was read at (the model's now when nil).
     @discardableResult
-    func beginEditing(_ info: AnnotationInfo) -> Bool {
+    func beginEditing(_ info: AnnotationInfo, workedOutAt revision: UInt64? = nil) -> Bool {
         let page = Int(info.page)
         guard info.kind == .textBox, model.pages.indices.contains(page), model.pages[page].rotationDegrees % 360 == 0 else { return false }
         commitPendingText()
         var style = model.toolStyles[.textBox]
         if let color = info.color { style.color = RGBA(r: color.red, g: color.green, b: color.blue) }
         let size = CGSize(width: model.pages[page].widthPt, height: model.pages[page].heightPt)
-        let editor = InlineTextEditor(page: page, origin: CGPoint(x: info.rect.x, y: info.rect.y), revision: model.revision, style: style,
+        let editor = InlineTextEditor(page: page, origin: CGPoint(x: info.rect.x, y: info.rect.y), revision: revision ?? model.revision, style: style,
                                       pageSize: size, existing: AnnotationRef(page: page, index: info.index),
                                       originalText: info.contents ?? "", existingBox: info.box)
         editor.text = info.contents ?? ""
@@ -104,6 +105,11 @@ final class TextBoxInteraction: NSObject {
     /// Over a text box on the page, its text, changed, replaces the text box's (all of it taken away,
     /// the text box is deleted, unless the file locks it: that is refused, `enqueueDelete`); unchanged,
     /// nothing is handed over, and the task is nil.
+    ///
+    /// What was typed is not lost to a change made meanwhile: refused as stale, a new text box whose
+    /// page is the same is handed over again, and otherwise, like changed text for a text box the
+    /// change numbered again, the text is kept on the pasteboard and the reader told so
+    /// (`DocumentModel.enqueueTextBox`, `keepTypedText`).
     @discardableResult
     func commitPendingText() -> Task<Bool, Never>? {
         guard let editor = textEditor else { return nil }
@@ -124,7 +130,7 @@ final class TextBoxInteraction: NSObject {
         if let existing = editor.existing {
             guard changes else { return nil }
             made = committed.isEmpty ? model.enqueueDelete(existing, workedOutAt: editor.revision)
-                : model.enqueueContents(of: existing, to: committed, workedOutAt: editor.revision)
+                : model.enqueueContents(of: existing, to: committed, workedOutAt: editor.revision, keepingText: true)
         } else {
             made = model.enqueueTextBox(page: editor.page, at: editor.origin, text: text, workedOutAt: editor.revision, style: editor.style)
         }

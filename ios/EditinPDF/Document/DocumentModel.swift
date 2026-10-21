@@ -1,6 +1,7 @@
 import EditinPDFCore
 import Foundation
 import Observation
+import UIKit
 
 /// What SwiftUI shows for one document: whether it is open, locked behind a password or could not
 /// be read; its pages; which page the reader is on; its search; and the text selected in it. And
@@ -153,11 +154,26 @@ final class DocumentModel {
             controller.clear()
             return false
         }
+        if let tooMany = Self.markupRefusal(boxes: rects.count) {
+            controller.clear()
+            failure = EditFailure(message: tooMany)
+            return false
+        }
         let edit = Edit.addTextMarkup(page: selected.page, kind: kind, rects: rects, color: toolStyles[tool].color.rgbColor, contents: "")
         let made = await perform(edit, named: Strings.actionAddAnnotation, touching: [page])
         // A selection the reader made while the mark was on its way is theirs: it stays.
         if !made, controller.selection == selected { controller.clear() }
         return made
+    }
+
+    /// The most boxes one mark takes: the bridge's cap on a text markup's boxes (`MAX_MARKUP_RECTS` in
+    /// `edit.rs`), one for each line of the selection on its page.
+    static let maxMarkupBoxes = 10_000
+
+    /// Why a mark over a selection of `boxes` boxes (lines) is not made: past the bridge's cap, it
+    /// would be refused, so the reader is asked for less at once. Nil when it can be made.
+    static func markupRefusal(boxes: Int) -> String? {
+        boxes > maxMarkupBoxes ? Strings.selectLessText : nil
     }
 
     /// Whether `tool` can be used on the page being read: not before the document's permissions are
@@ -242,8 +258,16 @@ final class DocumentModel {
 
     /// `addInk`, handed over at once (registered with the undo manager before this returns), for
     /// whatever must come after it: the task says whether it was made.
+    ///
+    /// Strokes refused as stale are not lost. When their page is still the page they were drawn on, as
+    /// it was (`pageIsUnchanged`: no page before it or it moved, it not turned), `putBack` is asked to
+    /// put them back where they were drawn, waiting to be added again (the canvas's
+    /// `InkInteraction.putBack`), and when it cannot, they are handed over again, worked out for the
+    /// page as it is now, which is the same. Otherwise the reader is told they were not added, and why
+    /// (`Strings.drawingNotAdded`).
     @discardableResult
-    func enqueueInk(page: Int, strokes: [[CGPoint]], drawnAt revision: UInt64? = nil, style: ToolStyle? = nil) -> Task<Bool, Never> {
+    func enqueueInk(page: Int, strokes: [[CGPoint]], drawnAt revision: UInt64? = nil, style: ToolStyle? = nil,
+                    putBack: (@MainActor () -> Bool)? = nil) -> Task<Bool, Never> {
         if let refusal = refusal(of: .ink, onPage: page) {
             failure = EditFailure(message: refusal)
             return Task { false }
@@ -255,7 +279,15 @@ final class DocumentModel {
             Edit.addInk(page: pageNumber, strokes: drawing.map { $0.map { Point(x: Double($0.x), y: Double($0.y)) } },
                         color: style.color.rgbColor, width: width)
         }
-        return enqueue(edits, named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+        let drawnAt = revision ?? self.revision
+        return enqueue(edits, named: Strings.actionAddAnnotation, touching: [page], workedOutAt: drawnAt, whenStale: { [weak self] in
+            guard let self else { return nil }
+            guard self.pageIsUnchanged(page, since: drawnAt) else { return EditFailure(message: Strings.drawingNotAdded) }
+            if putBack?() != true {
+                self.enqueueInk(page: page, strokes: strokes, style: style)
+            }
+            return nil
+        })
     }
 
     // MARK: Signing
@@ -355,7 +387,18 @@ final class DocumentModel {
 
     /// The note the note sheet is open for: one to add, where a tap with Note put it, or one on the page
     /// to read and change. Nil while the sheet is not up. Its text is the reader's, and never logged.
-    var noteDraft: NoteDraft?
+    var noteDraft: NoteDraft? {
+        didSet { if noteDraft?.id != oldValue?.id { noteText = nil } }
+    }
+    /// What is written in the note sheet, once it has been changed there (`noteTextDidChange`); nil
+    /// until then, and while the sheet is not up. Kept here so that the scene leaving the screen can
+    /// save it (`saveNoteDraftOnLeaving`). The reader's, and never logged.
+    @ObservationIgnored private(set) var noteText: String?
+
+    /// The note sheet's text changed to `text`.
+    func noteTextDidChange(_ text: String) {
+        if noteDraft != nil { noteText = text }
+    }
 
     /// Whether a text box may be put on `page`: the document allows markup (once its permissions are
     /// read) and the page is shown upright, as the file has it. The engine sets a text box's text
@@ -438,7 +481,15 @@ final class DocumentModel {
         }
         let edit = Edit.addTextBox(page: pageNumber, rect: Rect(x: box.minX, y: box.minY, width: box.width, height: box.height),
                                    text: text, fontSize: fontSize, color: style.color.rgbColor)
-        return enqueue([edit], named: Strings.actionAddAnnotation, touching: [page], workedOutAt: revision)
+        // Refused as stale, the text is not lost: on its page as it was, it is handed over again, for
+        // the page as it is now (the same); otherwise it is kept on the pasteboard.
+        let typedAt = revision ?? self.revision
+        return enqueue([edit], named: Strings.actionAddAnnotation, touching: [page], workedOutAt: typedAt, whenStale: { [weak self] in
+            guard let self else { return nil }
+            guard self.pageIsUnchanged(page, since: typedAt) else { return self.keepTypedText(text) }
+            self.enqueueTextBox(page: page, at: point, text: text, style: style)
+            return nil
+        })
     }
 
     /// Adds a note whose icon's top-left is at `point` (view space), with `contents`, in Note's colour
@@ -467,12 +518,30 @@ final class DocumentModel {
     /// refused as stale rather than changing another one. Says whether a change was made.
     @discardableResult
     func saveNote(_ draft: NoteDraft, text: String) async -> Bool {
+        await enqueueSave(of: draft, text: text)?.value ?? false
+    }
+
+    /// `saveNote`, handed over at once (registered with the undo manager before this returns); nil
+    /// when there is nothing to save.
+    func enqueueSave(of draft: NoteDraft, text: String) -> Task<Bool, Never>? {
         guard let existing = draft.existing else {
-            guard !ShapeGeometry.committedText(text).isEmpty else { return false }
-            return await enqueueNote(page: draft.page, at: draft.point, contents: text, workedOutAt: draft.revision).value
+            guard !ShapeGeometry.committedText(text).isEmpty else { return nil }
+            return enqueueNote(page: draft.page, at: draft.point, contents: text, workedOutAt: draft.revision)
         }
-        guard text != draft.text else { return false }
-        return await enqueueContents(of: existing, to: text, workedOutAt: draft.revision).value
+        guard text != draft.text else { return nil }
+        return enqueueContents(of: existing, to: text, workedOutAt: draft.revision)
+    }
+
+    /// The scene is going to the background with the note sheet up: what is written in it, when it was
+    /// changed, is saved as Save would save it (`saveNote`), handed over before this returns, so the
+    /// save the system makes as the scene goes has it. The app may not come back to the sheet. The
+    /// sheet goes once the note is saved; a save refused leaves it up, with the text, as Save's does.
+    func saveNoteDraftOnLeaving() {
+        guard let draft = noteDraft, let text = noteText,
+              let saving = enqueueSave(of: draft, text: ShapeGeometry.limitedText(text)) else { return }
+        Task {
+            if await saving.value, noteDraft?.id == draft.id { noteDraft = nil }
+        }
     }
 
     /// The note sheet's Save: saves the note the sheet is open for (`noteDraft`) with `text`
@@ -485,6 +554,18 @@ final class DocumentModel {
         let saved = await saveNote(draft, text: text)
         if saved, noteDraft?.id == draft.id { noteDraft = nil }
         return saved
+    }
+
+    /// Where text the reader typed is kept when it cannot be added where it was typed: the general
+    /// pasteboard. A test puts its own in its place.
+    @ObservationIgnored var keepOnPasteboard: @MainActor (String) -> Void = { UIPasteboard.general.string = $0 }
+
+    /// Text the reader typed that could not be added where it was typed (its page, or the text box it
+    /// was for, changed while it was on its way): it is put on the pasteboard, so it is not lost, and
+    /// what is returned tells the reader so (`Strings.typedTextCopied`).
+    func keepTypedText(_ text: String) -> EditFailure {
+        keepOnPasteboard(text)
+        return EditFailure(message: Strings.typedTextCopied)
     }
 
     /// Tells the reader why a change is not made (`message`, one of our sentences), and makes none.
@@ -501,25 +582,56 @@ final class DocumentModel {
     }
 
     /// The scene's undo manager, which the screen hands over (`@Environment(\.undoManager)`). With
-    /// none, changes are still made, and cannot be undone.
-    @ObservationIgnored weak var undoManager: UndoManager?
+    /// none, changes are still made, and cannot be undone. It keeps as many steps as the engine does
+    /// (`undoLimit`), so an Undo past them is never a tap that does nothing.
+    @ObservationIgnored weak var undoManager: UndoManager? {
+        didSet { undoManager?.levelsOfUndo = Self.undoLimit }
+    }
+    /// How many changes the undo manager keeps: the engine's history, `MAX_UNDO` (100) in the pinned
+    /// PdfCraft release (`PdfDocument.undo`). A group of the undo manager can hold more than one change
+    /// (typing in a field, then a tap on a checkbox, in one turn of the run loop): then it holds more
+    /// than the engine, and an undo past the engine's history is quiet (`move`).
+    static let undoLimit = 100
+    /// Whether the undo manager has a change to take back, and one to make again, as last read
+    /// (`undoStackDidChange`): it is not observable itself.
+    private(set) var undoManagerCanUndo = false
+    private(set) var undoManagerCanRedo = false
+
+    /// The screen read the undo manager's stacks again.
+    func undoStackDidChange(canUndo: Bool, canRedo: Bool) {
+        if undoManagerCanUndo != canUndo { undoManagerCanUndo = canUndo }
+        if undoManagerCanRedo != canRedo { undoManagerCanRedo = canRedo }
+    }
+
+    /// Whether Undo and Redo may be chosen now, in the toolbar and in the Edit menu.
+    var undoAvailability: UndoAvailability {
+        UndoAvailability(canUndo: undoManagerCanUndo, canRedo: undoManagerCanRedo, hasPendingEdit: hasPendingEdit)
+    }
+
     /// Whether a change, undo or redo is waiting or running.
     var isApplying: Bool { queue.isBusy }
 
     /// Where every change, undo, redo and reading of the document's state runs, one at a time.
     private let queue = EditQueue()
-    /// The revision made by the last change that can make a page or annotation index name something
-    /// else: a page deleted, moved or inserted, an annotation deleted or moved, any undo or redo.
-    /// An edit worked out before it is refused (see `enqueue`).
-    @ObservationIgnored private var lastIndexShift: UInt64 = 0
-    /// The later of `lastIndexShift` and the revision made by the last rotation: after it, a point
-    /// in view space worked out before it is somewhere else on the page.
-    @ObservationIgnored private var lastGeometryShift: UInt64 = 0
+    /// The revisions made by the last change, undo or redo that can make an edit worked out before it
+    /// mean something else (`EditShift`): page numbers, annotations' places, points in view space. An
+    /// edit that depends on one of them, worked out before, is refused (see `enqueue`).
+    @ObservationIgnored private var lastShifts = Shifts()
+    /// What changes made to the pages since the document opened did to which pages: whether a page is
+    /// still the page it was (`pageIsUnchanged`).
+    @ObservationIgnored private var pageMoves = PageMoves()
 
     /// Whether a page or annotation index worked out at `revision` still names what it named then: no
-    /// change made since has numbered them again (`lastIndexShift`).
+    /// change made since has numbered the pages or a page's annotations again.
     func stillNamesTheSame(workedOutAt revision: UInt64) -> Bool {
-        revision >= lastIndexShift
+        revision >= lastShifts.pages && revision >= lastShifts.annotations
+    }
+
+    /// Whether `page` is the page it was at `revision`, as it was then: no change, undo or redo since has
+    /// deleted, moved or inserted it or a page before it, or turned it. A point in view space worked out
+    /// on it then is the same point now.
+    func pageIsUnchanged(_ page: Int, since revision: UInt64) -> Bool {
+        pageMoves.leaves(page, unchangedSince: revision)
     }
 
     /// Every change whose entries the undo manager may still hold (they are the entries' targets),
@@ -625,12 +737,18 @@ final class DocumentModel {
     /// was made, with no failure), or which pages the change touches as the document is then, in place
     /// of `pages`: what the change, its undo and its redo redraw. (A field's widgets may be on other
     /// pages than when the fill was handed over: pages inserted, deleted or moved before it.)
+    ///
+    /// `whenStale`, when given, is asked when the engine refuses the change as stale, in place of
+    /// telling the reader the document changed: what is waiting can then be kept (strokes put back on
+    /// the canvas, text handed over again or kept on the pasteboard). It says what the reader is told,
+    /// nil for nothing.
     @discardableResult
     func enqueue(_ edits: [Edit], named actionName: String, touching pages: Set<Int>?, workedOutAt base: UInt64? = nil,
-                 atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)? = nil) -> Task<Bool, Never> {
+                 atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)? = nil,
+                 whenStale: (@MainActor () -> EditFailure?)? = nil) -> Task<Bool, Never> {
         guard !edits.isEmpty else { return Task { false } }
         commitPendingInk()
-        let token = EditToken(pages: pages)
+        let token = EditToken(pages: pages, shift: Self.undoShift(of: edits), pageEffect: PageEffect(of: edits))
         registerStep(.undo, token: token, named: actionName)
         liveChanges.add(token)
         let base = base ?? revision
@@ -638,7 +756,8 @@ final class DocumentModel {
         engine.editWillStart()
         return queue.submit { [weak self] in
             defer { engine.editDidFinish() }
-            return await self?.apply(edits, label: actionName, base: base, token: token, atItsTurn: atItsTurn) ?? false
+            return await self?.apply(edits, label: actionName, base: base, token: token, atItsTurn: atItsTurn,
+                                     whenStale: whenStale) ?? false
         }
     }
 
@@ -707,10 +826,20 @@ final class DocumentModel {
     }
 
     /// A queued edit: asks the engine for it off the main actor and, once made, publishes the
-    /// document's new state. `atItsTurn` as for `enqueue`.
+    /// document's new state. `atItsTurn` and `whenStale` as for `enqueue`.
+    ///
+    /// A document whose capabilities lock it for its signatures (`signatureLock`) is refused here,
+    /// with that sentence, before the engine is asked: a change handed over before the capabilities
+    /// were first read (the tools could not tell yet) comes after that read, in the queue.
     private func apply(_ edits: [Edit], label: String, base: UInt64, token: EditToken,
-                       atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)?) async -> Bool {
+                       atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)?,
+                       whenStale: (@MainActor () -> EditFailure?)?) async -> Bool {
         guard let document = document() else {
+            undoManager?.removeAllActions(withTarget: token)
+            return false
+        }
+        if let signatureLock {
+            failure = EditFailure(message: signatureLock)
             undoManager?.removeAllActions(withTarget: token)
             return false
         }
@@ -724,8 +853,7 @@ final class DocumentModel {
                 token.pages = pages
             }
         }
-        let base = Self.canRebase(edits, workedOutAt: base, indexShift: lastIndexShift, geometryShift: lastGeometryShift)
-            ? revision : base
+        let base = Self.canRebase(edits, workedOutAt: base, shifts: lastShifts) ? revision : base
         let result = await EditQueue.offMain { () throws -> EngineState in
             if edits.count == 1, let edit = edits.first {
                 _ = try document.apply(edit: edit, baseRevision: base)
@@ -740,10 +868,14 @@ final class DocumentModel {
             // The reader stays on the page they were reading when pages before it go, move or arrive.
             // (An undo or redo does not say where pages went: there, the index is only kept in range.)
             currentPage = OrganizeMath.readerPage(currentPage, after: edits, pagesAdded: state.pages.count - self.pages.count)
-            refresh(state, touching: token.pages, shift: Self.shift(of: edits))
+            refresh(state, touching: token.pages, shift: Self.shift(of: edits), pageEffect: token.pageEffect)
             return true
         case .failure(let error):
-            failure = EditFailure(error)
+            if let whenStale, case .Stale? = error as? EditError {
+                if let told = whenStale() { failure = told }
+            } else {
+                failure = EditFailure(error)
+            }
             if Self.mayHaveChanged(after: error) {
                 // The engine may have changed the document all the same (the revision has moved on), so
                 // its history and the undo manager's stack may no longer match: the stack is emptied,
@@ -772,7 +904,9 @@ final class DocumentModel {
         for change in liveChanges.allObjects { undoManager?.removeAllActions(withTarget: change) }
     }
 
-    /// A queued undo or redo of the change of `token`: nothing for a change the engine refused.
+    /// A queued undo or redo of the change of `token`: nothing for a change the engine refused. It
+    /// shifts what the change's undo does (`token.shift`): an undo of a mark leaves pages and points
+    /// where they were, so strokes drawn meanwhile are still added.
     ///
     /// The engine keeps only the last 100 changes (`PdfDocument.undo`), so the undo manager can hold
     /// older ones it has no step for any more: undoing one of those finds nothing to undo. That is no
@@ -792,7 +926,7 @@ final class DocumentModel {
         }
         switch result {
         case .success(let state):
-            refresh(state, touching: token.pages, shift: .index)
+            refresh(state, touching: token.pages, shift: token.shift, pageEffect: token.pageEffect)
         case .failure(EditError.NothingToUndo), .failure(EditError.NothingToRedo):
             // Past the engine's history: this change has no step there any more. The document is as it
             // was, so there is nothing to read again.
@@ -809,31 +943,36 @@ final class DocumentModel {
     private func refreshIfMoved(_ document: PdfDocument) async {
         guard case .success(let state) = await EditQueue.offMain({ EngineState.read(document) }),
               state.revision != revision else { return }
-        refresh(state, touching: nil, shift: .index)
+        refresh(state, touching: nil, shift: .all, pageEffect: .everything)
     }
 
-    /// What a change can do to the indexes and points of edits worked out before it.
-    private enum Shift {
-        /// Nothing: indexes and points still name the same things.
-        case none
-        /// Pages turned: points in view space have moved, indexes have not.
-        case geometry
-        /// Page or annotation indexes may name something else.
-        case index
+    /// The revisions made by the last change, undo or redo of each kind of `EditShift`.
+    struct Shifts {
+        var pages: UInt64 = 0
+        var annotations: UInt64 = 0
+        var geometry: UInt64 = 0
+
+        /// `shift`, made by the change at `revision`, recorded.
+        mutating func record(_ shift: EditShift, at revision: UInt64) {
+            if shift.contains(.pages) { pages = max(pages, revision) }
+            if shift.contains(.annotations) { annotations = max(annotations, revision) }
+            if shift.contains(.geometry) { geometry = max(geometry, revision) }
+        }
     }
 
     /// What `edits` do to edits worked out before them. Adding an annotation appends it to its
-    /// page's list (`pdfcraft_annot::add_annotation` pushes onto `/Annots`), so the indexes before
+    /// page's list (`pdfcraft_annot::add_annotation` pushes onto `/Annots`), so the places before
     /// it keep naming the same annotations.
-    private static func shift(of edits: [Edit]) -> Shift {
-        var shift = Shift.none
+    static func shift(of edits: [Edit]) -> EditShift {
+        var shift: EditShift = []
         for edit in edits {
             switch edit {
-            case .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .deleteAnnotation, .deleteAnnotations,
-                 .moveAnnotation:
-                return .index
+            case .deletePages, .movePages, .insertBlankPage, .insertPagesFrom:
+                shift.insert(.pages)
+            case .deleteAnnotation, .deleteAnnotations, .moveAnnotation:
+                shift.insert(.annotations)
             case .rotatePages:
-                shift = .geometry
+                shift.insert(.geometry)
             case .setInfo, .addTextMarkup, .addNote, .setAnnotationContents, .addInk, .addSignature, .addTextBox,
                  .addShape, .addLine, .setFieldValue:
                 break
@@ -842,26 +981,58 @@ final class DocumentModel {
         return shift
     }
 
-    /// Whether `edits` has a point or a box in view space, which a rotation of its page moves.
-    private static func hasViewSpaceGeometry(_ edits: [Edit]) -> Bool {
-        edits.contains { edit in
-            switch edit {
-            case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .setInfo,
-                 .deleteAnnotation, .deleteAnnotations, .setAnnotationContents, .setFieldValue:
-                false
-            case .addTextMarkup, .addNote, .addInk, .addSignature, .addTextBox, .addShape, .addLine, .moveAnnotation:
-                true
-            }
+    /// What an undo or a redo of `edits` does to edits worked out before it: what the edits do (the
+    /// other way), and, when they add an annotation, the places of its page's annotations, since the
+    /// undo takes it off the end of the list (and every change after it has been undone by then).
+    /// Nothing else: an undo of a mark leaves the pages, their numbers and their points where they were.
+    static func undoShift(of edits: [Edit]) -> EditShift {
+        var shift = shift(of: edits)
+        if edits.contains(where: addsAnAnnotation) { shift.insert(.annotations) }
+        return shift
+    }
+
+    /// Whether `edit` adds an annotation to a page.
+    private static func addsAnAnnotation(_ edit: Edit) -> Bool {
+        switch edit {
+        case .addTextMarkup, .addNote, .addInk, .addSignature, .addTextBox, .addShape, .addLine:
+            true
+        case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .setInfo, .deleteAnnotation,
+             .deleteAnnotations, .setAnnotationContents, .moveAnnotation, .setFieldValue:
+            false
         }
     }
 
+    /// What `edits` need to mean, worked out earlier, what they meant then: the page numbers they name,
+    /// the places of the annotations they name, the points in view space they carry.
+    static func dependence(of edits: [Edit]) -> EditShift {
+        var needs: EditShift = []
+        for edit in edits {
+            switch edit {
+            case .setInfo, .setFieldValue:
+                break
+            case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom:
+                needs.insert(.pages)
+            case .deleteAnnotation, .deleteAnnotations, .setAnnotationContents:
+                needs.formUnion([.pages, .annotations])
+            case .moveAnnotation:
+                needs.formUnion([.pages, .annotations, .geometry])
+            case .addTextMarkup, .addNote, .addInk, .addSignature, .addTextBox, .addShape, .addLine:
+                needs.formUnion([.pages, .geometry])
+            }
+        }
+        return needs
+    }
+
     /// Whether `edits`, worked out at revision `base`, still mean the same on the document as it is
-    /// now: no change since `base` has shifted an index, and none has turned a page, or the edits
-    /// have no point in view space for a turn to move. Fills of form fields always do: a field is
-    /// addressed by its name, which no change to the pages or the annotations alters.
-    private static func canRebase(_ edits: [Edit], workedOutAt base: UInt64, indexShift: UInt64, geometryShift: UInt64) -> Bool {
+    /// now: no change since `base` has shifted what they depend on (`dependence`, the last of each
+    /// kind in `shifts`). Fills of form fields always do: a field is addressed by its name, which no
+    /// change to the pages or the annotations alters.
+    static func canRebase(_ edits: [Edit], workedOutAt base: UInt64, shifts: Shifts) -> Bool {
         if edits.allSatisfy(isAddressedByName) { return true }
-        return base >= indexShift && (base >= geometryShift || !hasViewSpaceGeometry(edits))
+        let needs = dependence(of: edits)
+        return !(needs.contains(.pages) && base < shifts.pages)
+            && !(needs.contains(.annotations) && base < shifts.annotations)
+            && !(needs.contains(.geometry) && base < shifts.geometry)
     }
 
     /// Whether `edit` addresses what it changes by a name, not by a page or an index: a form field's fill.
@@ -873,14 +1044,9 @@ final class DocumentModel {
     /// page kept on one of them (`apply` has moved it with its page first); nothing selected (an index into the old pages or annotations may
     /// name something else now); its annotations, fields and capabilities; the search run again;
     /// and what changed.
-    private func refresh(_ state: EngineState, touching pagesTouched: Set<Int>?, shift: Shift) {
-        switch shift {
-        case .none: break
-        case .geometry: lastGeometryShift = max(lastGeometryShift, state.revision)
-        case .index:
-            lastIndexShift = max(lastIndexShift, state.revision)
-            lastGeometryShift = max(lastGeometryShift, state.revision)
-        }
+    private func refresh(_ state: EngineState, touching pagesTouched: Set<Int>?, shift: EditShift, pageEffect: PageEffect) {
+        lastShifts.record(shift, at: state.revision)
+        pageMoves.record(pageEffect, at: state.revision)
         let geometryChanged = state.pages.count != pages.count
             || zip(state.pages, pages).contains { new, old in
                 new.widthPt != old.widthPt || new.heightPt != old.heightPt || new.rotationDegrees != old.rotationDegrees
@@ -998,5 +1164,102 @@ private struct EngineState: Sendable {
                     formIndex: FormIndex(document.formFields()),
                     formFieldsTruncated: document.formFieldsTruncated(),
                     capabilities: document.capabilities())
+    }
+}
+
+/// What a change, undo or redo can make an edit worked out before it mean (`DocumentModel.canRebase`):
+/// each kind is a part of the document such an edit can depend on (`DocumentModel.dependence`).
+struct EditShift: OptionSet, Sendable {
+    let rawValue: UInt8
+
+    /// Page numbers may name other pages: pages deleted, moved or inserted.
+    static let pages = EditShift(rawValue: 1 << 0)
+    /// The places of a page's annotations may name other annotations, or none: annotations deleted
+    /// or moved, or one taken off again (the undo of its adding).
+    static let annotations = EditShift(rawValue: 1 << 1)
+    /// Points in view space are somewhere else on the page: pages turned.
+    static let geometry = EditShift(rawValue: 1 << 2)
+    /// Any of them: what a change the engine failed half way, or one not known, may have done.
+    static let all: EditShift = [.pages, .annotations, .geometry]
+}
+
+/// What a change, or its undo or redo, does to the pages (`DocumentModel.pageIsUnchanged`): from which
+/// page on the pages may be others than before, and which pages it turns. An undo or a redo does the
+/// same to the same pages: an undone delete puts the pages back from the same place on, an undone
+/// turn turns the same pages back.
+struct PageEffect: Equatable, Sendable {
+    /// The first page that may be another after the change (the pages after it are renumbered); nil
+    /// when no page is.
+    var renumbersFrom: Int?
+    /// The pages the change turns, by their numbers before it.
+    var turns: Set<Int> = []
+
+    /// Nothing done to the pages.
+    static let none = PageEffect()
+    /// Any page may be another, or turned: a change that failed half way, or one not known.
+    static let everything = PageEffect(renumbersFrom: 0)
+
+    init(renumbersFrom: Int? = nil, turns: Set<Int> = []) {
+        self.renumbersFrom = renumbersFrom
+        self.turns = turns
+    }
+
+    /// What `edits` do to the pages. A turn after a renumbering in the same step names pages by their
+    /// new numbers: every page from the renumbering on counts as another then, which is the case
+    /// already.
+    init(of edits: [Edit]) {
+        self.init()
+        func from(_ page: Int) { renumbersFrom = min(renumbersFrom ?? page, page) }
+        for edit in edits {
+            switch edit {
+            case .deletePages(let pages):
+                if let first = pages.min() { from(Int(first)) }
+            case .movePages(let pages, let to):
+                if let first = pages.min() { from(min(Int(first), Int(to))) }
+            case .insertBlankPage(let at, _, _):
+                from(Int(at))
+            case .insertPagesFrom(_, _, _, let at):
+                from(Int(at))
+            case .rotatePages(let pages, _):
+                turns.formUnion(pages.map(Int.init))
+            case .setInfo, .addTextMarkup, .addNote, .setAnnotationContents, .addInk, .addSignature, .addTextBox,
+                 .addShape, .addLine, .setFieldValue, .deleteAnnotation, .deleteAnnotations, .moveAnnotation:
+                break
+            }
+        }
+    }
+
+    /// Whether `page` is another page, or turned, after the change.
+    func changes(_ page: Int) -> Bool {
+        (renumbersFrom.map { $0 <= page } ?? false) || turns.contains(page)
+    }
+}
+
+/// What the changes, undos and redos made since the document opened did to its pages, by the
+/// revision each made: enough to tell whether a page is still the page it was at a revision, as it
+/// was (`leaves(_:unchangedSince:)`). Only changes that do something to the pages are kept, the last
+/// `limit` of them; a revision older than those forgotten is answered "changed".
+struct PageMoves {
+    /// How many are kept.
+    static let limit = 256
+
+    private var moves: [(revision: UInt64, effect: PageEffect)] = []
+    /// The latest revision whose change has been forgotten; 0 while none has.
+    private var forgottenThrough: UInt64 = 0
+
+    /// The change that made `revision` did `effect` to the pages.
+    mutating func record(_ effect: PageEffect, at revision: UInt64) {
+        guard effect != .none else { return }
+        moves.append((revision, effect))
+        if moves.count > Self.limit {
+            forgottenThrough = max(forgottenThrough, moves.removeFirst().revision)
+        }
+    }
+
+    /// Whether `page` is the page it was at `revision`, as it was then: no change since moved it, put
+    /// another in its place, or turned it.
+    func leaves(_ page: Int, unchangedSince revision: UInt64) -> Bool {
+        guard revision >= forgottenThrough else { return false }
+        return !moves.contains { $0.revision > revision && $0.effect.changes(page) }
     }
 }

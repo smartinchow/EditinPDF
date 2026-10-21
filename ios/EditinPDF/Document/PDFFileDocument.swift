@@ -84,8 +84,11 @@ final class PDFFileDocument: ReferenceFileDocument {
         return document
     }
 
-    /// How long a save waits for the changes on their way to reach the engine (`savedBytes`).
-    static let editWait: TimeInterval = 2
+    /// How long a save waits for the changes on their way to reach the engine (`savedBytes`). It
+    /// waits only while one is on its way, off the main thread, and a change on a big document (pages
+    /// inserted from a large file, a long drawing) can take seconds: the save as the document closes
+    /// is the last that has it.
+    static let editWait: TimeInterval = 10
 
     /// The file as opened with the current changes appended. Runs off the main thread.
     func fileWrapper(snapshot: PdfDocument, configuration: WriteConfiguration) throws -> FileWrapper {
@@ -100,15 +103,16 @@ final class PDFFileDocument: ReferenceFileDocument {
     }
 
     /// What `fileWrapper` writes: `snapshot` (the engine document) saved incrementally, once the
-    /// changes handed over have reached it, for up to `editWait` seconds. The scene saves as the
-    /// document closes, and the change that makes it save (the strokes drawn with Draw, added as the
-    /// back button goes down) is applied off the main actor, a moment later. Off the main thread only:
-    /// on it, the changes could not finish, and it saves what the engine has. When the wait runs out it
-    /// saves what the engine has too, and logs a warning that says so (and nothing of the document).
-    func savedBytes(of snapshot: PdfDocument) throws -> Data {
-        if !Thread.isMainThread, !engine.waitForEdits(timeout: Self.editWait) {
+    /// changes handed over have reached it, for up to `wait` seconds (`editWait`; a test's own). The
+    /// scene saves as the document closes, and the change that makes it save (the strokes drawn with
+    /// Draw, added as the back button goes down) is applied off the main actor, a moment later. Off the
+    /// main thread only: on it, the changes could not finish, and it saves what the engine has. When the
+    /// wait runs out it saves what the engine has too, and logs a warning that says so (and nothing of
+    /// the document).
+    func savedBytes(of snapshot: PdfDocument, waitingAtMost wait: TimeInterval = editWait) throws -> Data {
+        if !Thread.isMainThread, !engine.waitForEdits(timeout: wait) {
             // Nothing of the document in the log: only that the save did not wait any longer.
-            Self.log.warning("saving without a change still on its way: it had not reached the document after \(Self.editWait, privacy: .public) s")
+            Self.log.warning("saving without a change still on its way: it had not reached the document after \(wait, privacy: .public) s")
         }
         return try snapshot.save(mode: .incremental)
     }

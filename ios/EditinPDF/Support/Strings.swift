@@ -227,6 +227,24 @@ enum Strings {
         String(localized: "The document changed. Try again.", comment: "Shown when a change was made for an older state of the PDF and was refused")
     }
 
+    /// Why strokes drawn with Draw were not added: their page was moved, or turned, while they were on
+    /// their way, so where they were drawn is not known on it any more.
+    static var drawingNotAdded: String {
+        String(localized: "Your drawing wasn't added because its page was moved or turned meanwhile. Draw it again.", comment: "Shown when strokes drawn on a page could not be added because the page was moved, deleted or rotated while they were being added")
+    }
+
+    /// Why text typed in a text box was not added, and where it is: its page (or the text box it was
+    /// for) changed while it was on its way, and the text is on the pasteboard.
+    static var typedTextCopied: String {
+        String(localized: "Your text wasn't added because the page changed meanwhile. It's copied, ready to paste.", comment: "Shown when text typed in a text box could not be added because its page changed; the text was put on the pasteboard")
+    }
+
+    /// Why a highlight, underline or strikethrough was not made: the selection has more lines than one
+    /// mark takes.
+    static var selectLessText: String {
+        String(localized: "Select less text to mark at once.", comment: "Shown when the selected text has too many lines for one highlight, underline or strikethrough")
+    }
+
     /// Why an insert was not made: the PDF to take pages from needs a password.
     static var insertSourceLocked: String {
         String(localized: "That PDF is password-protected. Remove its password and try again.", comment: "Shown when the PDF to take pages from needs a password")

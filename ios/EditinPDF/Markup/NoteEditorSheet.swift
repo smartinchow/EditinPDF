@@ -8,7 +8,8 @@ import SwiftUI
 /// over the sheet (`failure`).
 ///
 /// What is written is held to the most a note takes (`ShapeGeometry.maxTextLength`): what goes past it
-/// is let go of, so a save is never refused for it.
+/// is let go of, so a save is never refused for it. It is told to the model as it changes (`written`),
+/// which saves it when the scene goes to the background.
 ///
 /// The text is the reader's, and is never logged.
 struct NoteEditorSheet: View {
@@ -19,16 +20,21 @@ struct NoteEditorSheet: View {
     let save: (String) async -> Void
     /// Closes the sheet; nothing changes.
     let cancel: () -> Void
+    /// Told what is written whenever it changes, so that it is kept outside the sheet too
+    /// (`DocumentModel.noteTextDidChange`): the scene going to the background saves it.
+    let written: (String) -> Void
 
     @State private var text: String
     @State private var isSaving = false
     @FocusState private var isWriting: Bool
 
-    init(draft: NoteDraft, failure: Binding<EditFailure?>, save: @escaping (String) async -> Void, cancel: @escaping () -> Void) {
+    init(draft: NoteDraft, failure: Binding<EditFailure?>, save: @escaping (String) async -> Void, cancel: @escaping () -> Void,
+         written: @escaping (String) -> Void = { _ in }) {
         self.draft = draft
         _failure = failure
         self.save = save
         self.cancel = cancel
+        self.written = written
         _text = State(initialValue: draft.text)
     }
 
@@ -46,9 +52,10 @@ struct NoteEditorSheet: View {
         NavigationStack {
             TextEditor(text: $text)
                 .focused($isWriting)
-                .onChange(of: text) { _, written in
-                    let limited = ShapeGeometry.limitedText(written)
-                    if limited != written { text = limited }
+                .onChange(of: text) { _, typed in
+                    let limited = ShapeGeometry.limitedText(typed)
+                    if limited != typed { text = limited }
+                    written(limited)
                 }
                 .scrollContentBackground(.hidden)
                 .overlay(alignment: .topLeading) {

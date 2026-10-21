@@ -847,6 +847,109 @@ final class EditorSmokeTests: XCTestCase {
             .matching(NSPredicate(format: "elementType IN %@ AND label == %@", types, title)).firstMatch
     }
 
+    // MARK: Undo and Redo
+
+    /// After an edit, and a scroll down and back that brings the bar's background in and out, Undo and
+    /// Redo are still in the bar, and can be tapped. (Reported missing on a phone, alone at the bar's
+    /// leading end, which iOS cannot fold into its More menu; not seen on the iOS 26.5 simulator, where
+    /// this passes with that layout too. A name long enough to take the bar puts them in the More menu
+    /// now, with the other buttons.)
+    func testUndoAndRedoStayAfterAnEditAndAScroll() throws {
+        let app = launchAndOpen("sample.pdf")
+        let indicator = app.staticTexts["pageIndicator"]
+        expect(indicator, toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5))
+        ink.tap()
+        pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
+        let done = app.buttons["doneDrawingButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
+        done.tap()
+        let undo = app.buttons["undoButton"], redo = app.buttons["redoButton"]
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "the drawing was not added")
+        // Back to reading, where one finger scrolls.
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app))
+        XCTAssertTrue(app.buttons["tool-ink"].waitForNonExistence(timeout: 5))
+        for _ in 0..<2 { app.swipeUp() }
+        for _ in 0..<2 { app.swipeDown() }
+        sleep(1)
+        attach(app, "undo-after-scroll")
+        XCTAssertTrue(undo.exists, "Undo left the bar")
+        XCTAssertTrue(undo.isHittable, "Undo is not where it can be tapped")
+        XCTAssertTrue(redo.exists, "Redo left the bar")
+        undo.tap()
+        XCTAssertTrue(redo.waitForEnabled(timeout: 5), "Undo took nothing back")
+    }
+
+    /// ⇧⌘Z on a hardware keyboard (the Edit menu's Redo) redoes nothing while strokes wait to be added,
+    /// as the toolbar's Redo is off then: it went to the scene's undo manager directly, and the strokes
+    /// were then refused as stale and lost. Done adds them, with no alert.
+    func testTheKeyboardsRedoWaitsForTheStrokesWaiting() throws {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5))
+        ink.tap()
+        let done = app.buttons["doneDrawingButton"], undo = app.buttons["undoButton"], redo = app.buttons["redoButton"]
+        pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
+        XCTAssertTrue(done.waitForExistence(timeout: 5)); done.tap()
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5))
+        undo.tap()
+        XCTAssertTrue(redo.waitForEnabled(timeout: 5), "nothing to redo")
+        pagePoint(CGPoint(x: 150, y: 500), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 500), pageWidth: 612, in: app))
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
+        XCTAssertFalse(redo.isEnabled, "Redo is off while strokes wait")
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        sleep(2)
+        XCTAssertTrue(done.exists, "the strokes are still waiting")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.alerts.firstMatch.waitForExistence(timeout: 2), "the strokes were refused")
+        sleep(2)
+        XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 300, y: 500), pageWidth: 612, in: app).screenPoint, in: app),
+                      "the strokes were not added")
+        XCTAssertFalse(try isInked(around: pagePoint(CGPoint(x: 300, y: 300), pageWidth: 612, in: app).screenPoint, in: app),
+                       "the drawing undone came back")
+    }
+
+    /// ⌘Z while the search field is being typed in takes back the typing there, as it does in any
+    /// field, not a change to the document.
+    func testTheKeyboardsUndoInTheSearchFieldTakesBackTheTyping() throws {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let ink = app.buttons["tool-ink"]
+        XCTAssertTrue(ink.waitForEnabled(timeout: 5))
+        ink.tap()
+        pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
+            .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
+        let done = app.buttons["doneDrawingButton"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5)); done.tap()
+        let undo = app.buttons["undoButton"]
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "the drawing was not added")
+        XCTAssertTrue(tapToolbarButton("searchButton", titled: "Search", in: app), "no Search")
+        let field = app.textFields["searchField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        dismissKeyboardIntroduction(in: app)
+        field.typeText("three")
+        XCTAssertEqual(field.value as? String, "three")
+        app.typeKey("z", modifierFlags: .command)
+        sleep(1)
+        XCTAssertNotEqual(field.value as? String, "three", "⌘Z did not take back the typing")
+        app.buttons["searchDoneButton"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "⌘Z took back the drawing")
+        sleep(1)
+        XCTAssertTrue(try isInked(around: pagePoint(CGPoint(x: 300, y: 300), pageWidth: 612, in: app).screenPoint, in: app),
+                      "⌘Z took back the drawing")
+    }
+
     private func isInked(around point: CGPoint, in app: XCUIApplication) throws -> Bool {
         let image = try XCTUnwrap(app.screenshot().image.cgImage)
         let scale = CGFloat(image.width) / app.frame.width

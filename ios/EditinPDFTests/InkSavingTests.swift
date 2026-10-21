@@ -151,9 +151,11 @@ final class InkSavingTests: XCTestCase {
         file.engine.editWillStart()          // one that never arrives
         defer { file.engine.editDidFinish() }
         let started = Date()
-        let bytes = try await Task.detached { try file.savedBytes(of: snapshot) }.value
-        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), PDFFileDocument.editWait - 0.1, "it waited")
+        let bytes = try await Task.detached { try file.savedBytes(of: snapshot, waitingAtMost: 1) }.value
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.9, "it waited")
         XCTAssertEqual(bytes, try fixtureData("hello"), "and wrote the document as the engine had it")
+        // What a save waits for at most: long enough for a change on a big document to arrive.
+        XCTAssertEqual(PDFFileDocument.editWait, 10)
     }
 
     /// The strokes are also added when the screen goes, whatever took it away.

@@ -51,6 +51,11 @@ final class InkCaptureView: PKCanvasView {
         // Ink on white paper: PencilKit would show dark ink light in dark mode, but the page stays
         // white, and the line is drawn in the colour picked.
         overrideUserInterfaceStyle = .light
+        // VoiceOver passes touches on the canvas straight to it, so a stroke is drawn, not read out,
+        // as on the signature pad.
+        isAccessibilityElement = true
+        accessibilityLabel = Strings.toolInk
+        accessibilityTraits = .allowsDirectInteraction
         // For UI tests; not shown or spoken.
         accessibilityIdentifier = "inkCanvas"
     }
