@@ -266,7 +266,8 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 1).isEmpty)
     }
 
-    /// While a stroke is being drawn the canvas stays where it is, whatever else touches the pages.
+    /// While a stroke is being drawn the canvas stays where it is, whatever else touches the pages: until
+    /// PencilKit has put the stroke on the drawing, a moment after it ends.
     func testTheCanvasDoesNotMoveWhileAStrokeIsDrawn() async throws {
         let (controller, model, _) = await makeController()
         let markup = controller.markupInteraction
@@ -278,6 +279,11 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertEqual(ink.page, 0)
         XCTAssertTrue(model.hasPendingInk)
         markup.drawing.canvasViewDidEndUsingTool(ink)
+        XCTAssertFalse(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)),
+                       "ended, but not on the canvas yet")
+        // PencilKit puts the stroke on the drawing a moment after it ends: it is over then.
+        draw([line.map { CGPoint(x: $0.x, y: $0.y + 100) }], on: ink)
+        markup.drawing.canvasViewDrawingDidChange(ink)
         XCTAssertTrue(markup.drawing.prepareToDraw(atContentPoint: try contentPoint(CGPoint(x: 300, y: 400), page: 1, in: controller)))
         XCTAssertEqual(ink.page, 1)
     }
@@ -415,6 +421,82 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink])
         undoManager.undo(); await model.settle()
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
+    }
+
+    /// Strokes refused as stale and handed over again while a stroke is being drawn do not add the
+    /// strokes waiting on the canvas then, nor empty it, which would cut the stroke: what waits is added
+    /// once the stroke is on the canvas (PencilKit puts it there a moment after it ends), with it. Every
+    /// stroke is kept.
+    func testStrokesHandedOverAgainMidStrokeLeaveTheStrokeBeingDrawn() async throws {
+        let (controller, model, _) = await makeController()
+        let markup = controller.markupInteraction
+        let drawing = markup.drawing
+        let turn = model.enqueue([.rotatePages(pages: [1], degrees: 90)], named: Strings.actionRotate, touching: [1])
+        XCTAssertTrue(drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(drawing.ink)
+        draw([line], on: ink)
+        // Refused as stale (the turn was on its way as it was drawn); its page stays as it was.
+        let first = try XCTUnwrap(markup.commitPendingInk())
+        // Another line waits on the canvas, and a stroke is being drawn as the refusal comes: the
+        // canvas cannot take the refused strokes back, so they are handed over again.
+        let lower = line.map { CGPoint(x: $0.x, y: $0.y + 200) }
+        draw([lower], on: ink)
+        drawing.canvasViewDrawingDidChange(ink)
+        drawing.canvasViewDidBeginUsingTool(ink)
+        _ = await turn.value
+        let made = await first.value
+        await model.settle()
+        XCTAssertFalse(made)
+        XCTAssertNil(model.failure)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "the refused strokes, handed over again")
+        XCTAssertTrue(ink.isDrawing)
+        XCTAssertEqual(ink.drawing.strokes.count, 1, "the line waiting is still on the canvas: not added, not emptied, mid-stroke")
+        XCTAssertTrue(ink.superview === controller.contentView)
+        XCTAssertTrue(model.hasPendingInk)
+
+        // The stroke ends; PencilKit puts it on the drawing a moment later, and only then is what waits added.
+        drawing.canvasViewDidEndUsingTool(ink)
+        await Task.yield()
+        XCTAssertEqual(ink.drawing.strokes.count, 1, "not before the stroke is on the canvas")
+        draw([line.map { CGPoint(x: $0.x, y: $0.y + 400) }], on: ink)
+        drawing.canvasViewDrawingDidChange(ink)
+        for _ in 0..<5 { await Task.yield() }
+        await model.settle()
+        XCTAssertFalse(ink.isDrawing)
+        // The line waiting was drawn while the turn was on its way: it and the stroke, as one drawing,
+        // are refused as stale too, and go back on the canvas, waiting, both.
+        XCTAssertEqual(ink.drawing.strokes.count, 2, "both strokes kept")
+        XCTAssertTrue(model.hasPendingInk)
+        let again = try XCTUnwrap(markup.commitPendingInk())
+        let added = await again.value
+        XCTAssertTrue(added)
+        let inks = model.annotationIndex.annotations(onPage: 0)
+        XCTAssertEqual(inks.map(\.kind), [.ink, .ink])
+        XCTAssertGreaterThan(try XCTUnwrap(inks.last).rect.height, 200, "the line waiting and the stroke, as one drawing")
+    }
+
+    /// Draw put down while a stroke is being drawn: the canvas stays, with its strokes, until the stroke
+    /// is over, then they are added and it goes. A stroke that never comes on the drawing (a touch
+    /// cancelled) is over a moment after it ends.
+    func testDrawPutDownMidStrokeWaitsForTheStroke() async throws {
+        let (controller, model, _) = await makeController()
+        let drawing = controller.markupInteraction.drawing
+        XCTAssertTrue(drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(drawing.ink)
+        draw([line], on: ink)
+        drawing.canvasViewDrawingDidChange(ink)
+        drawing.canvasViewDidBeginUsingTool(ink)
+        pick(.highlight, in: model, controller)
+        XCTAssertTrue(ink.superview === controller.contentView, "the canvas stays while the stroke is drawn")
+        XCTAssertEqual(ink.drawing.strokes.count, 1)
+        XCTAssertTrue(model.hasPendingInk)
+        drawing.canvasViewDidEndUsingTool(ink)
+        try await Task.sleep(for: .seconds(1))
+        await model.settle()
+        XCTAssertFalse(ink.isDrawing, "over, though no stroke came")
+        XCTAssertNil(ink.superview, "put away once the stroke was over")
+        XCTAssertFalse(model.hasPendingInk)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "what waited was added")
     }
 
     /// The canvas is one element to VoiceOver that takes touches straight away, as the signature pad's

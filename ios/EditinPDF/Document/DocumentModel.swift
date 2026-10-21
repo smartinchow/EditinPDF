@@ -201,7 +201,8 @@ final class DocumentModel {
     /// box and waiting, if any, as another, and the text typed in a form field, if any, as a third, each
     /// handed over before this returns: Done does it, and so does everything that must come after them
     /// (another tool, any other change, Undo and Redo, the scene leaving the screen). Nothing happens
-    /// with none waiting. Says whether a change was handed over.
+    /// with none waiting. Strokes on a canvas a stroke is being drawn on wait for it to be over, and are
+    /// added with it then (`InkInteraction.commitPendingInk`). Says whether a change was handed over.
     @discardableResult
     func commitPendingInk() -> Bool {
         let before = changesHandedOver

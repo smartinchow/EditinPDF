@@ -26,8 +26,16 @@ final class InkCaptureView: PKCanvasView {
     /// out against when they are added (a turn of the page since makes them stale). Nil while the
     /// canvas has none.
     var drawnAt: UInt64?
-    /// Whether a stroke is being drawn: from PencilKit's beginning to use the tool to its ending.
+    /// Whether a stroke is being drawn: from PencilKit's beginning to use the tool until the stroke is
+    /// on `drawing`. PencilKit puts it there a moment after it ends using the tool (after the main
+    /// queue's next turn, on the iOS 26.5 simulator); one that never comes (a touch cancelled) is over a
+    /// moment after the end (`InkInteraction.strokeLandingWait`). The canvas is never emptied or moved
+    /// meanwhile: that would cut the stroke.
     var isDrawing = false
+    /// Whether PencilKit has ended using the tool for the stroke being drawn, which is not on `drawing` yet.
+    var toolEnded = false
+    /// How many strokes have begun on the canvas: a wait for one that never came ends no later stroke.
+    var strokesBegun = 0
     /// The style the strokes are drawn in (Draw's when the canvas was put over the page): they are
     /// added in it. Another picked meanwhile is used from the next first finger on, once these are added.
     var style: ToolStyle?

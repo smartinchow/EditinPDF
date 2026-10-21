@@ -27,6 +27,9 @@ import UIKit
 ///   page was on its way is refused as stale, leaves nothing on the screen, and the reader is told it
 ///   was not added. One refused as stale while its page stayed as it was (another page turned, pages
 ///   added after it) is put back on the canvas, waiting (`putBack`), or added again.
+/// - Never while a stroke is being drawn (`InkCaptureView.isDrawing`): emptying the canvas, or moving
+///   it, then would cut the stroke. What is asked meanwhile (the strokes added, the canvas put away) is
+///   done once the stroke is on the canvas, the stroke added with the others (`strokeDidLand`).
 @MainActor
 final class InkInteraction: NSObject {
     private weak var host: PageScrollViewController?
@@ -38,6 +41,13 @@ final class InkInteraction: NSObject {
     /// Pictures of strokes on their way into the document, over their page, each until the page has
     /// been drawn again with them (or at once when they are refused).
     private(set) var inkPreviews: [UIView] = []
+    /// What was asked while a stroke was being drawn, done once it is on the canvas (`strokeDidLand`):
+    /// the strokes waiting added (`commitPendingInk`), and the canvas put away (`putAwayCanvas`).
+    private var addsWhenStrokeLands = false
+    private var putsAwayWhenStrokeLands = false
+    /// How long after PencilKit ends using the tool a stroke that has not come on the canvas's drawing
+    /// is given up for (a touch cancelled): see `InkCaptureView.isDrawing`.
+    static let strokeLandingWait: Duration = .milliseconds(500)
 
     init(host: PageScrollViewController, model: DocumentModel) {
         self.host = host
@@ -107,9 +117,16 @@ final class InkInteraction: NSObject {
     /// and a picture of these stays over the page meanwhile: once they are made, until the page has
     /// been drawn again with them; when they are refused (stale, say), it goes at once, and nothing is
     /// left that looks drawn. The task says whether they were made; nil with none waiting.
+    ///
+    /// Not while a stroke is being drawn: then they are added once it is on the canvas, with it
+    /// (`strokeDidLand`), and this returns nil.
     @discardableResult
     func commitPendingInk() -> Task<Bool, Never>? {
         guard let ink, !ink.drawing.strokes.isEmpty, let host else { return nil }
+        guard !ink.isDrawing else {
+            addsWhenStrokeLands = true
+            return nil
+        }
         let drawing = ink.drawing
         // A canvas point is a layout point: one on screen is 1 / zoom of it. Half a point on screen is
         // half a page point over the screen scale.
@@ -187,7 +204,8 @@ final class InkInteraction: NSObject {
 
     /// The tool changed: with Draw picked two fingers scroll (one draws), and the canvas is put over the
     /// page being read; with any other, or none, one finger scrolls again, and the canvas goes, once its
-    /// strokes have been added (the model has added them as the tool changed).
+    /// strokes have been added (the model has added them as the tool changed). A stroke being drawn
+    /// keeps the canvas until it is over (`putAwayCanvas`).
     func toolDidChange() {
         guard let host else { return }
         let drawing = model.tool == .ink
@@ -200,16 +218,54 @@ final class InkInteraction: NSObject {
             return
         }
         commitPendingInk()
-        ink?.removeFromSuperview()
+        putAwayCanvas()
     }
 
     /// The pages are about to be laid out again: the strokes waiting are added, worked out for the
-    /// layout they were drawn on, and the canvas and the pictures go with that layout.
+    /// layout they were drawn on, and the canvas and the pictures go with that layout (the canvas once
+    /// a stroke being drawn is over: `putAwayCanvas`).
     func layoutWillChange() {
         commitPendingInk()
-        ink?.removeFromSuperview()
+        putAwayCanvas()
         for preview in inkPreviews { preview.removeFromSuperview() }
         inkPreviews.removeAll()
+    }
+
+    /// Takes the canvas off the pages. While a stroke is being drawn, once it is over (`strokeDidLand`),
+    /// its strokes added first.
+    private func putAwayCanvas() {
+        guard let ink else { return }
+        guard ink.isDrawing else {
+            ink.removeFromSuperview()
+            return
+        }
+        addsWhenStrokeLands = true
+        putsAwayWhenStrokeLands = true
+    }
+
+    /// The stroke being drawn on `canvas` is over: on its drawing, or given up for. What was asked
+    /// meanwhile is done just after (not in PencilKit's call).
+    private func strokeDidLand(on canvas: InkCaptureView) {
+        canvas.isDrawing = false
+        canvas.toolEnded = false
+        guard addsWhenStrokeLands || putsAwayWhenStrokeLands else { return }
+        Task { @MainActor [weak self] in self?.doWhatWaitedForTheStroke() }
+    }
+
+    /// Adds the strokes waiting, and puts the canvas away, as was asked while a stroke was being drawn.
+    /// A stroke begun again meanwhile is waited for in turn. With Draw picked again by then, the
+    /// canvas comes back over the page being read, as when it is picked (a new layout, say).
+    private func doWhatWaitedForTheStroke() {
+        guard let ink, !ink.isDrawing else { return }
+        if addsWhenStrokeLands {
+            addsWhenStrokeLands = false
+            commitPendingInk()
+        }
+        if putsAwayWhenStrokeLands {
+            putsAwayWhenStrokeLands = false
+            ink.removeFromSuperview()
+            if model.tool == .ink { toolDidChange() }
+        }
     }
 }
 
@@ -217,7 +273,8 @@ final class InkInteraction: NSObject {
 
 extension InkInteraction: PKCanvasViewDelegate {
     /// Strokes came or went: the model hears whether some are waiting (the palette's Done), and the
-    /// first of them records the revision they are drawn on.
+    /// first of them records the revision they are drawn on. After PencilKit ended using the tool, it
+    /// is the stroke that ended coming on the drawing: it is over (`strokeDidLand`).
     func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
         guard let canvas = canvasView as? InkCaptureView, canvas === ink else { return }
         if canvas.drawing.strokes.isEmpty {
@@ -226,18 +283,29 @@ extension InkInteraction: PKCanvasViewDelegate {
             canvas.drawnAt = model.revision
         }
         model.pendingInkDidChange(!canvas.drawing.strokes.isEmpty)
+        if canvas.toolEnded { strokeDidLand(on: canvas) }
     }
 
-    /// A stroke begins: the canvas stays where it is until it ends. The first stroke on an empty
-    /// canvas is drawn on the document as it is now.
+    /// A stroke begins: the canvas stays where it is, as it is, until it is over. The first stroke on
+    /// an empty canvas is drawn on the document as it is now.
     func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
         guard let canvas = canvasView as? InkCaptureView, canvas === ink else { return }
         canvas.isDrawing = true
+        canvas.toolEnded = false
+        canvas.strokesBegun += 1
         if canvas.drawing.strokes.isEmpty, canvas.drawnAt == nil { canvas.drawnAt = model.revision }
     }
 
+    /// The stroke ends: PencilKit puts it on the drawing a moment later (`canvasViewDrawingDidChange`),
+    /// and it is being drawn until then. One that never comes is given up for after `strokeLandingWait`.
     func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-        guard let canvas = canvasView as? InkCaptureView, canvas === ink else { return }
-        canvas.isDrawing = false
+        guard let canvas = canvasView as? InkCaptureView, canvas === ink, canvas.isDrawing else { return }
+        canvas.toolEnded = true
+        let stroke = canvas.strokesBegun
+        Task { @MainActor [weak self, weak canvas] in
+            try? await Task.sleep(for: Self.strokeLandingWait)
+            guard let self, let canvas, canvas.strokesBegun == stroke, canvas.toolEnded else { return }
+            self.strokeDidLand(on: canvas)
+        }
     }
 }
