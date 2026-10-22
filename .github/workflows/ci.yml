@@ -4,11 +4,14 @@ name: CI
 # package, the app's unit and UI tests on a simulator, and that a Release build ships no sample PDFs.
 # `make lint test release-check` runs the same checks locally (`make project` and `git status` show the
 # committed Xcode project's drift, which the job also checks).
+#
+# Day-to-day testing runs on the maintainer's Mac (`make lint test release-check`), so pushes to main do not
+# start this workflow. It runs for pull requests from contributors, and by hand from the Actions tab
+# (or `gh workflow run CI`).
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # One run per branch or pull request: a newer push cancels the one still running for that ref.
 concurrency:
