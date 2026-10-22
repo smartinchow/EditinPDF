@@ -27,6 +27,8 @@ struct CommentRow: Identifiable, Equatable {
     var headline: String { detail ?? Strings.addACommentPlaceholder }
     /// What is under the comment: the kind of mark and its page ("Highlight on page 3").
     var subtitle: String { Strings.markOnPage(title, page: page + 1) }
+    /// What VoiceOver calls the row's Show on Page: which comment, or which mark when it has none.
+    var showOnPageLabel: String { Strings.showOnPageLabel(detail ?? subtitle) }
 }
 
 /// Which marks the list of comments shows.
@@ -282,11 +284,20 @@ extension DocumentModel {
     }
 
     /// A row of the list of comments, tapped: its sheet opens, a note's as a note (`editNote`), any
-    /// other mark's as its comment (`comment(on:)`). Nothing for a row whose mark the document no
-    /// longer has.
-    func editComment(of row: CommentRow) {
-        guard let info = annotationIndex.annotation(row.id) else { return }
+    /// other mark's as its comment (`comment(on:)`), and this says it did. Not for a row whose mark the
+    /// document no longer has, nor for a text box on a page shown turned: changing its text there would
+    /// have the engine draw it again upright, so the reader is told why (`failure`,
+    /// `Strings.textBoxNeedsUprightPage`, as Select's Edit is not offered there) and the list jumps to
+    /// it instead.
+    @discardableResult
+    func editComment(of row: CommentRow) -> Bool {
+        guard let info = annotationIndex.annotation(row.id) else { return false }
+        if info.kind == .textBox, !canAddTextBox(onPage: Int(info.page)) {
+            failure = EditFailure(message: Strings.textBoxNeedsUprightPage)
+            return false
+        }
         if info.kind == .note { editNote(info) } else { comment(on: info) }
+        return true
     }
 
     /// Gives the annotation `ref` names the text `text` (a note's, a text box's, which the engine
@@ -335,28 +346,32 @@ extension DocumentModel {
     func formatTextBox(_ box: AnnotationInfo, workedOutAt revision: UInt64? = nil) {
         formatDraft = TextBoxFormatDraft(ref: AnnotationRef(page: Int(box.page), index: box.index),
                                          format: TextBoxFormat(box, otherwise: toolStyles[.textBox]),
-                                         revision: revision ?? self.revision)
+                                         revision: revision ?? self.revision, changesSizeAndBackground: !box.restyleInPlaceOnly)
     }
 
     /// The format sheet's Apply: the text box it is open for gets `format` (`enqueueRestyle`), unless it
-    /// is the look it had, and the sheet goes. Says whether a change was made.
+    /// is the look it had (to within what a file keeps: `TextBoxFormat ==`), and the sheet goes. Says
+    /// whether a change was made.
     @discardableResult
     func applyFormatDraft(_ format: TextBoxFormat) async -> Bool {
         guard let draft = formatDraft else { return false }
         formatDraft = nil
         guard format != draft.format else { return false }
-        return await enqueueRestyle(draft.ref, to: format, workedOutAt: draft.revision).value
+        return await enqueueRestyle(draft.ref, to: format, from: draft.format, workedOutAt: draft.revision).value
     }
 
     /// Gives the text box `ref` names the look `format`, handed over at once: one change named
     /// `Strings.formatTextBox`, addressed as at `revision` (the model's now when nil, and then only a
-    /// text box the document has now). The bridge changes the colour and the border in place, and adds
-    /// the box again for a new size or background (`Edit.restyleTextBox`). One the file locks is
-    /// refused, saying the document does not allow it.
+    /// text box the document has now). It had the look `original` (nil when not known): only what
+    /// changed is sent (`TextBoxFormat.restyle(_:from:)`), and nothing at all when nothing did, so no
+    /// empty step is made. The bridge changes the colour and the border in place, and adds the box
+    /// again for a new size or background (`Edit.restyleTextBox`). One the file locks is refused,
+    /// saying the document does not allow it.
     @discardableResult
-    func enqueueRestyle(_ ref: AnnotationRef, to format: TextBoxFormat, workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
+    func enqueueRestyle(_ ref: AnnotationRef, to format: TextBoxFormat, from original: TextBoxFormat?,
+                        workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
         let info = annotationIndex.annotation(ref)
-        guard revision != nil || info?.kind == .textBox, let edit = format.restyle(ref) else { return Task { false } }
+        guard revision != nil || info?.kind == .textBox, let edit = format.restyle(ref, from: original) else { return Task { false } }
         if let refusal = changeRefusal(onPage: ref.page) { return refuse(refusal) }
         let namesInfo = revision.map(stillNamesTheSame(workedOutAt:)) ?? true
         if namesInfo, info?.locked == true { return refuse(Strings.editNotAllowed) }

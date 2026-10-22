@@ -101,6 +101,23 @@ struct RGBA: Codable, Equatable, Sendable {
 
     /// The same colour for the engine.
     var rgbColor: RgbColor { RgbColor(red: r, green: g, blue: b) }
+
+    /// The style picker's eight swatches, in the order of `Strings.styleSwatchNames`.
+    static let swatches: [RGBA] = [
+        RGBA(r: 0, g: 0, b: 0), RGBA(r: 0.5, g: 0.5, b: 0.5), RGBA(r: 0.9, g: 0.1, b: 0.1), RGBA(r: 1, g: 0.55, b: 0),
+        RGBA(r: 1, g: 0.9, b: 0), RGBA(r: 0.1, g: 0.7, b: 0.2), RGBA(r: 0, g: 0.4, b: 1), RGBA(r: 0.55, g: 0.2, b: 0.85),
+    ]
+
+    /// Whether `other` is this colour as a file keeps it: each component within a 255th. A colour read
+    /// back from a file has been through the engine's single precision and its rounding.
+    func matches(_ other: RGBA) -> Bool {
+        abs(r - other.r) < 0.004 && abs(g - other.g) < 0.004 && abs(b - other.b) < 0.004
+    }
+
+    /// The colour of `choices` this is (`matches`), when it is one; itself otherwise.
+    func snapped(to choices: [RGBA]) -> RGBA {
+        choices.first(where: matches) ?? self
+    }
 }
 
 /// How a tool draws: its colour, its line width (points), its text size (points), whether a

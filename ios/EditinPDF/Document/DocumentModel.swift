@@ -114,13 +114,17 @@ final class DocumentModel {
     /// Highlight, Underline or Strikethrough picked while text is selected also marks that text
     /// (`markSelection`), as the selection's menu does: on a phone the menu shows Copy and Highlight
     /// and keeps Underline and Strikethrough behind its arrow, so the reader reaches for the palette.
-    /// The task says whether a mark was made; nil when there was nothing selected to mark.
+    /// The task says whether a mark was made; nil when there was nothing selected to mark. The
+    /// selection goes with the mark, at once: the same tool tapped twice, or another right after it,
+    /// finds nothing left to mark. A tool picked again, already the current one, marks nothing.
     @discardableResult
     func pick(_ tool: Tool) -> Task<Bool, Never>? {
+        let pickedAgain = self.tool == tool
         self.tool = tool
         if tool == .signature, canUse(.signature) { askForSignature() }
-        guard let kind = tool.markupKind, selection?.selection != nil else { return nil }
-        return Task { await markSelection(kind) }
+        guard !pickedAgain, let kind = tool.markupKind, let controller = selection, let selected = controller.selection else { return nil }
+        controller.clear()
+        return Task { await mark(selected, as: kind, in: controller) }
     }
 
     /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can
@@ -151,6 +155,11 @@ final class DocumentModel {
     @discardableResult
     func markSelection(_ kind: MarkupKind) async -> Bool {
         guard let controller = selection, let selected = controller.selection else { return false }
+        return await mark(selected, as: kind, in: controller)
+    }
+
+    /// Marks `selected`, text selected with `controller`, as `kind` (see `markSelection`).
+    private func mark(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController) async -> Bool {
         let page = Int(selected.page)
         let rects = SelectionController.rects(of: selected).map { Rect(x: $0.minX, y: $0.minY, width: $0.width, height: $0.height) }
         let tool = Tool(markupKind: kind)

@@ -7,15 +7,30 @@ import UIKit
 /// (`TextBoxFormatSheet`) change, what a new text box is made with (`Edit.addTextBox`) and what one on
 /// the page is given (`Edit.restyleTextBox`). Bold, italic, alignment and the face are not here: the
 /// engine sets every text box in Helvetica, aligned as the file says.
+///
+/// Two looks are the same (`==`) to within what a file keeps of them: colours within a 255th
+/// (`RGBA.matches`), sizes and borders within a hundredth of a point. A look read back from the file
+/// is the look picked, and picking it again changes nothing.
 struct TextBoxFormat: Equatable, Sendable {
-    /// The text's size, in points: held to what the bridge takes (`ShapeGeometry.fontSize`).
+    /// The text's size, in points: one picked is held to what the bridge takes
+    /// (`ShapeGeometry.fontSize`); a box's own is kept as the file has it, until it is changed.
     var fontSize: Double
     var color: RGBA
     /// The box's background; none when nil.
     var background: RGBA?
-    /// How wide the box's border is, in points, drawn in the text's colour: 0 for none, else 0.5
-    /// through 12 (what the bridge takes).
+    /// How wide the box's border is, in points, drawn in the text's colour: 0 for none; one picked is
+    /// 0.5 through 12 (what the bridge takes), a box's own is kept as the file has it.
     var borderWidth: Double
+
+    static func == (a: TextBoxFormat, b: TextBoxFormat) -> Bool {
+        let backgrounds = switch (a.background, b.background) {
+        case (nil, nil): true
+        case let (x?, y?): x.matches(y)
+        default: false
+        }
+        return abs(a.fontSize - b.fontSize) < 0.01 && a.color.matches(b.color) && backgrounds
+            && abs(a.borderWidth - b.borderWidth) < 0.01
+    }
 
     /// The sizes the format's Smaller and Larger step through, in points: 6 through 72.
     static let sizeSteps: [Double] = [6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 60, 72]
@@ -44,12 +59,15 @@ struct TextBoxFormat: Equatable, Sendable {
     }
 
     /// The look of `info`, a text box on a page, as the engine draws it (`AnnotationInfo.fontSize`,
-    /// `color`, `fill`, `borderWidth`); what the file does not say is `style`'s (Text Box's).
+    /// `color`, `fill`, `borderWidth`); what the file does not say, or says with a number that is not
+    /// one, is `style`'s (Text Box's). Its size and border are kept as the file has them, even out of
+    /// what can be picked (they are sent only when changed: `restyle(_:from:)`); its colour and
+    /// background are taken for the swatch or background they are, when they are one.
     init(_ info: AnnotationInfo, otherwise style: ToolStyle) {
-        self.init(fontSize: info.fontSize ?? style.fontSize,
-                  color: info.color.map(Self.held) ?? style.color,
-                  background: info.fill.map(Self.held),
-                  borderWidth: info.borderWidth ?? 0)
+        self.init(fontSize: style.fontSize, color: info.color.map(Self.held)?.snapped(to: RGBA.swatches) ?? style.color,
+                  background: info.fill.map(Self.held)?.snapped(to: Self.backgrounds))
+        if let size = info.fontSize, size.isFinite, size > 0 { fontSize = size }
+        borderWidth = info.borderWidth.map { $0.isFinite && $0 > 0 ? $0 : 0 } ?? 0
     }
 
     /// `color`, a file's, as a colour the bridge takes: each component held to 0 through 1, and 0 for
@@ -99,11 +117,16 @@ struct TextBoxFormat: Equatable, Sendable {
         return style
     }
 
-    /// The edit that gives the text box `ref` names this look.
-    func restyle(_ ref: AnnotationRef) -> Edit? {
-        guard let page = UInt32(exactly: ref.page) else { return nil }
-        return .restyleTextBox(page: page, index: ref.index, fontSize: fontSize, color: color.rgbColor,
-                               fill: background?.rgbColor, borderWidth: borderWidth)
+    /// The edit that gives the text box `ref` names this look, when it had the look `original` (nil
+    /// when that is not known): its size and border only when they changed, held to what the bridge
+    /// takes (left out, the box keeps its own as the file has it). Nil when nothing changed.
+    func restyle(_ ref: AnnotationRef, from original: TextBoxFormat?) -> Edit? {
+        guard let page = UInt32(exactly: ref.page), original.map({ $0 != self }) ?? true else { return nil }
+        let sizeChanged = original.map { abs($0.fontSize - fontSize) >= 0.01 } ?? true
+        let borderChanged = original.map { abs($0.borderWidth - borderWidth) >= 0.01 } ?? true
+        return .restyleTextBox(page: page, index: ref.index, fontSize: sizeChanged ? ShapeGeometry.fontSize(fontSize) : nil,
+                               color: color.rgbColor, fill: background?.rgbColor,
+                               borderWidth: borderChanged ? Self.heldBorder(borderWidth) : nil)
     }
 
     /// Where the engine sets the text in from the box's edges, in points: 2, and the border's width.
@@ -126,25 +149,21 @@ final class TextBoxFormatState {
     @ObservationIgnored var changed: ((TextBoxFormat) -> Void)?
     /// Opens the system's colour picker for the text (More Colors…).
     @ObservationIgnored var pickColor: (() -> Void)?
+    /// Whether the size and the background may be changed: not for a text box the bridge only
+    /// restyles in place (`AnnotationInfo.restyleInPlaceOnly`), whose colour and border may.
+    let changesSizeAndBackground: Bool
 
-    init(_ format: TextBoxFormat) {
+    init(_ format: TextBoxFormat, sizeAndBackground: Bool = true) {
         self.format = format
+        changesSizeAndBackground = sizeAndBackground
     }
 
-    /// The swatch of `ToolStyleEditor.swatches` the text's colour is, if it is one (`RGBA.matches`).
-    var swatch: Int? { ToolStyleEditor.swatches.firstIndex { $0.matches(format.color) } }
+    /// The swatch of `RGBA.swatches` the text's colour is, if it is one (`RGBA.matches`).
+    var swatch: Int? { RGBA.swatches.firstIndex { $0.matches(format.color) } }
     /// The background of `TextBoxFormat.backgrounds` the box has: -1 for none, nil for one not offered.
     var backgroundChoice: Int? {
         guard let background = format.background else { return -1 }
         return TextBoxFormat.backgrounds.firstIndex { $0.matches(background) }
-    }
-}
-
-extension RGBA {
-    /// Whether `other` is this colour as a file keeps it: each component within a 255th. A colour read
-    /// back from a file has been through the engine's single precision and its rounding.
-    func matches(_ other: RGBA) -> Bool {
-        abs(r - other.r) < 0.004 && abs(g - other.g) < 0.004 && abs(b - other.b) < 0.004
     }
 }
 
@@ -184,7 +203,7 @@ struct TextBoxFormatBar: View {
                     .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
-            .disabled(state.format.smallerSize == nil)
+            .disabled(state.format.smallerSize == nil || !state.changesSizeAndBackground)
             .accessibilityValue(Strings.textSizeValue(state.format.fontSize))
             .accessibilityIdentifier("formatSmallerButton")
             Text(Strings.textSizeValue(state.format.fontSize))
@@ -201,7 +220,7 @@ struct TextBoxFormatBar: View {
                     .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
-            .disabled(state.format.largerSize == nil)
+            .disabled(state.format.largerSize == nil || !state.changesSizeAndBackground)
             .accessibilityValue(Strings.textSizeValue(state.format.fontSize))
             .accessibilityIdentifier("formatLargerButton")
             Divider().frame(height: 24).padding(.horizontal, 4)
@@ -292,6 +311,7 @@ struct TextBoxFormatBar: View {
             .frame(width: 40, height: 40)
             .contentShape(Rectangle())
         }
+        .disabled(!state.changesSizeAndBackground)
         .accessibilityIdentifier("formatBackgroundMenu")
     }
 }
@@ -301,9 +321,17 @@ struct TextBoxFormatBar: View {
 /// and Border. Select's Format (`TextBoxFormatSheet`) and Text Box's style (`ToolStyleEditor`) show it.
 struct TextBoxFormatPanel: View {
     @Binding var format: TextBoxFormat
+    /// Whether the size and the background may be changed (`TextBoxFormatState.changesSizeAndBackground`).
+    var changesSizeAndBackground = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            if !changesSizeAndBackground {
+                Text(Strings.textBoxColorAndBorderOnly)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("formatColorAndBorderOnly")
+            }
             Stepper {
                 Text(Strings.styleFontSize(format.fontSize))
             } onIncrement: {
@@ -311,6 +339,7 @@ struct TextBoxFormatPanel: View {
             } onDecrement: {
                 format.shrink()
             }
+            .disabled(!changesSizeAndBackground)
             .accessibilityIdentifier("formatSizeStepper")
             VStack(alignment: .leading, spacing: 8) {
                 Text(Strings.textColor)
@@ -335,6 +364,7 @@ struct TextBoxFormatPanel: View {
                                      identifier: "formatBackground-\(item.offset)") { format.background = item.element.0 }
                     }
                 }
+                .disabled(!changesSizeAndBackground)
             }
             Toggle(Strings.border, isOn: $format.hasBorder)
                 .accessibilityIdentifier("formatBorderToggle")
@@ -388,6 +418,8 @@ struct TextBoxFormatDraft: Identifiable, Equatable {
     let ref: AnnotationRef
     let format: TextBoxFormat
     let revision: UInt64
+    /// Whether its size and background may be changed (`AnnotationInfo.restyleInPlaceOnly`).
+    var changesSizeAndBackground = true
 }
 
 /// The sheet Select's Format opens over a text box: the format's controls (`TextBoxFormatPanel`),
@@ -412,7 +444,7 @@ struct TextBoxFormatSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                TextBoxFormatPanel(format: $format)
+                TextBoxFormatPanel(format: $format, changesSizeAndBackground: draft.changesSizeAndBackground)
                     .padding(20)
             }
             // A document scene puts its Back button on every navigation bar inside it (see

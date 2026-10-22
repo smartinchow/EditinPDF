@@ -259,10 +259,7 @@ struct ToolStyleEditor: View {
     let store: ToolStyleStore
 
     /// The swatches, in the order of `Strings.styleSwatchNames`.
-    static let swatches: [RGBA] = [
-        RGBA(r: 0, g: 0, b: 0), RGBA(r: 0.5, g: 0.5, b: 0.5), RGBA(r: 0.9, g: 0.1, b: 0.1), RGBA(r: 1, g: 0.55, b: 0),
-        RGBA(r: 1, g: 0.9, b: 0), RGBA(r: 0.1, g: 0.7, b: 0.2), RGBA(r: 0, g: 0.4, b: 1), RGBA(r: 0.55, g: 0.2, b: 0.85),
-    ]
+    static let swatches = RGBA.swatches
 
     private var style: Binding<ToolStyle> {
         Binding(get: { store[tool] }, set: { store[tool] = $0 })

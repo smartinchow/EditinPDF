@@ -44,6 +44,7 @@ struct CommentsSheet: View {
                 let all = DocumentModel.commentRows(model.annotationIndex)
                 let filter = picked ?? CommentFilter.initial(for: all)
                 let shown = filter.rows(all)
+                Group {
                 if all.isEmpty {
                     ContentUnavailableView(Strings.noComments, systemImage: "text.bubble")
                         .accessibilityIdentifier("noComments")
@@ -72,6 +73,10 @@ struct CommentsSheet: View {
                     }
                     .accessibilityIdentifier("commentsList")
                 }
+                }
+                // The filter is chosen once, as the list opens: a comment written meanwhile does not
+                // move the list to another filter on its own.
+                .onAppear { if picked == nil { picked = CommentFilter.initial(for: all) } }
             }
             // A document scene puts its Back button on every navigation bar inside it (see
             // `PasswordSheet`); Done is the way out here.
@@ -117,7 +122,8 @@ struct CommentsSheet: View {
     private func rowView(_ row: CommentRow) -> some View {
         HStack(alignment: .center, spacing: 8) {
             Button {
-                if canAnnotate { model.editComment(of: row) } else { jump(row) }
+                // A text box on a turned page is not edited here: the list jumps to it, and says why.
+                if !canAnnotate || (!model.editComment(of: row) && model.failure != nil) { jump(row) }
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(row.headline)
@@ -154,6 +160,7 @@ struct CommentsSheet: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel(row.showOnPageLabel)
             .accessibilityIdentifier("commentJump-\(row.page)-\(row.id.index)")
         }
         .swipeActions(edge: .trailing) {

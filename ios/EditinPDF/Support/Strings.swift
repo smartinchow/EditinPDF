@@ -756,6 +756,12 @@ enum Strings {
         String(localized: "Border", comment: "Switch in the text box format bar that draws a border round the box")
     }
 
+    /// Said in the format sheet of a text box whose size and background the app can't change without
+    /// losing something (its replies, its rich text), or that is a callout or typed text.
+    static var textBoxColorAndBorderOnly: String {
+        String(localized: "This text box can only change color and border here.", comment: "In the text box format sheet: this box keeps its text size and background, only its color and border can change")
+    }
+
     /// The format sheet's button that makes the change.
     static var apply: String {
         String(localized: "Apply", comment: "Button of the text box format sheet that changes the text box")
@@ -885,6 +891,11 @@ enum Strings {
     /// The name of the list of comments' filter, for VoiceOver.
     static var commentsFilter: String {
         String(localized: "Show", comment: "Name of the filter of the list of comments, for VoiceOver")
+    }
+
+    /// What VoiceOver calls a comment's Show on Page in the list: which comment (or mark) it shows.
+    static func showOnPageLabel(_ what: String) -> String {
+        String(localized: "showOnPageLabel", defaultValue: "Show on Page: \(what)", comment: "VoiceOver label of the button beside a comment in the list of comments: the comment's text, or its kind and page")
     }
 
     /// The button beside a comment in the list that brings its mark into view on the page.

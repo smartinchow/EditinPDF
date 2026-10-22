@@ -57,9 +57,14 @@ final class CommentsTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let recent = CommentDate.text(for: now.addingTimeInterval(-3_600), now: now)
         let old = CommentDate.text(for: now.addingTimeInterval(-40 * 86_400), now: now)
-        XCTAssertFalse(recent.isEmpty)
-        XCTAssertNotEqual(recent, old)
+        let relative = RelativeDateTimeFormatter()
+        relative.unitsStyle = .short
+        XCTAssertEqual(recent, relative.localizedString(for: now.addingTimeInterval(-3_600), relativeTo: now))
+        XCTAssertEqual(CommentDate.text(for: now.addingTimeInterval(-6 * 86_400), now: now),
+                       relative.localizedString(for: now.addingTimeInterval(-6 * 86_400), relativeTo: now), "within the week")
         XCTAssertEqual(old, now.addingTimeInterval(-40 * 86_400).formatted(date: .abbreviated, time: .omitted))
+        XCTAssertEqual(CommentDate.text(for: now.addingTimeInterval(3_600), now: now),
+                       now.addingTimeInterval(3_600).formatted(date: .abbreviated, time: .omitted), "a date to come is a date")
     }
 
     /// With any comment, the list starts on the marks that have one; with none, on all of them.
@@ -84,6 +89,26 @@ final class CommentsTests: XCTestCase {
         let empty = self.row(index: 1, comment: nil)
         XCTAssertEqual(empty.headline, Strings.addACommentPlaceholder)
         XCTAssertFalse(empty.hasComment)
+    }
+
+    /// A row's date is the file's own, read with its time zone: UTC−5 and +02'00 name the same moment.
+    func testARowsDateKeepsItsTimeZone() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let moment = utc.date(from: DateComponents(year: 2026, month: 10, day: 21, hour: 14, minute: 5))
+        for written in ["D:20261021090500-05'00'", "D:20261021160500+02'00'"] {
+            let info = AnnotationInfo(page: 0, index: 0, kind: .highlight, rect: Rect(x: 0, y: 0, width: 10, height: 10), contents: nil,
+                                      author: nil, modified: written, color: nil, locked: false, fontSize: nil, fill: nil, borderWidth: nil,
+                                      restyleInPlaceOnly: false)
+            XCTAssertEqual(DocumentModel.commentRows(AnnotationIndex([info])).first?.modified, moment, written)
+        }
+    }
+
+    /// Show on Page says which comment it shows, for VoiceOver.
+    func testShowOnPageNamesItsComment() {
+        let row = row(index: 0, comment: "Fix this")
+        XCTAssertEqual(row.showOnPageLabel, "Show on Page: Fix this")
+        XCTAssertEqual(self.row(index: 1, comment: nil).showOnPageLabel, "Show on Page: Highlight on page 1")
     }
 
     /// Many annotations are listed and filtered quickly enough to keep the sheet responsive.
@@ -138,12 +163,27 @@ extension AnnotationEditingTests {
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).first?.contents ?? "", "", "one Undo takes it back")
     }
 
+    /// A text box on a page shown turned is not edited from the list (the engine would draw its text
+    /// again upright): the list jumps to it instead, and says why, as Select does.
+    func testATextBoxOnATurnedPageIsNotEditedFromTheList() async throws {
+        let (_, model, undoManager) = await makeController(pages: 1, data: try fixtureData("rotated"))
+        let added = await model.performAll([.addTextBox(page: 0, rect: Rect(x: 72, y: 72, width: 100, height: 20), text: "Sideways",
+                                                        fontSize: 12, color: RgbColor(red: 0, green: 0, blue: 0), fill: nil, borderWidth: 0)],
+                                           named: Strings.actionAddAnnotation, touching: [0])
+        XCTAssertTrue(added)
+        let row = try XCTUnwrap(DocumentModel.commentRows(model.annotationIndex).first { $0.kind == .textBox })
+        XCTAssertFalse(model.editComment(of: row), "no sheet: the list jumps instead")
+        XCTAssertNil(model.noteDraft)
+        XCTAssertEqual(model.failure?.message, Strings.textBoxNeedsUprightPage)
+        XCTAssertEqual(undoManager.undoActionName, Strings.actionAddAnnotation, "nothing changed")
+    }
+
     /// A row of the list opens the same sheet for its mark (a note's is its own: Note).
     func testARowOfTheListOpensItsComment() async throws {
         let (_, model, _) = await makeController()
         _ = await model.addNote(page: 0, at: CGPoint(x: 100, y: 100), contents: "Hello")
         let row = try XCTUnwrap(DocumentModel.commentRows(model.annotationIndex).first)
-        model.editComment(of: row)
+        XCTAssertTrue(model.editComment(of: row))
         let draft = try XCTUnwrap(model.noteDraft)
         XCTAssertFalse(draft.isComment, "a note is written as a note")
         XCTAssertEqual(draft.text, "Hello")

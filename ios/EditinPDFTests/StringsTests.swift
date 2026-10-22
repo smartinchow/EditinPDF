@@ -275,5 +275,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.withComments, "With Comments")
         XCTAssertEqual(Strings.commentsFilter, "Show")
         XCTAssertEqual(Strings.showOnPage, "Show on Page")
+        XCTAssertEqual(Strings.showOnPageLabel("Fix this"), "Show on Page: Fix this")
+        XCTAssertEqual(Strings.textBoxColorAndBorderOnly, "This text box can only change color and border here.")
     }
 }

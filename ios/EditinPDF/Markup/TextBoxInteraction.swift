@@ -92,28 +92,33 @@ final class TextBoxInteraction: NSObject {
                                       pageSize: size, existing: AnnotationRef(page: page, index: info.index),
                                       originalText: info.contents ?? "", existingBox: info.box)
         editor.text = info.contents ?? ""
-        show(editor)
+        // A box the file locks keeps its look (its words may change): no format bar. One the bridge only
+        // restyles in place keeps its size and background.
+        show(editor, formats: model.canFormat(info), sizeAndBackground: !info.restyleInPlaceOnly)
         return true
     }
 
-    /// Puts `editor` in the scroll view over its place, with the format bar over the keyboard, and
+    /// Puts `editor` in the scroll view over its place, with the format bar over the keyboard when
+    /// its look may be changed (`formats`; its size and background too with `sizeAndBackground`), and
     /// brings up the keyboard.
-    private func show(_ editor: InlineTextEditor) {
+    private func show(_ editor: InlineTextEditor, formats: Bool = true, sizeAndBackground: Bool = true) {
         guard let host else { return }
         editor.delegate = self
-        let state = TextBoxFormatState(editor.format)
-        state.changed = { [weak self, weak editor] format in
-            guard let self, let editor else { return }
-            self.formatDidChange(to: format, in: editor)
+        if formats {
+            let state = TextBoxFormatState(editor.format, sizeAndBackground: sizeAndBackground)
+            state.changed = { [weak self, weak editor] format in
+                guard let self, let editor else { return }
+                self.formatDidChange(to: format, in: editor)
+            }
+            state.pickColor = { [weak self] in self?.pickColor() }
+            let bar = UIHostingController(rootView: TextBoxFormatBar(state: state))
+            bar.view.backgroundColor = .clear
+            bar.view.frame = CGRect(x: 0, y: 0, width: host.view.bounds.width, height: 52)
+            bar.view.autoresizingMask = [.flexibleWidth]
+            editor.inputAccessoryView = bar.view
+            formatState = state
+            formatBar = bar
         }
-        state.pickColor = { [weak self] in self?.pickColor() }
-        let bar = UIHostingController(rootView: TextBoxFormatBar(state: state))
-        bar.view.backgroundColor = .clear
-        bar.view.frame = CGRect(x: 0, y: 0, width: host.view.bounds.width, height: 52)
-        bar.view.autoresizingMask = [.flexibleWidth]
-        editor.inputAccessoryView = bar.view
-        formatState = state
-        formatBar = bar
         host.scrollView.addSubview(editor)
         textEditor = editor
         layoutTextEditor()
@@ -207,7 +212,8 @@ final class TextBoxInteraction: NSObject {
                 // the same turn, they are one step of Undo.
                 let words = editor.wordsChanged
                     ? model.enqueueContents(of: existing, to: committed, workedOutAt: editor.revision, keepingText: true) : nil
-                let look = editor.formatChanged ? model.enqueueRestyle(existing, to: editor.format, workedOutAt: editor.revision) : nil
+                let look = editor.formatChanged
+                    ? model.enqueueRestyle(existing, to: editor.format, from: editor.originalFormat, workedOutAt: editor.revision) : nil
                 made = Task {
                     let wordsMade = await words?.value ?? true
                     let lookMade = await look?.value ?? true

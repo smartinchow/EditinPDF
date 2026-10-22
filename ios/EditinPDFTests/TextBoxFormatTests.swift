@@ -35,8 +35,13 @@ final class TextBoxFormatTests: XCTestCase {
         XCTAssertEqual(unknown, TextBoxFormat(fontSize: 30, color: red, background: nil, borderWidth: 0))
         info.fontSize = 300
         info.borderWidth = 0.2
-        XCTAssertEqual(TextBoxFormat(info, otherwise: style).fontSize, 144, "held to what the bridge takes")
-        XCTAssertEqual(TextBoxFormat(info, otherwise: style).borderWidth, 0.5)
+        XCTAssertEqual(TextBoxFormat(info, otherwise: style).fontSize, 300, "the box's own, kept until it is changed")
+        XCTAssertEqual(TextBoxFormat(info, otherwise: style).borderWidth, 0.2)
+        var grown = TextBoxFormat(info, otherwise: style)
+        grown.shrink()
+        XCTAssertEqual(grown.fontSize, 72, "Smaller steps down into the sizes offered")
+        info.fontSize = .nan
+        XCTAssertEqual(TextBoxFormat(info, otherwise: style).fontSize, 30, "a size that is not a number is Text Box's")
         XCTAssertEqual(TextBoxFormat.heldBorder(.nan), 0)
         XCTAssertEqual(TextBoxFormat.heldBorder(40), 12)
         info.color = RgbColor(red: .nan, green: 7, blue: -.infinity)
@@ -74,6 +79,55 @@ final class TextBoxFormatTests: XCTestCase {
         XCTAssertEqual(format.textInset, ShapeGeometry.textInset + 1, "the engine sets the text in by the border too")
     }
 
+    /// A look read back from a file (its colour in single precision) is the look picked: no change.
+    /// Its colour and background are taken for the swatch they are.
+    func testLooksMatchToWithinWhatAFileKeeps() {
+        let swatch = RGBA.swatches[2]
+        let readBack = RGBA(r: Double(Float(swatch.r)), g: Double(Float(swatch.g)), b: Double(Float(swatch.b)))
+        XCTAssertNotEqual(readBack.r, swatch.r)
+        XCTAssertEqual(TextBoxFormat(fontSize: 14, color: readBack), TextBoxFormat(fontSize: 14, color: swatch))
+        XCTAssertNotEqual(TextBoxFormat(fontSize: 14, color: swatch), TextBoxFormat(fontSize: 14.5, color: swatch))
+        XCTAssertNotEqual(TextBoxFormat(fontSize: 14, color: swatch), TextBoxFormat(fontSize: 14, color: swatch, borderWidth: 1))
+        var info = annotation(kind: .textBox)
+        info.color = readBack.rgbColor
+        info.fill = RgbColor(red: Double(Float(TextBoxFormat.backgrounds[1].r)), green: Double(Float(TextBoxFormat.backgrounds[1].g)),
+                             blue: Double(Float(TextBoxFormat.backgrounds[1].b)))
+        let format = TextBoxFormat(info, otherwise: ToolStyle.initial(for: .textBox))
+        XCTAssertEqual(format.color.r, swatch.r, "snapped to its swatch")
+        XCTAssertEqual(format.background?.r, TextBoxFormat.backgrounds[1].r)
+    }
+
+    /// A box's own size and border are kept as the file has them, and sent only when changed: a
+    /// colour change never resizes the box, nor turns a 0.2 point border into another.
+    func testOnlyWhatChangedIsSent() {
+        var info = annotation(kind: .textBox)
+        info.fontSize = 300
+        info.borderWidth = 0.2
+        let original = TextBoxFormat(info, otherwise: ToolStyle.initial(for: .textBox))
+        XCTAssertEqual(original.fontSize, 300, "kept as the file has it")
+        XCTAssertEqual(original.borderWidth, 0.2)
+        var picked = original
+        picked.color = RGBA.swatches[6]
+        let ref = AnnotationRef(page: 0, index: 3)
+        XCTAssertEqual(picked.restyle(ref, from: original),
+                       .restyleTextBox(page: 0, index: 3, fontSize: nil, color: RGBA.swatches[6].rgbColor, fill: nil, borderWidth: nil))
+        picked.shrink()
+        picked.hasBorder = false
+        XCTAssertEqual(picked.restyle(ref, from: original),
+                       .restyleTextBox(page: 0, index: 3, fontSize: 72, color: RGBA.swatches[6].rgbColor, fill: nil, borderWidth: 0))
+        XCTAssertNil(original.restyle(ref, from: original), "nothing changed: no edit")
+    }
+
+    /// A box that can only be restyled in place keeps its size and background: the bar and the sheet
+    /// offer its colour and border only.
+    func testABoxRestyledInPlaceOnlyOffersColourAndBorder() {
+        var info = annotation(kind: .textBox)
+        info.restyleInPlaceOnly = true
+        XCTAssertFalse(TextBoxFormatState(TextBoxFormat(fontSize: 12, color: RGBA.swatches[0]), sizeAndBackground: false).changesSizeAndBackground)
+        XCTAssertTrue(TextBoxFormatState(TextBoxFormat(fontSize: 12, color: RGBA.swatches[0])).changesSizeAndBackground)
+        XCTAssertEqual(Strings.textBoxColorAndBorderOnly, "This text box can only change color and border here.")
+    }
+
     /// Text Box keeps the look picked for the next box; the other parts of its style stay.
     func testTheLookPickedIsKeptAsTextBoxsStyle() {
         let style = ToolStyle(color: black, width: 3, fontSize: 14, fill: true)
@@ -85,9 +139,9 @@ final class TextBoxFormatTests: XCTestCase {
 
     func testTheEditThatGivesABoxTheLook() {
         let format = TextBoxFormat(fontSize: 20, color: red, background: TextBoxFormat.backgrounds[2], borderWidth: 1)
-        XCTAssertEqual(format.restyle(AnnotationRef(page: 2, index: 5)),
+        XCTAssertEqual(format.restyle(AnnotationRef(page: 2, index: 5), from: nil),
                        .restyleTextBox(page: 2, index: 5, fontSize: 20, color: red.rgbColor, fill: TextBoxFormat.backgrounds[2].rgbColor, borderWidth: 1))
-        XCTAssertNil(format.restyle(AnnotationRef(page: -1, index: 0)))
+        XCTAssertNil(format.restyle(AnnotationRef(page: -1, index: 0), from: nil))
     }
 
     /// A style kept by an earlier version (no background, no border) still reads.
@@ -116,7 +170,11 @@ final class TextBoxFormatTests: XCTestCase {
         XCTAssertEqual(told.last?.fontSize, 14)
         XCTAssertNil(state.swatch, "a colour picked with More Colors… is no swatch")
         XCTAssertEqual(state.backgroundChoice, 4)
+        state.format.color = RGBA(r: 0.9, g: 0.1, b: 0.1)
         state.format.color = RGBA(r: Double(Float(0.9)), g: Double(Float(0.1)), b: 0.1)
+        XCTAssertEqual(told.count, 5)
+        state.format.color = ToolStyleEditor.swatches[2]
+        XCTAssertEqual(told.count, 5, "the same colour read back is no change")
         XCTAssertEqual(state.swatch, 2, "a colour read back from the file, in single precision, is still its swatch")
     }
 
@@ -248,9 +306,83 @@ extension AnnotationEditingTests {
         let (controller, model, undoManager) = await makeController(pages: 1, data: try fixtureData("locked-markup"))
         let box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first { $0.kind == .textBox })
         XCTAssertFalse(controller.markupInteraction.selecting.actions(for: box).contains(.format))
-        let made = await model.enqueueRestyle(AnnotationRef(page: 0, index: box.index), to: TextBoxFormat(fontSize: 30, color: RGBA(r: 1, g: 0, b: 0))).value
+        let made = await model.enqueueRestyle(AnnotationRef(page: 0, index: box.index), to: TextBoxFormat(fontSize: 30, color: RGBA(r: 1, g: 0, b: 0)),
+                                              from: nil).value
         XCTAssertFalse(made)
         XCTAssertEqual(model.failure?.message, Strings.editNotAllowed)
         XCTAssertFalse(undoManager.canUndo)
+        // Its words may change, its look may not: no format bar while they are typed.
+        XCTAssertTrue(controller.markupInteraction.textBoxes.beginEditing(box))
+        XCTAssertNil(controller.markupInteraction.textBoxes.textEditor?.inputAccessoryView)
+        XCTAssertNil(controller.markupInteraction.textBoxes.formatState)
+    }
+
+    /// A box made red, then given red again (as the file keeps it, in single precision), changes
+    /// nothing: no step, from the sheet or from the bar.
+    func testPickingTheColourABoxHasMakesNoStep() async throws {
+        let (controller, model, undoManager) = await makeController()
+        model.toolStyles[.textBox] = ToolStyle(color: RGBA.swatches[2], width: 2, fontSize: 14, fill: false)
+        _ = await model.addTextBox(page: 0, at: CGPoint(x: 100, y: 200), text: "Red")
+        let box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first)
+        XCTAssertNotEqual(box.color?.red, RGBA.swatches[2].r, "read back in single precision")
+        controller.markupInteraction.selecting.perform(.format, on: box)
+        var picked = try XCTUnwrap(model.formatDraft).format
+        picked.color = RGBA.swatches[2]
+        let fromSheet = await model.applyFormatDraft(picked)
+        XCTAssertFalse(fromSheet)
+        let markup = controller.markupInteraction
+        XCTAssertTrue(markup.textBoxes.beginEditing(box))
+        try XCTUnwrap(markup.textBoxes.formatState).format.color = RGBA.swatches[2]
+        XCTAssertFalse(model.hasPendingText, "the same colour is no change")
+        XCTAssertNil(markup.commitPendingText())
+        await model.settle()
+        XCTAssertEqual(undoManager.undoActionName, Strings.actionAddAnnotation, "no Format Text Box step")
+        XCTAssertNil(model.failure)
+    }
+
+    /// A new colour alone changes the box in place: same place in its page's list, same box.
+    func testAColourAloneChangesTheBoxInPlace() async throws {
+        let (controller, model, undoManager) = await makeController()
+        _ = await model.addTextBox(page: 0, at: CGPoint(x: 100, y: 200), text: "Box")
+        _ = await model.addShape(page: 0, draft: .rect(CGRect(x: 300, y: 500, width: 50, height: 50), oval: false))
+        let box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first { $0.kind == .textBox })
+        controller.markupInteraction.selecting.perform(.format, on: box)
+        var picked = try XCTUnwrap(model.formatDraft).format
+        picked.color = RGBA.swatches[6]
+        let made = await model.applyFormatDraft(picked)
+        XCTAssertTrue(made)
+        let after = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first { $0.kind == .textBox })
+        XCTAssertEqual(after.index, box.index, "in place")
+        XCTAssertEqual(after.rect, box.rect)
+        XCTAssertEqual(try XCTUnwrap(after.color).blue, 1, accuracy: 0.01)
+        XCTAssertEqual(undoManager.undoActionName, Strings.formatTextBox)
+    }
+
+    /// A new look picked over a box on the page, with its words as they were, is made when the
+    /// document closes (Back), as typed words are.
+    func testANewLookIsMadeWhenTheDocumentCloses() async throws {
+        let (controller, model, _) = await makeController()
+        _ = await model.addTextBox(page: 0, at: CGPoint(x: 100, y: 200), text: "Box")
+        let box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first)
+        let markup = controller.markupInteraction
+        XCTAssertTrue(markup.textBoxes.beginEditing(box))
+        try XCTUnwrap(markup.textBoxes.formatState).format.background = TextBoxFormat.backgrounds[0]
+        XCTAssertTrue(model.hasPendingMarkup, "a new look waits")
+        XCTAssertTrue(model.commitPendingInk(closing: true), "the closing path hands it over")
+        await model.settle()
+        XCTAssertNotNil(model.annotationIndex.annotations(onPage: 0).first?.fill)
+    }
+
+    /// A box the bridge only restyles in place keeps its size and background: the bar does not change them.
+    func testABoxRestyledInPlaceOnlyKeepsItsSizeInTheBar() async throws {
+        let (controller, model, _) = await makeController()
+        _ = await model.addTextBox(page: 0, at: CGPoint(x: 100, y: 200), text: "Box")
+        var box = try XCTUnwrap(model.annotationIndex.annotations(onPage: 0).first)
+        box.restyleInPlaceOnly = true
+        let markup = controller.markupInteraction
+        XCTAssertTrue(markup.textBoxes.beginEditing(box))
+        XCTAssertEqual(markup.textBoxes.formatState?.changesSizeAndBackground, false)
+        controller.markupInteraction.selecting.perform(.format, on: box)
+        XCTAssertEqual(model.formatDraft?.changesSizeAndBackground, false)
     }
 }
