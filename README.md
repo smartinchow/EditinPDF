@@ -2,7 +2,7 @@
 
 A free, native iOS app for reading, organizing and annotating PDFs — fully offline, no account, no telemetry.
 
-**Status: pre-release, in TestFlight (0.2.0).** The viewer, page organizing, mark-up, form filling and signing
+**Status: pre-release, in TestFlight (0.2.1).** The viewer, page organizing, mark-up, form filling and signing
 work. The Licenses screen and the App Store release (M4) are still to come. Nothing is on the App Store yet.
 
 [![CI](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml/badge.svg)](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml)
