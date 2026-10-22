@@ -110,9 +110,16 @@ final class DocumentModel {
 
     /// Picks `tool`, as the palette does. Sign picked with no signature saved opens the pad to draw
     /// one (`askForSignature`), where Sign may be used; with one saved, the next tap places it.
-    func pick(_ tool: Tool) {
+    /// Highlight, Underline or Strikethrough picked while text is selected also marks that text
+    /// (`markSelection`), as the selection's menu does: on a phone the menu shows Copy and Highlight
+    /// and keeps Underline and Strikethrough behind its arrow, so the reader reaches for the palette.
+    /// The task says whether a mark was made; nil when there was nothing selected to mark.
+    @discardableResult
+    func pick(_ tool: Tool) -> Task<Bool, Never>? {
         self.tool = tool
         if tool == .signature, canUse(.signature) { askForSignature() }
+        guard let kind = tool.markupKind, selection?.selection != nil else { return nil }
+        return Task { await markSelection(kind) }
     }
 
     /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can

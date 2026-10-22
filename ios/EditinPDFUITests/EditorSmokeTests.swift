@@ -497,6 +497,66 @@ final class EditorSmokeTests: XCTestCase {
 
     /// Whether the screen around `point` (a 9-point square) has ink on it: any pixel well away from
     /// white.
+    /// Underline, on a document with no marks yet, marks the line a finger drags across: Undo turns
+    /// on, the line looks different, and Comments lists an underline.
+    func testDraggingWithUnderlineMarksTheLineAndListsIt() throws {
+        try markTheLine(with: "underline", listedAs: "Underline")
+    }
+
+    /// Strikethrough, on a document with no marks yet, marks the line a finger drags across, as
+    /// Underline does.
+    func testDraggingWithStrikethroughMarksTheLineAndListsIt() throws {
+        try markTheLine(with: "strikeout", listedAs: "Strikethrough")
+    }
+
+    /// The owner's report (0.2.1, iPhone): Underline and Strikethrough "do not work". On a phone the
+    /// selection's menu shows Copy and Highlight and keeps the other two behind its arrow; Underline,
+    /// tapped in the palette while a word is selected, underlines that word.
+    func testPickingUnderlineWithAWordSelectedUnderlinesIt() throws {
+        try markTheLine(with: "underline", listedAs: "Underline", selectingFirst: true)
+    }
+
+    /// Strikethrough, tapped in the palette while a word is selected, strikes it through.
+    func testPickingStrikethroughWithAWordSelectedStrikesItThrough() throws {
+        try markTheLine(with: "strikeout", listedAs: "Strikethrough", selectingFirst: true)
+    }
+
+    /// Opens sample.pdf, picks `tool` and drags across the first line (or, `selectingFirst`, selects
+    /// its first word with a long press under Select and then picks `tool`): Undo turns on, the pixels
+    /// around the line change, and Comments lists one row reading `kind`.
+    private func markTheLine(with tool: String, listedAs kind: String, selectingFirst: Bool = false) throws {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        let undo = app.buttons["undoButton"]
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let button = app.buttons["tool-\(tool)"]
+        XCTAssertTrue(button.waitForEnabled(timeout: 5), "\(tool) is disabled on a document that allows markup")
+        let line = textLine(in: app, page: app.scrollViews["pageScrollView"].firstMatch)
+        // The line, from a little before it to a little after, a line's height above and below.
+        let around = CGRect(x: line.start.screenPoint.x - 10, y: line.start.screenPoint.y - 14,
+                            width: line.end.screenPoint.x - line.start.screenPoint.x + 20, height: 28)
+        let before = try pixels(of: around, in: app)
+        if selectingFirst {
+            line.start.withOffset(CGVector(dx: 8, dy: 0)).press(forDuration: 1)
+            XCTAssertTrue(app.menuItems["Highlight"].waitForExistence(timeout: 5), "the long press selected nothing")
+            attach(app, "text-markup-\(tool)-selected")
+            button.tap()
+        } else {
+            button.tap()
+            line.start.press(forDuration: 0.05, thenDragTo: line.end)
+        }
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "\(tool) marked nothing")
+        sleep(1)
+        attach(app, "text-markup-\(tool)\(selectingFirst ? "-picked" : "")")
+        XCTAssertNotEqual(try pixels(of: around, in: app), before, "the \(tool) does not show on the page")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-'"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the \(tool) is not listed")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertTrue(rows.firstMatch.label.contains(kind), "the row reads \"\(rows.firstMatch.label)\"")
+        attach(app, "text-markup-\(tool)-listed")
+    }
+
     /// A highlight dragged across "Page one" is listed in Comments, one row under its page; Done puts
     /// the list away, and after Undo the list says there are none.
     func testHighlightThenCommentsListThenUndo() {

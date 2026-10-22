@@ -47,6 +47,48 @@ final class TextMarkupTests: XCTestCase {
         XCTAssertEqual(Tool(markupKind: .highlight), .highlight)
     }
 
+    /// The owner's report (0.2.1, on an iPhone): Underline and Strikethrough "do not work". On a phone
+    /// the selection's menu shows Copy and Highlight and hides Underline and Strikethrough behind its
+    /// arrow, so with text selected the reader taps them in the palette instead: that picks the tool and
+    /// must mark the selection with it, as Highlight, Underline and Strikethrough do in the menu.
+    func testPickingATextToolWithTextSelectedMarksTheSelection() async throws {
+        let (m, u) = try makeModel()
+        await m.settle()
+        let cases: [(Tool, AnnotationKind)] = [(.underline, .underline), (.strikeout, .strikeOut), (.highlight, .highlight)]
+        for (index, (tool, kind)) in cases.enumerated() {
+            m.pick(.select)
+            m.selection?.beginWord(page: 0, at: try firstGlyphCenter(m)); await m.selection?.waitUntilSettled()
+            XCTAssertNotNil(m.selection?.selection, "nothing selected to mark")
+            m.pick(tool)
+            XCTAssertEqual(m.tool, tool, "the tool is picked too")
+            try await waitForAnnotations(index + 1, on: m)
+            XCTAssertEqual(m.annotationIndex.annotations(onPage: 0).last?.kind, kind, "picking \(tool) did not mark the selection")
+            XCTAssertNil(m.selection?.selection, "the selection stayed once marked")
+        }
+        XCTAssertEqual(u.undoActionName, Strings.actionAddAnnotation)
+    }
+
+    /// With nothing selected, picking a text tool only picks it: the drag marks.
+    func testPickingATextToolWithNothingSelectedMarksNothing() async throws {
+        let (m, u) = try makeModel()
+        await m.settle()
+        m.pick(.underline)
+        try await Task.sleep(for: .milliseconds(300))
+        await m.settle()
+        XCTAssertEqual(m.tool, .underline)
+        XCTAssertFalse(u.canUndo)
+        XCTAssertNil(m.failure)
+        XCTAssertTrue(m.annotationIndex.annotations(onPage: 0).isEmpty)
+    }
+
+    /// Waits up to 5 seconds for page 0 of `m` to have `count` annotations.
+    private func waitForAnnotations(_ count: Int, on m: DocumentModel, file: StaticString = #filePath, line: UInt = #line) async throws {
+        for _ in 0..<100 where m.annotationIndex.annotations(onPage: 0).count < count {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(m.annotationIndex.annotations(onPage: 0).count, count, "no mark was made", file: file, line: line)
+    }
+
     func testWithNothingSelectedNothingIsMarked() async throws {
         let (m, u) = try makeModel()
         await m.settle()
