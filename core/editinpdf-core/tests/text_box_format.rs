@@ -662,9 +662,12 @@ fn a_box_a_re_add_would_lose_data_from_is_restyled_in_place_only() {
     );
 }
 
-/// A comment's date is the file's own, with its time zone: `/M`, else `/CreationDate`.
+/// A comment's date as the file writes it, with its time zone (`/M`, else `/CreationDate`), comes from
+/// `annotation_dates`, by page and place; `annotations` keeps the engine's zone-less reading. A date
+/// string too long to be one is not decoded, nor passed on.
 #[test]
 fn dates_are_the_files_own_with_their_time_zone() {
+    let long = "9".repeat(10_000);
     let doc = PdfDocument::open(
         fixtures::hand_annotated_doc(
             &[
@@ -672,21 +675,74 @@ fn dates_are_the_files_own_with_their_time_zone() {
                 "<< /Type /Annot /Subtype /Square /Rect [100 400 200 500] \
                  /CreationDate (D:20261021160500+02'00') >>",
                 "<< /Type /Annot /Subtype /Square /Rect [100 200 200 300] >>",
+                &format!("<< /Type /Annot /Subtype /Square /Rect [300 200 400 300] /M (D:{long}) >>"),
             ],
             &[],
         ),
         None,
     )
     .unwrap();
-    let dates: Vec<_> = doc.annotations().into_iter().map(|a| a.modified).collect();
+    let dates: Vec<_> = doc
+        .annotation_dates()
+        .into_iter()
+        .map(|d| (d.page, d.index, d.raw))
+        .collect();
     assert_eq!(
         dates,
         vec![
-            Some("D:20261021090500-05'00'".to_owned()),
-            Some("D:20261021160500+02'00'".to_owned()),
-            None,
+            (0, 0, "D:20261021090500-05'00'".to_owned()),
+            (0, 1, "D:20261021160500+02'00'".to_owned()),
         ]
     );
+    let listed = doc.annotations();
+    let first = listed.iter().find(|a| a.index == 0).unwrap();
+    assert_eq!(
+        first.modified.as_deref(),
+        Some("2026-10-21 09:05"),
+        "the engine's reading, without the zone"
+    );
+    let empty = PdfDocument::open(fixtures::text_doc(&["x"]), None).unwrap();
+    assert!(empty.annotation_dates().is_empty());
+}
+
+/// The bridge and the apps take looks within `look_tolerance` of each other for the same: a colour
+/// just inside it is no change (refused, no step), one just outside it is a change.
+#[test]
+fn a_colour_within_the_look_tolerance_is_no_change_and_one_past_it_is() {
+    let tolerance = editinpdf_core::look_tolerance();
+    assert!((0.0039..0.0041).contains(&tolerance), "{tolerance}");
+    let doc = one_page();
+    let grey = RgbColor {
+        red: 0.5,
+        green: 0.5,
+        blue: 0.5,
+    };
+    doc.apply(
+        Edit::AddTextBox {
+            page: 0,
+            rect: BOX,
+            text: "Grey".into(),
+            font_size: 12.0,
+            color: grey,
+            fill: None,
+            border_width: 0.0,
+        },
+        0,
+    )
+    .unwrap();
+    let shifted = |by: f64| RgbColor {
+        red: 0.5 + by,
+        ..grey
+    };
+    let inside = doc.apply(restyle(0, 12.0, shifted(tolerance * 0.9), None, 0.0), 1);
+    assert!(
+        matches!(inside, Err(EditError::Invalid { .. })),
+        "{inside:?}"
+    );
+    assert_eq!(doc.revision(), 1);
+    doc.apply(restyle(0, 12.0, shifted(tolerance * 1.5), None, 0.0), 1)
+        .unwrap();
+    assert_eq!(doc.revision(), 2);
 }
 
 /// A page of many text boxes, each with a reply: every one is found to have replies, and the list

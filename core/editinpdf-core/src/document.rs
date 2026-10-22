@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
 
-use crate::annotations::{self, AnnotationInfo};
+use crate::annotations::{self, AnnotationDate, AnnotationInfo, AnnotationKind};
 use crate::edit::{Edit, EditCapabilities, EditOutcome, MAX_STEP_EDITS, SaveMode};
 use crate::forms::{self, FormField};
 use crate::render::{self, RendererPool};
@@ -910,27 +910,42 @@ impl PdfDocument {
     /// Replies to other comments are left out. Read the list again after every change, undo and
     /// redo: a comment's `index` is its position on its page, which those can move.
     ///
-    /// Each comment's date as the file writes it, and a text box's text size, background, border and
-    /// whether it can only be restyled in place, are read from the file as it is now
-    /// (`AnnotationInfo::modified`, `font_size`, `fill`, `border_width`, `restyle_in_place_only`).
+    /// A text box's text size, background, border and whether it can only be restyled in place are
+    /// read from the file as it is now (`AnnotationInfo::font_size`, `fill`, `border_width`,
+    /// `restyle_in_place_only`): only when the document has a text box.
     pub fn annotations(&self) -> Vec<AnnotationInfo> {
         // The list only reads what the engine read when it opened or last changed the document, and
-        // turns the boxes with the page's plain arithmetic: nothing there can panic. The dates and the
-        // text boxes' looks are read from the working file again; were that to panic, they are left
-        // out (the rest of the list is as it was), and the lock is not poisoned.
+        // turns the boxes with the page's plain arithmetic: nothing there can panic. The text boxes'
+        // looks are read from the working file again; were that to panic, they are left out (the
+        // rest of the list is as it was), and the lock is not poisoned.
         self.read(Vec::new(), |doc| {
             let mut list = annotations::list(&doc.info);
-            if list.is_empty() {
+            if !list.iter().any(|a| a.kind == AnnotationKind::TextBox) {
                 return list;
             }
             let plain = list.clone();
             match panic::catch_unwind(AssertUnwindSafe(|| {
-                annotations::with_file_details(doc, &mut list);
+                annotations::with_text_box_looks(doc, &mut list);
                 list
             })) {
                 Ok(list) => list,
                 Err(_) => plain,
             }
+        })
+    }
+
+    /// When the document's comments were last changed, as the file writes each date (`/M`, else
+    /// `/CreationDate`), with its time zone: for the comments `annotations` lists at the same
+    /// revision, by page and place, those whose file gives a date of at most 64 characters. It reads
+    /// the file again (one read of each page's comments), so the apps ask for it when they show the
+    /// dates (the list of comments), off the main thread; `AnnotationInfo::modified` has the engine's
+    /// reading meanwhile. None when the file cannot be read again; a panic in the read gives none, and
+    /// the lock is not poisoned.
+    pub fn annotation_dates(&self) -> Vec<AnnotationDate> {
+        self.read(Vec::new(), |doc| {
+            let list = annotations::list(&doc.info);
+            panic::catch_unwind(AssertUnwindSafe(|| annotations::dates(doc, &list)))
+                .unwrap_or_default()
         })
     }
 

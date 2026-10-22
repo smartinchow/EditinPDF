@@ -54,7 +54,7 @@ mod text;
 mod text_cache;
 mod types;
 
-pub use annotations::{AnnotationInfo, AnnotationKind};
+pub use annotations::{AnnotationDate, AnnotationInfo, AnnotationKind};
 pub use document::PdfDocument;
 pub use edit::*;
 pub use error::*;
@@ -98,6 +98,15 @@ pub fn search_hit_limit() -> u32 {
 #[uniffi::export]
 pub fn max_text_chars() -> u32 {
     u32::try_from(edit::MAX_TEXT_CHARS).unwrap_or(u32::MAX)
+}
+
+/// How far apart two of a text box's numbers (a colour's components, from 0 through 1; a text size
+/// or a border, in points) may be and still be the same: under this, about a 255th. `RestyleTextBox`
+/// takes a look within it of the box's own for no change (and refuses a restyle that changes
+/// nothing), so the apps compare looks by the same rule.
+#[uniffi::export]
+pub fn look_tolerance() -> f64 {
+    annotations::LOOK_TOLERANCE
 }
 
 /// The smallest scale, in device pixels per point, that `PdfDocument::render_tile` draws a tile at.

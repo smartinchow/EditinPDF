@@ -260,7 +260,7 @@ pub enum Edit {
     /// again: its top-left corner stays, it grows or shrinks across with the text so that its lines
     /// break where they did (no further than the page's right edge), and down to hold the text. It
     /// keeps its text and its author, and loses what the engine does not set on a new one: its name
-    /// (`/NM`), creation date, opacity, alignment and rich text. It goes at the end of the page's
+    /// (`/NM`), creation date, pop-up, opacity, alignment and rich text. It goes at the end of the page's
     /// list, over the others, and the comments after its old place move down one: so in `apply_all` no
     /// other change of the step may address a comment of that page by its place, as with
     /// `DeleteAnnotation`. Adding it again is refused on a page shown turned

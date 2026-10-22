@@ -73,11 +73,11 @@ pub struct AnnotationInfo {
     pub contents: Option<String>,
     /// Who the file says wrote it.
     pub author: Option<String>,
-    /// When it was last changed: the file's own PDF date (`/M`, or `/CreationDate` when it has no
-    /// `/M`), as the file writes it (`D:YYYYMMDDHHmmSS` and its offset from UTC, `Z`, `+HH'mm'`,
-    /// `-HH'mm'`; at most 64 characters), for the apps to read with its time zone. When the file
-    /// cannot be read again, the engine's reading of it: `YYYY-MM-DD HH:MM` with the time zone left
-    /// out. Text from the file: parse it as untrusted.
+    /// When it was last changed, as the engine reads the file's PDF date (`D:…`): `YYYY-MM-DD HH:MM`
+    /// with the time zone left out, or the file's text as it is when it is not a date the engine
+    /// reads. `PdfDocument::annotation_dates` gives the dates as the file writes them, with their time
+    /// zones, on request (reading them costs a read of the file). Text from the file: parse it as
+    /// untrusted.
     pub modified: Option<String>,
     /// For a text box, the colour of its text (as its `/DA` gives it); for any other kind, the
     /// colour it is drawn in.
@@ -122,7 +122,7 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
                     blue: f64::from(blue),
                 }),
                 locked: a.locked,
-                // Filled in for text boxes, from the file, by `with_file_details`.
+                // Filled in for text boxes, from the file, by `with_text_box_looks`.
                 font_size: None,
                 fill: None,
                 border_width: None,
@@ -355,9 +355,16 @@ impl TextBoxLook {
     }
 }
 
-/// Whether two of a file's numbers are the same to within what it keeps of them.
+/// How far apart two of a text box's numbers (a colour's components, in 0 through 1; a size or a
+/// border, in points) may be and still be the same, as a file keeps them: under 0.004, about a 255th,
+/// what an 8-bit colour can tell apart and what the engine's single precision and rounding blur.
+/// `look_tolerance` hands it to the apps, which compare looks by the same rule, so a look they take
+/// for a change is one the bridge takes for a change too.
+pub(crate) const LOOK_TOLERANCE: f64 = 0.004;
+
+/// Whether two of a file's numbers are the same to within what it keeps of them (`LOOK_TOLERANCE`).
 fn close(a: f64, b: f64) -> bool {
-    (a - b).abs() < 0.005
+    (a - b).abs() < LOOK_TOLERANCE
 }
 
 /// Whether two colours are the same to within what a file keeps of them.
@@ -439,22 +446,89 @@ fn re_add_refusal(
     None
 }
 
-/// The most characters of a file's date the list passes on: a PDF date has at most 23.
+/// The most characters of a file's date passed on: a PDF date has at most 23.
 const MAX_DATE_CHARS: usize = 64;
+/// The most bytes of a file's date string decoded: `MAX_DATE_CHARS` in UTF-16 and its byte order
+/// mark. A longer string is not decoded at all.
+const MAX_DATE_BYTES: usize = 2 + 2 * MAX_DATE_CHARS;
+
+/// When one comment was last changed, as its file writes it (`PdfDocument::annotation_dates`).
+#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+pub struct AnnotationDate {
+    /// The comment's page and place, as `AnnotationInfo` gives them at the same revision.
+    pub page: u32,
+    pub index: u32,
+    /// Its `/M`, else its `/CreationDate`, as the file writes it: a PDF date (`D:YYYYMMDDHHmmSS` and
+    /// its offset from UTC, `Z`, `+HH'mm'`, `-HH'mm'`), at most 64 characters. Text from the file:
+    /// parse it as untrusted.
+    pub raw: String,
+}
+
+/// The date the annotation dictionary `d` of `cos` writes: its `/M`, else its `/CreationDate`, when
+/// that is a string of at most `MAX_DATE_BYTES` bytes (checked before it is decoded) and
+/// `MAX_DATE_CHARS` characters, not blank.
+fn raw_date(cos: &pdfcraft_cos::Document, d: &Dict) -> Option<String> {
+    [b"M".as_slice(), b"CreationDate".as_slice()]
+        .into_iter()
+        .find_map(|key| {
+            let object = cos.resolve(d.get(key)?);
+            let string = object.as_string()?;
+            (string.bytes.len() <= MAX_DATE_BYTES).then(|| string.to_text())
+        })
+        .filter(|date| !date.trim().is_empty() && date.chars().count() <= MAX_DATE_CHARS)
+}
+
+/// The dates the file writes for the comments of `list` (as `list` gives them, read from `doc`, the
+/// document as it is), in `list`'s order; a comment with none, or one the file no longer has at its
+/// place, is left out, and none at all when the file cannot be read again. One read of each page's
+/// `/Annots` and of each comment's dictionary. Reads only, and never panics on a file's numbers.
+pub(crate) fn dates(
+    doc: &pdfcraft_engine::Document,
+    list: &[AnnotationInfo],
+) -> Vec<AnnotationDate> {
+    if list.is_empty() {
+        return Vec::new();
+    }
+    let Ok(cos) = working_file(doc) else {
+        return Vec::new();
+    };
+    let Ok(pages) = pdfcraft_annot::page_refs(&cos) else {
+        return Vec::new();
+    };
+    let mut lists: HashMap<u32, Vec<Object>> = HashMap::new();
+    list.iter()
+        .filter_map(|info| {
+            let entries = lists.entry(info.page).or_insert_with(|| {
+                usize::try_from(info.page)
+                    .ok()
+                    .and_then(|page| pages.get(page))
+                    .map(|page| page_annots(&cos, *page))
+                    .unwrap_or_default()
+            });
+            let entry = entries.get(usize::try_from(info.index).ok()?)?;
+            let object = cos.resolve(entry);
+            let raw = raw_date(&cos, object.as_dict()?)?;
+            Some(AnnotationDate {
+                page: info.page,
+                index: info.index,
+                raw,
+            })
+        })
+        .collect()
+}
 
 fn rgb_color([red, green, blue]: Rgb) -> RgbColor {
     RgbColor { red, green, blue }
 }
 
 /// Fills in, from the document as it is (`doc`, its working file read again), what the engine's list
-/// does not give: every annotation's date as the file writes it (`/M`, else `/CreationDate`, with its
-/// time zone, when it has at most `MAX_DATE_CHARS` characters), and every text box's size,
-/// background, border width and whether it can only be restyled in place, and its colour when the
-/// engine's list gave none (a gray `/DA`, or none at all: the engine draws black). An annotation whose
-/// page or place the file no longer has is left as it is; so is every one when the file cannot be
-/// read again. Reads only, and never panics on a file's numbers.
-pub(crate) fn with_file_details(doc: &pdfcraft_engine::Document, list: &mut [AnnotationInfo]) {
-    if list.is_empty() {
+/// does not give of every text box: its size, background, border width and whether it can only be
+/// restyled in place, and its colour when the engine's list gave none (a gray `/DA`, or none at all:
+/// the engine draws black). Nothing is read when `list` has no text box. A text box whose page or
+/// place the file no longer has is left as it is; so is every one when the file cannot be read
+/// again. Reads only, and never panics on a file's numbers.
+pub(crate) fn with_text_box_looks(doc: &pdfcraft_engine::Document, list: &mut [AnnotationInfo]) {
+    if !list.iter().any(|a| a.kind == AnnotationKind::TextBox) {
         return;
     }
     let Ok(cos) = working_file(doc) else {
@@ -466,7 +540,10 @@ pub(crate) fn with_file_details(doc: &pdfcraft_engine::Document, list: &mut [Ann
     let mut lists: HashMap<u32, Vec<Object>> = HashMap::new();
     // For each page with a text box: what its comments reply to, read once (`replied_to`).
     let mut replies: HashMap<u32, HashSet<ObjRef>> = HashMap::new();
-    for info in list.iter_mut() {
+    for info in list
+        .iter_mut()
+        .filter(|a| a.kind == AnnotationKind::TextBox)
+    {
         let entries = lists.entry(info.page).or_insert_with(|| {
             usize::try_from(info.page)
                 .ok()
@@ -484,18 +561,7 @@ pub(crate) fn with_file_details(doc: &pdfcraft_engine::Document, list: &mut [Ann
         let Some(d) = object.as_dict() else {
             continue;
         };
-        let date = [b"M".as_slice(), b"CreationDate".as_slice()]
-            .into_iter()
-            .find_map(|key| {
-                d.get(key)
-                    .map(|o| cos.resolve(o))
-                    .and_then(|o| o.as_string().map(pdfcraft_cos::PdfString::to_text))
-            })
-            .filter(|date| !date.trim().is_empty() && date.chars().count() <= MAX_DATE_CHARS);
-        if let Some(date) = date {
-            info.modified = Some(date);
-        }
-        if info.kind != AnnotationKind::TextBox || d.name(b"Subtype") != Some(b"FreeText") {
+        if d.name(b"Subtype") != Some(b"FreeText") {
             continue;
         }
         let look = TextBoxLook::of(&cos, d);
@@ -534,7 +600,7 @@ const RESTYLE_LABEL: &str = "Format text box";
 ///   it), and as tall as its text then needs, at least as tall as it was in proportion. The box added
 ///   again goes at the end of the page's list, so it moves the places of the comments after it (as
 ///   a delete does), and it is drawn over the others. What it does not keep: its name (`/NM`),
-///   creation date, opacity, alignment and rich text, and any other entry the file gave it. This is
+///   creation date, pop-up, opacity, alignment and rich text, and any other entry the file gave it. This is
 ///   refused on a page shown turned (the engine would set its text upright in the file), and where
 ///   it would lose more (`re_add_refusal`: a callout or typed text, a box with replies, one whose
 ///   text is all rich text).
