@@ -20,6 +20,9 @@ enum FixtureStaging {
     /// Launched with this, the app forgets the signature an earlier run saved (`SignatureStore`), so a
     /// test of Sign starts with none.
     static let forgetSignatureArgument = "-forgetSignature"
+    /// Launched with this, the app forgets the tools' styles an earlier run kept (`ToolStyleStore`), so
+    /// a test starts with each tool's first style (a text box's size, say, which the format bar keeps).
+    static let resetToolStylesArgument = "-resetToolStyles"
 
     enum StagingError: Error {
         /// The name is empty or has a path in it: only the name of a bundled file is accepted.

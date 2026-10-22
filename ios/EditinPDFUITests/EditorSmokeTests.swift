@@ -389,7 +389,7 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertFalse(editor.exists)
     }
 
-    /// The format bar over the keyboard: a box typed in, made 8 points and red there, is added
+    /// The format bar over the keyboard: a box typed in, made two sizes larger and red there, is added
     /// so; Select's Format over it opens the sheet with those values, and Cancel leaves it.
     func testTextBoxFormatBarThenFormatFromTheMenu() throws {
         let app = launchAndOpen("sample.pdf")
@@ -405,32 +405,47 @@ final class EditorSmokeTests: XCTestCase {
         type("Formatted", into: editor)
         let larger = app.buttons["formatLargerButton"]
         XCTAssertTrue(larger.waitForExistence(timeout: 5), "no format bar over the keyboard")
-        // Text Box keeps the last size picked, from one launch to the next: down to the smallest first.
-        let smaller = app.buttons["formatSmallerButton"]
-        for _ in 0..<20 where smaller.isEnabled { smaller.tap() }
-        XCTAssertEqual(app.staticTexts["formatSizeValue"].value as? String, "6 pt")
+        XCTAssertEqual(app.staticTexts["formatSizeValue"].value as? String, "14 pt", "Text Box's first size")
         larger.tap()
         larger.tap()
-        XCTAssertEqual(app.staticTexts["formatSizeValue"].value as? String, "8 pt")
+        XCTAssertEqual(app.staticTexts["formatSizeValue"].value as? String, "18 pt")
         app.buttons["formatColorMenu"].tap()
         let red = menuItem("Red", in: app)
         XCTAssertTrue(red.waitForExistence(timeout: 5), "no Red in the colour menu")
         attach(app, "textbox-format-colors")
         red.tap()
         XCTAssertTrue(editor.exists, "picking a colour ended the box")
+        // More Colors… opens the system's picker over the page; the box waits for it, and takes the
+        // keyboard back when it goes.
+        app.buttons["formatColorMenu"].tap()
+        let more = menuItem("More Colors…", in: app)
+        XCTAssertTrue(more.waitForExistence(timeout: 5), "no More Colors…")
+        more.tap()
+        sleep(2)
+        attach(app, "textbox-format-picker")
+        XCTAssertTrue(editor.exists, "the colour picker ended the box")
+        let close = app.buttons.matching(NSPredicate(format: "label IN %@", ["Close", "close"])).firstMatch
+        if close.exists {
+            close.tap()
+        } else {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        }
+        XCTAssertTrue(larger.waitForExistence(timeout: 5), "the box did not take the keyboard back")
+        XCTAssertTrue(editor.exists)
         attach(app, "textbox-format-bar")
         pagePoint(CGPoint(x: 400, y: 500), pageWidth: 612, in: app).tap()
         XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "the box stayed")
         XCTAssertTrue(app.buttons["undoButton"].waitForEnabled(timeout: 5), "the text was not added")
         sleep(1)
         app.buttons["tool-select"].tap()
-        pagePoint(CGPoint(x: 108, y: 156), pageWidth: 612, in: app).tap()
+        pagePoint(CGPoint(x: 115, y: 160), pageWidth: 612, in: app).tap()
         let format = menuItem("Format", in: app)
         XCTAssertTrue(format.waitForExistence(timeout: 5), "the selected text box's menu offers no Format")
         format.tap()
         let stepper = app.steppers["formatSizeStepper"]
         XCTAssertTrue(stepper.waitForExistence(timeout: 5), "no format sheet")
-        XCTAssertEqual(stepper.label, "Font Size: 8 pt", "the sheet does not start from the box's size")
+        XCTAssertEqual(stepper.label, "Font Size: 18 pt", "the sheet does not start from the box's size")
         XCTAssertTrue(app.buttons["formatColor-2"].isSelected, "the sheet does not start from the box's colour")
         XCTAssertFalse(app.buttons["formatApplyButton"].isEnabled, "Apply before anything changed")
         attach(app, "textbox-format-sheet")

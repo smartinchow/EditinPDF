@@ -13,6 +13,10 @@ struct EditinPDFApp: App {
         if ProcessInfo.processInfo.arguments.contains(FixtureStaging.forgetSignatureArgument) {
             try? SignatureStore.shared.delete()
         }
+        // And for the tools' styles an earlier run kept to be forgotten, so each tool starts with its first.
+        if ProcessInfo.processInfo.arguments.contains(FixtureStaging.resetToolStylesArgument) {
+            ToolStyleStore.forgetAll()
+        }
         #endif
     }
 

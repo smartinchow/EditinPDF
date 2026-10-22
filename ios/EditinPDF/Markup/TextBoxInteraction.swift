@@ -43,11 +43,16 @@ final class TextBoxInteraction: NSObject {
     /// been drawn again with it (or at once when it is refused).
     private(set) var textPreviews: [UIView] = []
     /// Keeps the box being typed in clear of the keyboard. The palette's bar and the page indicator
-    /// stand over the keyboard on a compact width; the page indicator alone on a regular one.
+    /// stand over the keyboard on a compact width; the page indicator alone on a regular one. With the
+    /// format bar over the keyboard they stand as much higher again (seen on the iOS 27 simulator: the
+    /// box's second line was under the palette), so its height is added.
     private lazy var keyboard = KeyboardAvoidance(
         scrollView: host?.scrollView,
         editedView: { [weak self] in self?.textEditor },
-        clearance: { [weak self] in self?.host?.traitCollection.horizontalSizeClass == .regular ? 48 : 116 })
+        clearance: { [weak self] in
+            let bars: CGFloat = self?.host?.traitCollection.horizontalSizeClass == .regular ? 48 : 116
+            return bars + (self?.textEditor?.inputAccessoryView?.bounds.height ?? 0)
+        })
 
     init(host: PageScrollViewController, model: DocumentModel) {
         self.host = host
@@ -281,13 +286,20 @@ extension TextBoxInteraction: UIColorPickerViewControllerDelegate {
         state.format.color = RGBA(Color(uiColor: color))
     }
 
-    /// The picker went: the box takes the keyboard back.
+    /// The picker is going (its close button): once it has gone, the box takes the keyboard back.
+    /// Until then the box still waits: focus moving off the picker as it goes does not end it.
     func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
-        colorPickerWent()
+        if let coordinator = viewController.transitionCoordinator {
+            coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.colorPickerWent() }
+        } else {
+            // Not on its way yet: it goes as the run loop turns.
+            Task { @MainActor [weak self] in self?.colorPickerWent() }
+        }
     }
 
     private func colorPickerWent() {
         guard isPickingColor else { return }
+        if let host, host.presentedViewController is UIColorPickerViewController { return }
         isPickingColor = false
         textEditor?.becomeFirstResponder()
     }

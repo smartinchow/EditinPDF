@@ -169,6 +169,12 @@ final class ToolStyleStore {
             .flatMap { try? JSONDecoder().decode([String: ToolStyle].self, from: $0) } ?? [:]
     }
 
+    /// Forgets every tool's style kept in `defaults`: each starts over from its first. (Debug builds use
+    /// it so that each UI test starts from the first styles, whatever an earlier one picked.)
+    static func forgetAll(in defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: key)
+    }
+
     subscript(tool: Tool) -> ToolStyle {
         get { styles[tool.rawValue] ?? .initial(for: tool) }
         set {

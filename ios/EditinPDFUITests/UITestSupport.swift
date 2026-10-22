@@ -11,7 +11,8 @@ extension XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         // The second pair keeps a document scene from an earlier test from coming back: each test starts at the browser.
-        app.launchArguments = ["-openFixture", fixture, "-ApplePersistenceIgnoreState", "YES"] + arguments
+        // The last makes each tool start with its first style, whatever an earlier test picked (the text size, say).
+        app.launchArguments = ["-openFixture", fixture, "-ApplePersistenceIgnoreState", "YES", "-resetToolStyles"] + arguments
         if let name { app.launchArguments += ["-fixtureName", name] }
         app.launch()
         openFromBrowser(name ?? fixture, in: app)
