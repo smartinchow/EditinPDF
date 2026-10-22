@@ -465,3 +465,54 @@ fn a_step_with_a_restyle_follows_the_place_rules() {
     .unwrap();
     assert_eq!(doc.annotations().len(), 3);
 }
+
+/// A file's numbers are not trusted: a huge border, size, box or colour is held to a range, or the
+/// restyle is refused, and nothing panics.
+#[test]
+fn hostile_numbers_in_a_text_box_are_bounded_and_never_panic() {
+    let doc = PdfDocument::open(
+        fixtures::hand_annotated_doc(
+            &[
+                "<< /Type /Annot /Subtype /FreeText /Rect [100 600 300 640] /Contents (a) \
+                 /DA (/Helv 1e308 Tf 9e99 -5 0.5 rg) /BS << /W 1e308 >> /C [1e308 -1e308 0.5] >>",
+                "<< /Type /Annot /Subtype /FreeText /Rect [-1e308 -1e308 1e308 1e308] /Contents (b) \
+                 /DA (/Helv 12 Tf 0 g) /Border [0 0 99999999999999999999] >>",
+            ],
+            &[],
+        ),
+        None,
+    )
+    .unwrap();
+    let list = doc.annotations();
+    let a = list
+        .iter()
+        .find(|x| x.contents.as_deref() == Some("a"))
+        .unwrap();
+    assert_eq!(a.font_size, Some(400.0), "the engine's largest");
+    assert_eq!(a.border_width, Some(144.0));
+    let fill = a.fill.unwrap();
+    assert_eq!((fill.red, fill.green, fill.blue), (1.0, 0.0, 0.5));
+    let b = list
+        .iter()
+        .find(|x| x.contents.as_deref() == Some("b"))
+        .unwrap();
+    assert_eq!(b.border_width, Some(144.0));
+    // Restyling either by adding it again: the first is refused or made, the second refused; no panic.
+    let first = doc.apply(restyle(a.index, 20.0, RED, Some(PALE), 1.0), 0);
+    assert!(
+        first.is_ok() || matches!(first, Err(EditError::Invalid { .. })),
+        "{first:?}"
+    );
+    let at = doc.revision();
+    let b_index = doc
+        .annotations()
+        .into_iter()
+        .find(|x| x.contents.as_deref() == Some("b"))
+        .unwrap()
+        .index;
+    let second = doc.apply(restyle(b_index, 20.0, RED, Some(PALE), 1.0), at);
+    assert!(
+        matches!(second, Err(EditError::Invalid { .. })),
+        "{second:?}"
+    );
+}

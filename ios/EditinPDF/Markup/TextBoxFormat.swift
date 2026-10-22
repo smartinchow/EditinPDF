@@ -47,9 +47,16 @@ struct TextBoxFormat: Equatable, Sendable {
     /// `color`, `fill`, `borderWidth`); what the file does not say is `style`'s (Text Box's).
     init(_ info: AnnotationInfo, otherwise style: ToolStyle) {
         self.init(fontSize: info.fontSize ?? style.fontSize,
-                  color: info.color.map { RGBA(r: $0.red, g: $0.green, b: $0.blue) } ?? style.color,
-                  background: info.fill.map { RGBA(r: $0.red, g: $0.green, b: $0.blue) },
+                  color: info.color.map(Self.held) ?? style.color,
+                  background: info.fill.map(Self.held),
                   borderWidth: info.borderWidth ?? 0)
+    }
+
+    /// `color`, a file's, as a colour the bridge takes: each component held to 0 through 1, and 0 for
+    /// one that is not a number.
+    static func held(_ color: RgbColor) -> RGBA {
+        func component(_ value: Double) -> Double { value.isFinite ? min(max(value, 0), 1) : 0 }
+        return RGBA(r: component(color.red), g: component(color.green), b: component(color.blue))
     }
 
     /// `width` as a border the bridge takes: none for nothing, a number that is not one or less than

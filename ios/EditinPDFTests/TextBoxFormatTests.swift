@@ -39,6 +39,8 @@ final class TextBoxFormatTests: XCTestCase {
         XCTAssertEqual(TextBoxFormat(info, otherwise: style).borderWidth, 0.5)
         XCTAssertEqual(TextBoxFormat.heldBorder(.nan), 0)
         XCTAssertEqual(TextBoxFormat.heldBorder(40), 12)
+        info.color = RgbColor(red: .nan, green: 7, blue: -.infinity)
+        XCTAssertEqual(TextBoxFormat(info, otherwise: style).color, RGBA(r: 0, g: 1, b: 0), "a file's colour is held to what the bridge takes")
     }
 
     func testSmallerAndLargerStepThroughTheSizes() {

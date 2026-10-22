@@ -62,46 +62,81 @@ enum CommentFilter: String, CaseIterable, Identifiable, Sendable {
 /// When a mark was last changed, as the file says (`AnnotationInfo.modified`), and how the list of
 /// comments shows it.
 enum CommentDate {
-    /// The date `text` gives: as the engine gives one, `YYYY-MM-DD HH:MM` with the time zone left out
-    /// (the engine writes its own dates in UTC, so it is read as UTC), or a PDF date as a file has it,
-    /// `D:YYYYMMDDHHmmSS` with as much of it as is there after the year, and its offset from UTC
-    /// (`Z`, `+HH'mm'`, `-HH'mm'`) when it has one. Nil for anything else.
+    /// The date `text` gives: as the engine gives one, exactly `YYYY-MM-DD HH:MM` with the time zone
+    /// left out (the engine writes its own dates in UTC, so it is read as UTC), or a PDF date as a file
+    /// has it, `D:YYYY` followed by as many of `MM`, `DD`, `HH`, `mm`, `SS` as it has, in that order,
+    /// then its offset from UTC when it gives one: `Z`, or `+` or `-` then `HH`, then `'mm` (and a last
+    /// `'`) if it gives the minutes (ISO 32000-1, 7.9.4). Nil for anything else.
+    ///
+    /// The text is the file's, so nothing in it is trusted: every field is exactly as many ASCII digits
+    /// as it should be (a year 4, any other 2), and is checked against its range (year 1 through 9999,
+    /// month 1–12, day 1–31 and a day the month has, hours 0–23, minutes and seconds 0–59, the offset's
+    /// hours 0–23 and minutes 0–59) before any arithmetic is done with it: it never overflows.
     static func parse(_ text: String) -> Date? {
-        var fields: [Int] = []
-        var offset = 0
-        if text.hasPrefix("D:") {
-            let body = Array(text.dropFirst(2))
-            let digits = body.prefix { $0.isASCII && $0.isNumber }
-            guard digits.count >= 4, digits.count % 2 == 0, digits.count <= 14 else { return nil }
-            let numbers = String(digits)
-            fields.append(Int(numbers.prefix(4)) ?? -1)
-            var rest = numbers.dropFirst(4)
-            while !rest.isEmpty {
-                fields.append(Int(rest.prefix(2)) ?? -1)
-                rest = rest.dropFirst(2)
-            }
-            let zone = body.dropFirst(digits.count)
-            if let sign = zone.first, sign == "+" || sign == "-" {
-                let parts = String(zone.dropFirst()).split(separator: "'").compactMap { Int($0) }
-                let minutes = (parts.first ?? 0) * 60 + (parts.dropFirst().first ?? 0)
-                offset = (sign == "+" ? 1 : -1) * minutes * 60
-            }
-        } else {
-            let parts = text.split(whereSeparator: { $0 == "-" || $0 == " " || $0 == ":" })
-            guard parts.count == 5, parts.allSatisfy({ $0.allSatisfy { $0.isASCII && $0.isNumber } }) else { return nil }
-            fields = parts.compactMap { Int($0) }
+        let characters = Array(text.utf8)
+        if characters.count == 16, characters[4] == UInt8(ascii: "-"), characters[7] == UInt8(ascii: "-"),
+           characters[10] == UInt8(ascii: " "), characters[13] == UInt8(ascii: ":"),
+           let year = number(characters, 0, 4), let month = number(characters, 5, 2), let day = number(characters, 8, 2),
+           let hour = number(characters, 11, 2), let minute = number(characters, 14, 2) {
+            return date(year: year, month: month, day: day, hour: hour, minute: minute, second: 0, offsetMinutes: 0)
         }
-        guard fields.count >= 1, fields.allSatisfy({ $0 >= 0 }) else { return nil }
-        func field(_ i: Int, default value: Int) -> Int { fields.count > i ? fields[i] : value }
-        let (month, day, hour, minute, second) = (field(1, default: 1), field(2, default: 1), field(3, default: 0), field(4, default: 0),
-                                                  field(5, default: 0))
-        guard (1...12).contains(month), (1...31).contains(day), hour < 24, minute < 60, second < 60 else { return nil }
+        guard characters.starts(with: Array("D:".utf8)) else { return nil }
+        let body = Array(characters.dropFirst(2))
+        let digitCount = body.prefix { $0 >= UInt8(ascii: "0") && $0 <= UInt8(ascii: "9") }.count
+        guard digitCount >= 4, digitCount <= 14, digitCount.isMultiple(of: 2), let year = number(body, 0, 4) else { return nil }
+        // Month, day, hour, minute, second: those the date has, in order; the rest as the standard says.
+        var fields = [1, 1, 0, 0, 0]
+        for i in 0..<((digitCount - 4) / 2) {
+            guard let field = number(body, 4 + 2 * i, 2) else { return nil }
+            fields[i] = field
+        }
+        guard let offset = offsetMinutes(Array(body.dropFirst(digitCount))) else { return nil }
+        return date(year: year, month: fields[0], day: fields[1], hour: fields[2], minute: fields[3], second: fields[4], offsetMinutes: offset)
+    }
+
+    /// The number written in `count` (at most 4) ASCII digits of `bytes` from `start`; nil when there are
+    /// not that many, or one is not a digit.
+    private static func number(_ bytes: [UInt8], _ start: Int, _ count: Int) -> Int? {
+        guard count <= 4, start >= 0, start + count <= bytes.count else { return nil }
+        var value = 0
+        for byte in bytes[start..<(start + count)] {
+            guard byte >= UInt8(ascii: "0"), byte <= UInt8(ascii: "9") else { return nil }
+            value = value * 10 + Int(byte - UInt8(ascii: "0"))
+        }
+        return value
+    }
+
+    /// The offset from UTC, in minutes east, a PDF date's end gives: none (nothing, or `Z`), or `+` or
+    /// `-`, two digits of hours (0–23), and optionally `'`, two digits of minutes (0–59) and a last `'`.
+    /// Nil for anything else.
+    private static func offsetMinutes(_ zone: [UInt8]) -> Int? {
+        guard let sign = zone.first else { return 0 }
+        if sign == UInt8(ascii: "Z") { return zone.count == 1 ? 0 : nil }
+        guard sign == UInt8(ascii: "+") || sign == UInt8(ascii: "-"), let hours = number(zone, 1, 2), hours < 24 else { return nil }
+        var minutes = 0
+        switch zone.count {
+        case 3: break
+        case 4: guard zone[3] == UInt8(ascii: "'") else { return nil }
+        case 6, 7:
+            guard zone[3] == UInt8(ascii: "'"), let written = number(zone, 4, 2), written < 60,
+                  zone.count == 6 || zone[6] == UInt8(ascii: "'") else { return nil }
+            minutes = written
+        default: return nil
+        }
+        return (sign == UInt8(ascii: "+") ? 1 : -1) * (hours * 60 + minutes)
+    }
+
+    /// The moment those fields name, `offsetMinutes` east of UTC; nil when one is out of its range or
+    /// the day is not one the month has.
+    private static func date(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int, offsetMinutes: Int) -> Date? {
+        guard (1...9999).contains(year), (1...12).contains(month), (1...31).contains(day), (0...23).contains(hour),
+              (0...59).contains(minute), (0...59).contains(second), abs(offsetMinutes) < 24 * 60 else { return nil }
         var utc = Calendar(identifier: .gregorian)
         guard let zone = TimeZone(identifier: "UTC") else { return nil }
         utc.timeZone = zone
-        let components = DateComponents(year: fields[0], month: month, day: day, hour: hour, minute: minute, second: second)
+        let components = DateComponents(year: year, month: month, day: day, hour: hour, minute: minute, second: second)
         guard components.isValidDate(in: utc), let date = utc.date(from: components) else { return nil }
-        return date.addingTimeInterval(TimeInterval(-offset))
+        return date.addingTimeInterval(TimeInterval(-offsetMinutes * 60))
     }
 
     /// How the list shows `date`: how long before `now` within the last week ("2 hours ago"), otherwise

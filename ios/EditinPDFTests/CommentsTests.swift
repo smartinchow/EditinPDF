@@ -28,6 +28,30 @@ final class CommentsTests: XCTestCase {
         }
     }
 
+    /// A file's date is not trusted: a huge or malformed field is no date, never a crash; the valid
+    /// forms with `Z`, `+` and `-` are read.
+    func testHostileDatesAreNoDateAndNeverCrash() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let noon = utc.date(from: DateComponents(year: 2026, month: 10, day: 21, hour: 12))
+        XCTAssertEqual(CommentDate.parse("D:20261021120000Z"), noon)
+        XCTAssertEqual(CommentDate.parse("D:20261021140000+02'00'"), noon)
+        XCTAssertEqual(CommentDate.parse("D:20261021140000+02'00"), noon)
+        XCTAssertEqual(CommentDate.parse("D:20261021140000+02"), noon)
+        XCTAssertEqual(CommentDate.parse("D:20261021063000-05'30'"), noon)
+        XCTAssertEqual(CommentDate.parse("D:2026"), utc.date(from: DateComponents(year: 2026, month: 1, day: 1)), "a year alone is 1 January")
+        let hostile = [
+            "D:20261021140500+99999999999999999'", "D:20261021140500-99999999999999999999'00'", "D:20261021140500+24'00'",
+            "D:20261021140500+02'99'", "D:20261021140500+2'", "D:20261021140500Zjunk", "D:20261021140500+02'00'junk",
+            "D:99999999999999999999", "D:999999999", "D:0000", "D:20261321", "D:20260231", "D:2026102125", "D:202610211460",
+            "D:20261021140560", "99999999999999999-10-21 14:05", "2026-10-21 14:05:00", "2026-1O-21 14:05", "D:", "D", "",
+            "D:2O26", "D:-2026", "D:+0000000",
+        ]
+        for text in hostile {
+            XCTAssertNil(CommentDate.parse(text), text)
+        }
+    }
+
     /// Recent dates read as how long ago; older ones as a short date.
     func testDatesAreShownRelativeWhenRecent() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)

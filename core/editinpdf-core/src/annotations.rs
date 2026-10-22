@@ -304,15 +304,24 @@ impl TextBoxLook {
             _ => 0.0,
         };
         Self {
-            font_size: if font_size.is_finite() {
-                font_size
+            // The file's numbers are not trusted: each is held to a range (the engine's own for the
+            // size, 0 through 1 for a colour, at most `MAX_BORDER` for a border) before any
+            // arithmetic is done with it.
+            font_size: if font_size.is_finite() && font_size > 0.0 {
+                font_size.min(400.0)
             } else {
                 12.0
             },
-            color,
+            color: color.map(|x| {
+                if x.is_finite() {
+                    x.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            }),
             fill: fill.map(|c| c.map(|x| x.clamp(0.0, 1.0))),
             border_width: if border_width.is_finite() {
-                border_width.max(0.0)
+                border_width.clamp(0.0, MAX_BORDER)
             } else {
                 0.0
             },
@@ -386,6 +395,13 @@ pub(crate) fn with_text_box_looks(doc: &pdfcraft_engine::Document, list: &mut [A
         }
     }
 }
+
+/// The widest border a text box is reported with, in points: a file's wider one is reported as this.
+const MAX_BORDER: f64 = 144.0;
+
+/// The farthest from the origin, in points, a text box's box may be, as the file gives it or once it
+/// is restyled: well past any page, and small enough that the arithmetic on it stays finite.
+const MAX_USER_COORD: f64 = 1.0e6;
 
 /// What a text box is called in the change that formats it, for the Edit menu.
 const RESTYLE_LABEL: &str = "Format text box";
@@ -475,15 +491,25 @@ pub(crate) fn restyle_text_box(
                 .collect::<Option<Vec<f64>>>()
         })
         .and_then(|r| <[f64; 4]>::try_from(r).ok())
-        .ok_or_else(|| invalid(format!("text box {index} has no box")))?;
+        .filter(|r| r.iter().all(|n| n.abs() <= MAX_USER_COORD))
+        .ok_or_else(|| invalid(format!("text box {index} has no box on its page")))?;
     let style = pdfcraft_engine::Style {
         color: look.color,
         opacity: 1.0,
         width: look.border_width,
         fill: look.fill,
     };
+    let rect = restyled_box(rect, &now, &look, &contents, f64::from(info.crop[2]));
+    if !rect
+        .iter()
+        .all(|n| n.is_finite() && n.abs() <= MAX_USER_COORD)
+    {
+        return Err(invalid(format!(
+            "text box {index} would not fit on its page at that size"
+        )));
+    }
     let shape = pdfcraft_engine::Shape::TextBox {
-        rect: restyled_box(rect, &now, &look, &contents, f64::from(info.crop[2])),
+        rect,
         font_size: look.font_size,
     };
     Ok(pdfcraft_engine::Edit::Batch {
