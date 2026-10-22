@@ -132,7 +132,10 @@ other consequence is the safety property: nothing ever tells the engine that a w
 failed, or that the system could not finish, can never leave the engine believing the file holds changes it does
 not. The next save simply writes all of them again. The cost is that an update holds the whole session's changes
 rather than only the newest, which is small next to rewriting the file (`SaveMode.full` exists in the bridge for a
-later "optimized copy", and refuses a signed document; the app does not use it yet).
+later "optimized copy", and refuses a signed document; the app does not use it yet). Save a Copy (`DocumentModel.copyBytes`) writes this same incremental save, once what waits is
+added through the closing path and the changes on their way are made, to a file the reader picks with the system's
+exporter: the copy of a password-protected file keeps its password, and the document stays open, changed, saved to
+its own file as before.
 
 One kind of file is the exception. When the file's cross-reference data cannot be read, the object layer rebuilds
 it from the objects' headers as the file opens (`pdfcraft_cos`), which leaves no revision to append to, and its

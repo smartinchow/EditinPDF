@@ -58,6 +58,9 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **Sign**: draw your signature once, then place it on any page, as often as you need. It is a drawn mark on the
   page, not a digital signature. The saved signature is stored only on your device, in the app's own folder with
   file protection, and is excluded from backups.
+- **Save a Copy** from the More menu: the document with all its changes, saved in the folder and under the name you
+  choose (the name offered is the document's, with " copy"). The document you are working on stays open. A copy of
+  a password-protected document keeps its password.
 
 Still to come: the Licenses screen and the App Store release (M4). The privacy manifest ships already: no
 tracking and no data collected.

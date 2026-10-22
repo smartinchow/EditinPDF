@@ -222,4 +222,12 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.pickedFileTooLarge, "That file is too large to insert (over 500 MB).")
         XCTAssertEqual(Strings.pickedFileUnreadable, "That file could not be opened.")
     }
+
+    func testSaveACopyWording() {
+        XCTAssertEqual(Strings.saveCopy, "Save a Copy…")
+        XCTAssertEqual(Strings.copyName(of: "Report"), "Report copy")
+        XCTAssertEqual(Strings.copyFailedTitle, "The copy could not be saved.")
+        XCTAssertEqual(Strings.copySignedMessage, "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.")
+        XCTAssertEqual(Strings.copyFailedMessage, "Try again, or choose another place to save it.")
+    }
 }

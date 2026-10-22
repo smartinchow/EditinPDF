@@ -189,6 +189,33 @@ enum Strings {
         String(localized: "The changes could not be saved.", comment: "Reason shown when the edits to a PDF could not be written to its file")
     }
 
+    // MARK: Save a Copy
+
+    /// The More menu's item that saves a copy of the document where the reader chooses.
+    static var saveCopy: String {
+        String(localized: "Save a Copy…", comment: "More menu item: saves a copy of the document, with its changes, in a folder and under a name the reader chooses")
+    }
+
+    /// The name the copy is offered under, without its extension: the document's name and " copy".
+    static func copyName(of name: String) -> String {
+        String(localized: "\(name) copy", comment: "File name, without extension, offered for a copy of a document: the document's name, then the word for a copy")
+    }
+
+    /// The title of the alert when a copy could not be made or written.
+    static var copyFailedTitle: String {
+        String(localized: "The copy could not be saved.", comment: "Title of the alert shown when Save a Copy made no copy")
+    }
+
+    /// Why a copy of a signed, damaged document with changes is refused.
+    static var copySignedMessage: String {
+        String(localized: "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.", comment: "Message of the alert when Save a Copy is refused for a digitally signed PDF whose file is damaged: writing its changes would break the signatures")
+    }
+
+    /// What the alert says when a copy could not be made or written for any other reason.
+    static var copyFailedMessage: String {
+        String(localized: "Try again, or choose another place to save it.", comment: "Message of the alert when Save a Copy could not make or write the copy")
+    }
+
     // MARK: Editing
 
     /// The toolbar button that takes back the last change.

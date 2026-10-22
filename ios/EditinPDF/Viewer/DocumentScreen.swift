@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 
 /// The screen for one document: its pages, once it is open, with the toolbar's buttons
 /// (`toolbarItems`) and the page indicator (and, while a search has hits, the bar to move between
@@ -68,6 +69,14 @@ struct DocumentScreen: View {
     @State private var formHintShown = false
     /// Whether the hint about the form is up.
     @State private var showsFormHint = false
+    /// The copy Save a Copy made, while the system's exporter is up to write it where the reader chooses.
+    @State private var copyToExport: PDFCopy?
+    /// Whether Save a Copy is making its copy: a second tap meanwhile does nothing.
+    @State private var makingCopy = false
+    /// Why Save a Copy made or wrote no copy, while the alert that says so is up.
+    @State private var copyFailure: CopyFailure?
+
+    private static let log = Logger(subsystem: Diagnostics.subsystem, category: "copy")
 
     /// What the thumbnails sheet (and Organize Pages) is shown with. The store travels in the item the sheet is presented
     /// for, instead of the sheet's content reading it from this view's state: done that way the
@@ -202,6 +211,16 @@ struct DocumentScreen: View {
         )
     }
 
+    /// Whether the exporter is up for the copy Save a Copy made.
+    private var exportsCopy: Binding<Bool> {
+        Binding(get: { copyToExport != nil }, set: { isShown in if !isShown { copyToExport = nil } })
+    }
+
+    /// Whether the alert about a copy that was not saved is up.
+    private var showsCopyFailure: Binding<Bool> {
+        Binding(get: { copyFailure != nil }, set: { isShown in if !isShown { copyFailure = nil } })
+    }
+
     /// The engine's explanation of why the document could not be opened, if it gave one.
     private var failureDetail: String? {
         if case .failed(let detail) = model.state { detail } else { nil }
@@ -266,6 +285,20 @@ struct DocumentScreen: View {
                 .alert(model.failure?.title ?? "", isPresented: showsEditFailure, presenting: model.failure) { _ in
                 } message: { failure in
                     if !failure.message.isEmpty { Text(failure.message) }
+                }
+                // Save a Copy: the reader picks the folder and the name; the document stays open, as it was.
+                // Success needs no word of ours (the exporter going is enough); a failure says so.
+                .fileExporter(isPresented: exportsCopy, item: copyToExport, contentTypes: [.pdf],
+                              defaultFilename: Strings.copyName(of: documentName)) { result in
+                    if case .failure(let error) = result {
+                        // Nothing of the document in the readable log.
+                        Self.log.error("writing a copy failed: \(String(describing: error), privacy: .private)")
+                        copyFailure = .failed
+                    }
+                } onCancellation: {}
+                .alert(Strings.copyFailedTitle, isPresented: showsCopyFailure, presenting: copyFailure) { _ in
+                } message: { failure in
+                    Text(failure.message)
                 }
                 .sheet(isPresented: $showsSearch) {
                     if let search = model.search {
@@ -432,6 +465,7 @@ struct DocumentScreen: View {
     /// iPhone simulator). iOS can also move trailing items into its More menu, and not leading ones.
     /// On a compact width the bar is short of room: Comments, Thumbnails and Organize Pages are in the
     /// bar's own menu of further actions there, listed with their titles. On a regular one all are shown.
+    /// Save a Copy is in that menu at every width.
     @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
         if horizontalSizeClass == .compact {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -445,6 +479,7 @@ struct DocumentScreen: View {
                 commentsButton
                 thumbnailsButton
                 organizeButton
+                saveCopyButton
             }
         } else {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -456,6 +491,10 @@ struct DocumentScreen: View {
                 commentsButton
                 thumbnailsButton
                 organizeButton
+            }
+            // The bar's More menu, as on a compact width.
+            ToolbarItemGroup(placement: .secondaryAction) {
+                saveCopyButton
             }
         }
     }
@@ -563,6 +602,31 @@ struct DocumentScreen: View {
     private func showOrganize() {
         guard organizeCover == nil, let store = thumbnailStore() else { return }
         organizeCover = ThumbnailsPresentation(store: store)
+    }
+
+    /// Saves a copy of the document, with its changes, where the reader chooses (`saveCopy`).
+    private var saveCopyButton: some View {
+        Button(action: saveCopy) {
+            Label(Strings.saveCopy, systemImage: "square.and.arrow.down.on.square")
+        }
+        .disabled(model.pageCount == 0 || makingCopy)
+        .accessibilityIdentifier("saveCopyButton")
+    }
+
+    /// Makes the copy's bytes (`DocumentModel.copyBytes`: what waits is added first, and the changes on
+    /// their way are waited for), then puts up the system's exporter for them, offered as the document's
+    /// name and " copy". A copy that cannot be made says why.
+    private func saveCopy() {
+        guard !makingCopy, copyToExport == nil else { return }
+        makingCopy = true
+        Task {
+            let made = await model.copyBytes()
+            makingCopy = false
+            switch made {
+            case .success(let bytes): copyToExport = PDFCopy(bytes: bytes)
+            case .failure(let failure): copyFailure = failure
+            }
+        }
     }
 
     /// The store of page pictures, made the first time it is needed and kept: the same pictures for

@@ -115,6 +115,34 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertTrue(app.textFields["searchField"].waitForExistence(timeout: 5), "Search in the More menu did not open the search")
     }
 
+    /// Save a Copy is in the More menu, and puts up the system's exporter, offered as the document's name
+    /// and " copy"; Cancel puts it away and leaves the document open.
+    func testSaveACopyOpensTheExporter() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("saveCopyButton", titled: "Save a Copy…", in: app), "no Save a Copy")
+        // The system's exporter (a document picker, its elements named by the system), offering the name.
+        let name = app.textFields["DOCPicker.filenameTextField"]
+        XCTAssertTrue(name.waitForExistence(timeout: 15), "the exporter did not come up")
+        XCTAssertEqual(name.value as? String, "sample copy")
+        XCTAssertTrue(app.buttons["DOCPicker.actionButton"].exists, "the exporter has no Save button")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "save-a-copy-exporter"
+        shot.lifetime = .keepAlways
+        add(shot)
+        // Cancel: on the iOS 27 simulator an element of its own under the picker's bar, not a button.
+        let cancel = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Cancel'")).firstMatch
+        if cancel.exists, cancel.isHittable {
+            cancel.tap()
+        } else {
+            name.swipeDown(velocity: .fast)
+            app.navigationBars["FullDocumentManagerViewControllerNavigationBar"].swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(name.waitForNonExistence(timeout: 10), "the exporter did not go")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 5)
+        XCTAssertFalse(app.alerts.firstMatch.exists, "a cancelled copy says nothing")
+    }
+
     /// Undo and Redo lead the bar's buttons, with their titles (for the More menu), and
     /// are disabled while there is nothing to undo or redo.
     func testUndoAndRedoAreThereAndDisabledOnAnUnchangedDocument() {
