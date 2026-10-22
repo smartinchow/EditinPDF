@@ -4,6 +4,8 @@ import SwiftUI
 struct EditinPDFApp: App {
     init() {
         sweepShareFolders(olderThan: 0)
+        // Copies Save a Copy left for an exporter the app did not see finish (`CopyFiles`).
+        CopyFiles.sweep()
         #if DEBUG
         // UI tests ask for a sample document to be put in the Documents folder (see FixtureStaging).
         FixtureStaging.stageRequestedFixture()

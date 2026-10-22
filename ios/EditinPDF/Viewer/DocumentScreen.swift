@@ -69,10 +69,11 @@ struct DocumentScreen: View {
     @State private var formHintShown = false
     /// Whether the hint about the form is up.
     @State private var showsFormHint = false
-    /// The copy Save a Copy made, while the system's exporter is up to write it where the reader chooses.
-    @State private var copyToExport: PDFCopy?
-    /// Whether Save a Copy is making its copy: a second tap meanwhile does nothing.
+    /// Whether Save a Copy is making its copy, until the exporter is up or it failed: a second tap
+    /// meanwhile does nothing.
     @State private var makingCopy = false
+    /// The view whose window Save a Copy's exporter is presented from.
+    @State private var anchor = PresentationAnchor.Holder()
     /// Why Save a Copy made or wrote no copy, while the alert that says so is up.
     @State private var copyFailure: CopyFailure?
     /// Set by Send Feedback; the feedback sender acts on it and clears it (`feedbackSender`).
@@ -213,14 +214,9 @@ struct DocumentScreen: View {
         )
     }
 
-    /// Whether the exporter is up for the copy Save a Copy made.
-    private var exportsCopy: Binding<Bool> {
-        Binding(get: { copyToExport != nil }, set: { isShown in if !isShown { copyToExport = nil } })
-    }
-
-    /// Whether the alert about a copy that was not saved is up.
+    /// Whether the alert about a copy that was not saved is up: once no alert about a change refused is.
     private var showsCopyFailure: Binding<Bool> {
-        Binding(get: { copyFailure != nil }, set: { isShown in if !isShown { copyFailure = nil } })
+        Binding(get: { copyFailure != nil && model.failure == nil }, set: { isShown in if !isShown { copyFailure = nil } })
     }
 
     /// The engine's explanation of why the document could not be opened, if it gave one.
@@ -288,16 +284,10 @@ struct DocumentScreen: View {
                 } message: { failure in
                     if !failure.message.isEmpty { Text(failure.message) }
                 }
-                // Save a Copy: the reader picks the folder and the name; the document stays open, as it was.
-                // Success needs no word of ours (the exporter going is enough); a failure says so.
-                .fileExporter(isPresented: exportsCopy, item: copyToExport, contentTypes: [.pdf],
-                              defaultFilename: Strings.copyName(of: documentName)) { result in
-                    if case .failure(let error) = result {
-                        // Nothing of the document in the readable log.
-                        Self.log.error("writing a copy failed: \(String(describing: error), privacy: .private)")
-                        copyFailure = .failed
-                    }
-                } onCancellation: {}
+                // Save a Copy's exporter is presented from this view's window (`saveCopy`). Success needs no
+                // word of ours (the exporter going is enough); a failure says so, after the alert about a
+                // change refused, when there is one.
+                .background(PresentationAnchor(holder: anchor))
                 .alert(Strings.copyFailedTitle, isPresented: showsCopyFailure, presenting: copyFailure) { _ in
                 } message: { failure in
                     Text(failure.message)
@@ -631,17 +621,37 @@ struct DocumentScreen: View {
     }
 
     /// Makes the copy's bytes (`DocumentModel.copyBytes`: what waits is added first, and the changes on
-    /// their way are waited for), then puts up the system's exporter for them, offered as the document's
-    /// name and " copy". A copy that cannot be made says why.
+    /// their way are waited for), writes them in a folder of the app's own (`CopyFiles`), off the main
+    /// actor, and puts up the system's exporter for the file (`CopyExporter`), named as the document and
+    /// " copy". The folder goes once the exporter is done, saved or cancelled. A copy that cannot be made
+    /// says why, and no exporter comes up. Nothing stays set that would hold back the next tap: the
+    /// exporter is modal while it is up.
     private func saveCopy() {
-        guard !makingCopy, copyToExport == nil else { return }
+        guard !makingCopy else { return }
         makingCopy = true
+        let name = Strings.copyName(of: documentName)
         Task {
-            let made = await model.copyBytes()
-            makingCopy = false
-            switch made {
-            case .success(let bytes): copyToExport = PDFCopy(bytes: bytes)
-            case .failure(let failure): copyFailure = failure
+            defer { makingCopy = false }
+            let bytes: Data
+            switch await model.copyBytes() {
+            case .success(let made): bytes = made
+            case .failure(let failure):
+                copyFailure = failure
+                return
+            }
+            let written = await EditQueue.offMain { try CopyFiles.write(bytes, named: name) }
+            switch written {
+            case .success(let file):
+                guard let presenter = anchor.topViewController else {
+                    CopyFiles.remove(file)
+                    copyFailure = .failed
+                    return
+                }
+                CopyExporter.present(file, over: presenter) { _ in }
+            case .failure(let error):
+                // Nothing of the document in the readable log.
+                Self.log.error("writing a copy failed: \(String(describing: error), privacy: .private)")
+                copyFailure = .failed
             }
         }
     }

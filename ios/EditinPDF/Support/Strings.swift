@@ -211,6 +211,11 @@ enum Strings {
         String(localized: "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.", comment: "Message of the alert when Save a Copy is refused for a digitally signed PDF whose file is damaged: writing its changes would break the signatures")
     }
 
+    /// Why no copy was made when something waiting to be added (strokes, typed text) was refused.
+    static var copyWaitingNotAddedMessage: String {
+        String(localized: "Some of your latest changes could not be added, so no copy was made. Check the page, then try again.", comment: "Message of the alert when Save a Copy made no copy because strokes or typed text waiting to be added to the document were refused")
+    }
+
     /// What the alert says when a copy could not be made or written for any other reason.
     static var copyFailedMessage: String {
         String(localized: "Try again, or choose another place to save it.", comment: "Message of the alert when Save a Copy could not make or write the copy")

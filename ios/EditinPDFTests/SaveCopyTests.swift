@@ -141,12 +141,92 @@ final class SaveCopyTests: XCTestCase {
         XCTAssertEqual(CopyFailure.failed.message, Strings.copyFailedMessage)
     }
 
-    /// The copy as the exporter writes it: the bytes, as a PDF.
-    func testTheExportedFileIsTheCopysBytes() async throws {
-        guard #available(iOS 18.2, *) else { throw XCTSkip("exported(as:) needs iOS 18.2") }
+    /// Strokes refused as stale as the copy is made (drawn while a turn of their page was on its way)
+    /// leave no copy to offer: it would not have them. The reader is told why the strokes were refused.
+    func testACopyWithStrokesRefusedIsNotMade() async throws {
+        let (controller, model) = await makeController(tool: .ink)
+        model.enqueue([.rotatePages(pages: [0], degrees: 90)], named: Strings.actionRotate, touching: [0])
+        try drawALine(in: controller)
+        let result = await model.copyBytes()
+        XCTAssertEqual(result.failure, .waitingNotAdded)
+        XCTAssertEqual(model.failure?.message, Strings.drawingNotAdded)
+        XCTAssertEqual(CopyFailure.waitingNotAdded.message, Strings.copyWaitingNotAddedMessage)
+    }
+
+    /// Strokes refused as stale while their page stayed as it was come back on the canvas: the copy hands
+    /// them over once more, and has them.
+    func testStrokesPutBackOnTheCanvasAreHandedOverAgainForTheCopy() async throws {
+        let (controller, model) = await makeController(tool: .ink)
+        model.enqueue([.rotatePages(pages: [1], degrees: 90)], named: Strings.actionRotate, touching: [1])
+        try drawALine(in: controller)
+        let bytes = try await model.copyBytes().get()
+        XCTAssertNil(model.failure)
+        XCTAssertFalse(model.hasPendingInk)
+        let copy = try PdfDocument.open(bytes: bytes, password: nil)
+        XCTAssertEqual(copy.annotations().filter { $0.page == 0 }.map(\.kind), [.ink])
+        XCTAssertEqual(copy.pageInfo(page: 1)?.rotationDegrees, 90)
+    }
+
+    // MARK: The file handed to the exporter
+
+    /// A folder of its own under the temporary folder, made for the test and removed after it.
+    func temporaryRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SaveCopyTests-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        return root
+    }
+
+    /// The copy is written as "<name>.pdf" in a folder of its own, and removing it removes the folder.
+    func testTheCopyIsWrittenInAFolderOfItsOwnAndRemovedWithIt() throws {
+        let root = try temporaryRoot()
         let bytes = try fixtureData("hello")
-        let exported = try await PDFCopy(bytes: bytes).exported(as: .pdf)
-        XCTAssertEqual(exported, bytes)
+        let first = try CopyFiles.write(bytes, named: "Report copy", under: root)
+        let second = try CopyFiles.write(bytes, named: "a/b: c copy.pdf", under: root)
+        XCTAssertEqual(first.lastPathComponent, "Report copy.pdf")
+        XCTAssertEqual(second.lastPathComponent, "a-b- c copy.pdf")
+        XCTAssertEqual(try Data(contentsOf: first), bytes)
+        XCTAssertEqual(first.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL, root.standardizedFileURL)
+        XCTAssertNotEqual(first.deletingLastPathComponent(), second.deletingLastPathComponent())
+
+        CopyFiles.remove(first, under: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.deletingLastPathComponent().path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: second.path), "the other copy stays")
+        // Only a copy's own folder under the root: nothing else.
+        let elsewhere = root.deletingLastPathComponent().appendingPathComponent("SaveCopyTests-elsewhere-\(UUID().uuidString).pdf")
+        try bytes.write(to: elsewhere)
+        addTeardownBlock { try? FileManager.default.removeItem(at: elsewhere) }
+        CopyFiles.remove(elsewhere, under: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: elsewhere.path))
+    }
+
+    /// The sweep at launch removes every copy left under the root, and the root's absence is fine.
+    func testTheSweepRemovesEveryCopyLeft() throws {
+        let root = try temporaryRoot()
+        CopyFiles.sweep(under: root)
+        let bytes = try fixtureData("hello")
+        _ = try CopyFiles.write(bytes, named: "one", under: root)
+        _ = try CopyFiles.write(bytes, named: "two", under: root)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path).count, 2)
+        CopyFiles.sweep(under: root)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    /// The exporter removes the copy's folder once it is done, saved or cancelled, and says which, once.
+    func testTheExporterRemovesTheCopyWhenItIsDone() throws {
+        for saved in [true, false] {
+            let file = try CopyFiles.write(try fixtureData("hello"), named: "sample copy")
+            var heard: [Bool] = []
+            let exporter = CopyExporter(file: file) { heard.append($0) }
+            let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+            if saved {
+                exporter.documentPicker(picker, didPickDocumentsAt: [URL(fileURLWithPath: "/elsewhere/sample copy.pdf")])
+            } else {
+                exporter.documentPickerWasCancelled(picker)
+            }
+            exporter.documentPickerWasCancelled(picker)
+            XCTAssertEqual(heard, [saved], "told once")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.deletingLastPathComponent().path), "saved: \(saved)")
+        }
     }
 }
 

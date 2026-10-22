@@ -229,6 +229,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.copyFailedTitle, "The copy could not be saved.")
         XCTAssertEqual(Strings.copySignedMessage, "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.")
         XCTAssertEqual(Strings.copyFailedMessage, "Try again, or choose another place to save it.")
+        XCTAssertEqual(Strings.copyWaitingNotAddedMessage, "Some of your latest changes could not be added, so no copy was made. Check the page, then try again.")
     }
 
     func testSendFeedbackWording() {
