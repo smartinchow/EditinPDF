@@ -11,6 +11,7 @@
 		03FB0FD8C9C8F79BD73B9310 /* locked-markup.pdf in Resources */ = {isa = PBXBuildFile; fileRef = DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */; };
 		07252C2B7839DC88CE87589A /* ChoiceSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0BE887D281A061232EB4FA5 /* ChoiceSheet.swift */; };
 		07DB889C50191647951A3C90 /* CommentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 929024FCCAF89F35EEF482F6 /* CommentsTests.swift */; };
+		09CC73952875EACED4EFA5AF /* MarkupToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BABCA786DEA6C768E56C5BB9 /* MarkupToggleTests.swift */; };
 		0B84E0745D79C7456B3B9404 /* ViewerSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E31D0F54FEE759D2B890E9 /* ViewerSmokeTests.swift */; };
 		0E2933F3E8301F6E34783DE3 /* FormInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA7A876625A851CD90DE2875 /* FormInteraction.swift */; };
 		0EECBD8B2D0DEF1A70CF27B1 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CB7C655ABDBB7F63EB993 /* UITestSupport.swift */; };
@@ -97,6 +98,7 @@
 		B1E32822304C6BEB366F9151 /* NoteEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83135E856075D9367EB868 /* NoteEditorSheet.swift */; };
 		B8BEA77D0DE0B01E0C1A0DA3 /* SelectionHandleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B7AC6B84267DB9ACC157CB9 /* SelectionHandleView.swift */; };
 		BA85C9BDD1D0F46B93DFD19E /* SaveCopyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1180795D34D5D660ADC7DDBD /* SaveCopyTests.swift */; };
+		BB655BB4B4599563324954DF /* MarkupToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B29F2A6B210E6EB5A51EB1 /* MarkupToggle.swift */; };
 		BC40D99CCADBEE1084766945 /* SelectionWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 411BC18CF1E9EE12989DBBA8 /* SelectionWorker.swift */; };
 		BF1122270EA2EB45C3748482 /* PageScrollViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */; };
 		C25B3F488C382CD146BCD02B /* GlyphLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = C29853682BBB082F8EADB99E /* GlyphLines.swift */; };
@@ -246,11 +248,13 @@
 		AA7A876625A851CD90DE2875 /* FormInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormInteraction.swift; sourceTree = "<group>"; };
 		ADB9F8976D57D5CD822B56AE /* SelectionInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionInteraction.swift; sourceTree = "<group>"; };
 		ADFC7BDAA4D5D56D1821FE8A /* ThumbnailStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailStore.swift; sourceTree = "<group>"; };
+		B2B29F2A6B210E6EB5A51EB1 /* MarkupToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkupToggle.swift; sourceTree = "<group>"; };
 		B361ABE0616959A045C71957 /* DocumentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentScreen.swift; sourceTree = "<group>"; };
 		B586A0723E56ED0039E2CA16 /* PageScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageScrollView.swift; sourceTree = "<group>"; };
 		B71CA0731CC2BA43517888DE /* FormOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormOverlay.swift; sourceTree = "<group>"; };
 		B7AEE25132378BBD7977FCA8 /* SelectionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionController.swift; sourceTree = "<group>"; };
 		B851D5A2AB340EBE42B106A1 /* PageScrollViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageScrollViewControllerTests.swift; sourceTree = "<group>"; };
+		BABCA786DEA6C768E56C5BB9 /* MarkupToggleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkupToggleTests.swift; sourceTree = "<group>"; };
 		BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTextBoxes.swift; sourceTree = "<group>"; };
 		BD94C82B0C570CCAA23791C4 /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		BF165FC973AC8E834A0479C1 /* MarkupInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkupInteraction.swift; sourceTree = "<group>"; };
@@ -330,6 +334,7 @@
 				9A452061FDE50418C6CCF138 /* InkDrawingTests.swift */,
 				48BAFD29DD41688C90AB4244 /* InkGeometryTests.swift */,
 				FA5A212ABFEE6DA9F90A06E6 /* InkSavingTests.swift */,
+				BABCA786DEA6C768E56C5BB9 /* MarkupToggleTests.swift */,
 				8310CC2E867D5C492E8B65DC /* OrganizeControllerTests.swift */,
 				DB04A44731160E44C9AA23DE /* OrganizeMathTests.swift */,
 				A6CAE86E013F8BABA74F078C /* PageHighlightsTests.swift */,
@@ -506,6 +511,7 @@
 				69E4EDC928C579F0B9D5FAB5 /* InkInteraction.swift */,
 				7182941450B00A7B7523D7E9 /* InlineTextEditor.swift */,
 				BF165FC973AC8E834A0479C1 /* MarkupInteraction.swift */,
+				B2B29F2A6B210E6EB5A51EB1 /* MarkupToggle.swift */,
 				1A83135E856075D9367EB868 /* NoteEditorSheet.swift */,
 				BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */,
 				55F9390D1B6826E2C418D6DD /* ShapeGeometry.swift */,
@@ -774,6 +780,7 @@
 				12F8D2422646EE960883D602 /* InkDrawingTests.swift in Sources */,
 				9DE628AF229E1BDB7833ECD0 /* InkGeometryTests.swift in Sources */,
 				674B15860BF911ECDAA99635 /* InkSavingTests.swift in Sources */,
+				09CC73952875EACED4EFA5AF /* MarkupToggleTests.swift in Sources */,
 				1C09C8ED746FED8068CD658B /* OrganizeControllerTests.swift in Sources */,
 				7903C8F43FED5B3ACF05C1FD /* OrganizeMathTests.swift in Sources */,
 				3A171C037C38BE5D9E1BBA16 /* PDFFileDocumentSaveTests.swift in Sources */,
@@ -846,6 +853,7 @@
 				A413F6AF560A16018A988D1F /* InlineTextEditor.swift in Sources */,
 				17906BD03910A44C66DCB90C /* KeyboardAvoidance.swift in Sources */,
 				3C29D037C106BB915B1E0CA5 /* MarkupInteraction.swift in Sources */,
+				BB655BB4B4599563324954DF /* MarkupToggle.swift in Sources */,
 				B1E32822304C6BEB366F9151 /* NoteEditorSheet.swift in Sources */,
 				79BFA52DB07FEEA3ABACDCA0 /* OpenOutcome.swift in Sources */,
 				1073C409E61E635E09D2F082 /* OrganizeController.swift in Sources */,

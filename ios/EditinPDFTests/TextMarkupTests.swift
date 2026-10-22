@@ -69,11 +69,12 @@ final class TextMarkupTests: XCTestCase {
     }
 
     /// The selection goes with the mark: Underline tapped twice quickly, or Strikethrough right after
-    /// it, marks the selection once.
+    /// it, marks the selection once (and the second tap does not take the underline off again). Each on
+    /// a document of its own: Underline picked over the word underlined would take the underline off.
     func testPickingATextToolTwiceMarksTheSelectionOnce() async throws {
-        let (m, u) = try makeModel()
-        await m.settle()
         for second in [Tool.underline, .strikeout] {
+            let (m, u) = try makeModel()
+            await m.settle()
             let before = m.annotationIndex.annotations(onPage: 0).count
             m.pick(.select)
             m.selection?.beginWord(page: 0, at: try firstGlyphCenter(m)); await m.selection?.waitUntilSettled()
@@ -84,8 +85,8 @@ final class TextMarkupTests: XCTestCase {
             _ = await first?.value
             await m.settle()
             XCTAssertEqual(m.annotationIndex.annotations(onPage: 0).count, before + 1, "marked twice after \(second)")
+            XCTAssertEqual(u.undoActionName, Strings.actionAddAnnotation)
         }
-        XCTAssertEqual(u.undoActionName, Strings.actionAddAnnotation)
     }
 
     /// With nothing selected, picking a text tool only picks it: the drag marks.

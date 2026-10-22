@@ -589,6 +589,33 @@ enum Strings {
         String(localized: "Strikethrough", comment: "Markup tool and menu item that strikes text through")
     }
 
+    /// The selection menu's item that takes the highlight off selected text that has it, and the name
+    /// Undo and Redo give that change.
+    static var removeHighlight: String {
+        String(localized: "Remove Highlight", comment: "Menu item over selected highlighted text that takes the highlight off it; also the name of that change in Undo and Redo")
+    }
+
+    /// The selection menu's item that takes the underline off selected text that has it, and the name
+    /// Undo and Redo give that change.
+    static var removeUnderline: String {
+        String(localized: "Remove Underline", comment: "Menu item over selected underlined text that takes the underline off it; also the name of that change in Undo and Redo")
+    }
+
+    /// The selection menu's item that takes the strikethrough off selected text that has it, and the
+    /// name Undo and Redo give that change.
+    static var removeStrikethrough: String {
+        String(localized: "Remove Strikethrough", comment: "Menu item over selected struck-through text that takes the strikethrough off it; also the name of that change in Undo and Redo")
+    }
+
+    /// `removeHighlight`, `removeUnderline` or `removeStrikethrough`, for a mark of `kind`.
+    static func removeMarkup(_ kind: MarkupKind) -> String {
+        switch kind {
+        case .highlight: removeHighlight
+        case .underline: removeUnderline
+        case .strikeOut: removeStrikethrough
+        }
+    }
+
     /// The freehand drawing tool.
     static var toolInk: String {
         String(localized: "Draw", comment: "Markup tool for drawing freehand")

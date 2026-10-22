@@ -111,20 +111,20 @@ final class DocumentModel {
 
     /// Picks `tool`, as the palette does. Sign picked with no signature saved opens the pad to draw
     /// one (`askForSignature`), where Sign may be used; with one saved, the next tap places it.
-    /// Highlight, Underline or Strikethrough picked while text is selected also marks that text
-    /// (`markSelection`), as the selection's menu does: on a phone the menu shows Copy and Highlight
-    /// and keeps Underline and Strikethrough behind its arrow, so the reader reaches for the palette.
-    /// The task says whether a mark was made; nil when there was nothing selected to mark. The
-    /// selection goes with the mark, at once: the same tool tapped twice, or another right after it,
-    /// finds nothing left to mark. A tool picked again, already the current one, marks nothing.
+    /// Highlight, Underline or Strikethrough picked while text is selected also marks that text, or
+    /// takes the mark off it when all of it has the mark (`markSelection`), as the selection's menu
+    /// does: on a phone the menu shows Copy and Highlight and keeps Underline and Strikethrough behind
+    /// its arrow, so the reader reaches for the palette. So does the tool picked again while it is the
+    /// current one. The task says whether the change was made; nil when there was nothing selected.
+    /// The selection goes with the change, at once: the same tool tapped twice, or another right after
+    /// it, finds nothing left to mark, so a change on its way is never asked for twice.
     @discardableResult
     func pick(_ tool: Tool) -> Task<Bool, Never>? {
-        let pickedAgain = self.tool == tool
         self.tool = tool
         if tool == .signature, canUse(.signature) { askForSignature() }
-        guard !pickedAgain, let kind = tool.markupKind, let controller = selection, let selected = controller.selection else { return nil }
+        guard let kind = tool.markupKind, let controller = selection, let selected = controller.selection else { return nil }
         controller.clear()
-        return Task { await mark(selected, as: kind, in: controller) }
+        return toggle(selected, as: kind, in: controller)
     }
 
     /// Why `tool` cannot be used on the page being read, for the palette to show; nil when it can
@@ -145,43 +145,120 @@ final class DocumentModel {
     /// Marks the selected text with a highlight, an underline or a strikethrough (`kind`), in the colour
     /// of the tool that makes it (`Tool(markupKind:)`, whatever tool is picked: the selection's menu
     /// does it in reading mode too), over the selection's boxes, which are in view space like every
-    /// edit's. Says whether the mark was made.
+    /// edit's; or, when every selected glyph already has a mark of that kind, takes that mark off the
+    /// selected glyphs (`MarkupToggle`), as one change named `Strings.removeMarkup(kind)`. Marks of that
+    /// kind already on some of the selection are not marked over again: only the rest is marked. Says
+    /// whether the change was made. A drag with a text tool ends here too, so dragging Underline across
+    /// underlined text takes the underline off it.
     ///
-    /// The selection goes either way: once the mark is made, with every other change (`refresh`);
-    /// when it is not (and the reader has not selected something else meanwhile), here, so that nothing is left on the page that looks marked when it is not. A
-    /// refusal is told as every change's is (`failure`): the tool's own (`refusal(of:onPage:)`) at
-    /// once, or the engine's, such as a mark queued behind a turn of its page, which is stale since its
-    /// boxes were worked out for the page as it was (`enqueue`). With nothing selected, nothing happens.
+    /// The selection goes either way: once the change is made, with every other change (`refresh`);
+    /// when it is not (and the reader has not selected something else meanwhile), here, so that nothing
+    /// is left on the page that looks marked when it is not. A refusal is told as every change's is
+    /// (`failure`): the tool's own (`refusal(of:onPage:)`) at once, `Strings.editNotAllowed` for text
+    /// whose marks the file locks, or the engine's, such as a mark queued behind a turn of its page,
+    /// which is stale since its boxes were worked out for the page as it was (`enqueue`). With nothing
+    /// selected, nothing happens.
+    ///
+    /// One change of this kind waits for the one before it to be made: each works out what is marked from
+    /// the document as the one before left it.
     @discardableResult
     func markSelection(_ kind: MarkupKind) async -> Bool {
         guard let controller = selection, let selected = controller.selection else { return false }
-        return await mark(selected, as: kind, in: controller)
+        return await toggle(selected, as: kind, in: controller).value
     }
 
-    /// Marks `selected`, text selected with `controller`, as `kind` (see `markSelection`).
-    private func mark(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController) async -> Bool {
+    /// The last change asked of `toggle`, which the next one waits for.
+    @ObservationIgnored private var lastToggle: Task<Bool, Never>?
+
+    /// Marks `selected`, or takes the mark off it (see `markSelection`), once the change asked before it
+    /// is made.
+    private func toggle(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController) -> Task<Bool, Never> {
+        let before = lastToggle
+        let selectedAt = revision
+        let task = Task { [weak self] in
+            _ = await before?.value
+            guard let self else { return false }
+            return await self.mark(selected, as: kind, in: controller, selectedAt: selectedAt)
+        }
+        lastToggle = task
+        return task
+    }
+
+    /// Marks `selected`, text selected with `controller` at revision `selectedAt`, as `kind`, or takes
+    /// the mark off it (see `markSelection`).
+    private func mark(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController, selectedAt: UInt64) async -> Bool {
         let page = Int(selected.page)
         let rects = SelectionController.rects(of: selected).map { Rect(x: $0.minX, y: $0.minY, width: $0.width, height: $0.height) }
         let tool = Tool(markupKind: kind)
-        if let refusal = refusal(of: tool, onPage: page) {
-            controller.clear()
-            failure = EditFailure(message: refusal)
+        /// Refuses the change: the selection goes, unless the reader has made another meanwhile.
+        func refuse(_ message: String?) -> Bool {
+            if controller.selection == selected { controller.clear() }
+            if let message { failure = EditFailure(message: message) }
             return false
         }
-        guard !rects.isEmpty else {
-            controller.clear()
-            return false
+        if let refusal = refusal(of: tool, onPage: page) { return refuse(refusal) }
+        guard !rects.isEmpty else { return refuse(nil) }
+        if let tooMany = Self.markupRefusal(boxes: rects.count) { return refuse(tooMany) }
+        // A change before this one (the one it waited for) moved or turned the page: the glyphs may be
+        // others now.
+        guard pageIsUnchanged(page, since: selectedAt) else { return refuse(Strings.documentChangedTryAgain) }
+        let base = revision
+        let color = toolStyles[tool].color.rgbColor
+        let annotations = annotationIndex.annotations(onPage: page)
+        var edits = [Edit.addTextMarkup(page: selected.page, kind: kind, rects: rects, color: color, contents: "")]
+        var name = Strings.actionAddAnnotation
+        if MarkupToggle.hasMarks(of: kind, in: annotations), let document = document() {
+            let range = Int(selected.start)..<Int(max(selected.start, selected.end))
+            let worked = await EditQueue.offMain { () throws -> MarkupToggle.Step in
+                let glyphs = try document.pageText(page: selected.page).glyphs
+                return try MarkupToggle.Step(MarkupToggle.plan(kind, selection: range, glyphs: glyphs, annotations: annotations),
+                                      page: selected.page, document: document)
+            }
+            // A page whose text cannot be read again is marked as it was selected.
+            if case .success(let step) = worked {
+                switch step {
+                case .markSelection:
+                    break
+                case .mark(let boxes):
+                    guard !boxes.isEmpty else { return refuse(nil) }
+                    if let tooMany = Self.markupRefusal(boxes: boxes.count) { return refuse(tooMany) }
+                    edits = [.addTextMarkup(page: selected.page, kind: kind, rects: boxes, color: color, contents: "")]
+                case .remove(let deleting, let pieces):
+                    if let tooMany = pieces.lazy.compactMap({ Self.markupRefusal(boxes: $0.boxes.count) }).first { return refuse(tooMany) }
+                    edits = [.deleteAnnotations(page: selected.page, indices: deleting)] + pieces.map { piece in
+                        .addTextMarkup(page: selected.page, kind: kind, rects: piece.boxes, color: piece.source.color ?? color,
+                                       contents: piece.keepsContents ? ShapeGeometry.limitedText(piece.source.contents ?? "") : "",
+                                       opacityOf: piece.source.index)
+                    }
+                    name = Strings.removeMarkup(kind)
+                case .locked:
+                    return refuse(Strings.editNotAllowed)
+                case .tooMuch:
+                    return refuse(Strings.selectLessText)
+                }
+            }
         }
-        if let tooMany = Self.markupRefusal(boxes: rects.count) {
-            controller.clear()
-            failure = EditFailure(message: tooMany)
-            return false
-        }
-        let edit = Edit.addTextMarkup(page: selected.page, kind: kind, rects: rects, color: toolStyles[tool].color.rgbColor, contents: "")
-        let made = await perform(edit, named: Strings.actionAddAnnotation, touching: [page])
-        // A selection the reader made while the mark was on its way is theirs: it stays.
+        let made = await enqueue(edits, named: name, touching: [page], workedOutAt: base).value
+        // A selection the reader made while the change was on its way is theirs: it stays.
         if !made, controller.selection == selected { controller.clear() }
         return made
+    }
+
+    /// The kinds of mark every glyph of `selected` that counts already has (`MarkupToggle.covers`): those
+    /// the selection's menu offers to take off. Reads the page's text off the main actor; none when it
+    /// cannot be read, or the document changed meanwhile.
+    func markedKinds(of selected: TextSelection) async -> Set<MarkupKind> {
+        let annotations = annotationIndex.annotations(onPage: Int(selected.page))
+        let kinds = [MarkupKind.highlight, .underline, .strikeOut].filter { MarkupToggle.hasMarks(of: $0, in: annotations) }
+        guard !kinds.isEmpty, let document = document() else { return [] }
+        let base = revision
+        let range = Int(selected.start)..<Int(max(selected.start, selected.end))
+        let worked = await EditQueue.offMain { () throws -> Set<MarkupKind> in
+            let glyphs = try document.pageText(page: selected.page).glyphs
+            return Set(kinds.filter { MarkupToggle.covers($0, selection: range, glyphs: glyphs, annotations: annotations) == true })
+        }
+        guard case .success(let marked) = worked, revision == base else { return [] }
+        return marked
     }
 
     /// The most boxes one mark takes: the bridge's cap on a text markup's boxes (`MAX_MARKUP_RECTS` in

@@ -29,7 +29,8 @@ import UIKit
 /// coordinates: they scroll with the pages by themselves, and are put in place again, at the same size,
 /// when the zoom or the layout changes. The menu is presented once the finger is up, anchored on the
 /// selection, and is dismissed when the reader scrolls or zooms. It offers Copy, and Highlight, Underline
-/// and Strikethrough when the document may be marked.
+/// and Strikethrough when the document may be marked, each as Remove Highlight, Remove Underline or
+/// Remove Strikethrough when all of the selection already has that mark.
 @MainActor
 final class SelectionInteraction: NSObject {
     typealias Edge = SelectionHandleView.Edge
@@ -48,6 +49,12 @@ final class SelectionInteraction: NSObject {
     private weak var host: PageScrollViewController?
     private lazy var menu = UIEditMenuInteraction(delegate: self)
     private var drag: Drag?
+    /// The kinds of mark all of a selection already has, with the selection and the document's revision
+    /// they were found at: for that selection at that revision, the menu offers to take those marks off
+    /// in place of putting them on. Looked up when the menu is shown (`lookUpMarks`).
+    private var marked: (selection: EditinPDFCore.TextSelection, revision: UInt64, kinds: Set<MarkupKind>)?
+    /// The look-up on its way, for the selection the menu was last shown for.
+    private var markedLookUp: Task<Void, Never>?
 
     /// A handle being dragged.
     private struct Drag {
@@ -251,10 +258,36 @@ final class SelectionInteraction: NSObject {
         presentMenu()
     }
 
-    /// Shows the menu over the selection, when some of it is on screen.
+    /// Shows the menu over the selection, when some of it is on screen, and looks up which marks all of
+    /// the selection has (`lookUpMarks`).
     func presentMenu() {
         guard let target = menuTarget() else { return }
+        lookUpMarks()
         menu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: CGPoint(x: target.midX, y: target.minY)))
+    }
+
+    /// Finds out, off the main actor, which kinds of mark all of the selection already has
+    /// (`DocumentModel.markedKinds`), unless that is known for it. The menu offers Highlight, Underline
+    /// and Strikethrough meanwhile; once it is known, the menu, if it is up, is built again with Remove
+    /// Highlight, Remove Underline or Remove Strikethrough in their place. Only when the menu is shown, so
+    /// a handle being dragged reads nothing. Says nothing for a selection that has changed meanwhile.
+    func lookUpMarks() {
+        guard let host, let selection = host.model.selection?.selection else { return }
+        let model = host.model
+        let revision = model.revision
+        if let marked, marked.selection == selection, marked.revision == revision { return }
+        markedLookUp?.cancel()
+        markedLookUp = Task { [weak self] in
+            let kinds = await model.markedKinds(of: selection)
+            guard let self, !Task.isCancelled, model.selection?.selection == selection, model.revision == revision else { return }
+            self.marked = (selection, revision, kinds)
+            if !kinds.isEmpty { self.menu.reloadVisibleMenu() }
+        }
+    }
+
+    /// Returns once the look-up on its way, if any, has finished. For tests.
+    func waitForMarkedLookUp() async {
+        await markedLookUp?.value
     }
 
     /// The part of the selection that is on screen, in the scroll view's coordinates: what the menu
@@ -274,8 +307,9 @@ final class SelectionInteraction: NSObject {
         host?.model.selection?.copySelection()
     }
 
-    /// Marks the selected text with `kind`: what the menu's Highlight, Underline and Strikethrough do.
-    /// Says whether the mark was made.
+    /// Marks the selected text with `kind`, or takes that mark off it when all of it has it
+    /// (`DocumentModel.markSelection`): what the menu's Highlight, Underline and Strikethrough, and their
+    /// Remove items, do. Says whether the change was made.
     @discardableResult
     func mark(_ kind: MarkupKind) async -> Bool {
         await host?.model.markSelection(kind) ?? false
@@ -321,12 +355,19 @@ extension SelectionInteraction: @preconcurrency UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         let copy = UIAction(title: Strings.copy) { [weak self] _ in self?.copySelection() }
+        let selection = host?.model.selection?.selection
+        let revision = host?.model.revision
+        let marked = self.marked.flatMap { $0.selection == selection && $0.revision == revision ? $0.kinds : nil } ?? []
         let marks = offeredMarks().map { kind in
             let tool = Tool(markupKind: kind)
-            return UIAction(title: tool.title, image: UIImage(systemName: tool.systemImage)) { [weak self] _ in
+            let title = marked.contains(kind) ? Strings.removeMarkup(kind) : tool.title
+            return UIAction(title: title, image: UIImage(systemName: tool.systemImage)) { [weak self] _ in
                 Task { await self?.mark(kind) }
             }
         }
+        // Copy first. On a phone the menu shows two items before its arrow whatever their order (iPhone
+        // 18 Pro, iOS 27): with the marks first it shows two of them and puts Copy behind the arrow, so
+        // putting them first would hide Copy and still not show all three.
         return UIMenu(children: [copy] + marks)
     }
 

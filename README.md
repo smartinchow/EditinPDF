@@ -49,7 +49,8 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **Mark up**: a Markup mode with a tool palette (a bar at the bottom on iPhone, a side palette on iPad). Each
   tool remembers its colour and line width.
   - **Text markup**: highlight, underline and strikethrough over text you drag across. With text selected,
-    picking Highlight, Underline or Strikethrough in the palette marks it.
+    picking Highlight, Underline or Strikethrough in the palette marks it; picked over text that already
+    has that mark, it takes the mark off (the selection's menu offers Remove Highlight and the like).
   - **Draw** with a finger or an Apple Pencil.
   - **Shapes and arrows**: rectangle, oval, line and arrow, with an optional fill for rectangles and ovals.
   - **Text boxes** and **notes**: type on the page, or leave a sticky note. While you type in a text box, a bar

@@ -109,10 +109,11 @@ final class EditorSmokeTests: XCTestCase {
         app.scrollViews["pageScrollView"].firstMatch.swipeDown(velocity: .fast)
         app.scrollViews["pageScrollView"].firstMatch.swipeDown(velocity: .fast)
         expect(indicator, toRead: "1 / 3", within: 5)
-        // Reading mode: a long press selects a word, and its menu marks it.
+        // Reading mode: a long press selects a word, and its menu changes its marks. The word is
+        // highlighted already (the drag above), so the menu offers to take the highlight off.
         line.start.withOffset(CGVector(dx: 8, dy: 0)).press(forDuration: 1)
-        let highlight = app.menuItems["Highlight"].exists ? app.menuItems["Highlight"] : app.buttons["Highlight"]
-        XCTAssertTrue(highlight.waitForExistence(timeout: 5), "the selection's menu offers no Highlight")
+        let highlight = app.menuItems["Remove Highlight"]
+        XCTAssertTrue(highlight.waitForExistence(timeout: 5), "the selection's menu offers no Remove Highlight")
         attach(app, "text-markup-menu")
         highlight.tap()
         XCTAssertFalse(highlight.waitForExistence(timeout: 1) && highlight.isHittable, "the menu stayed")
@@ -619,6 +620,81 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertEqual(rows.count, 1)
         XCTAssertTrue(rows.firstMatch.label.contains(kind), "the row reads \"\(rows.firstMatch.label)\"")
         attach(app, "text-markup-\(tool)-listed")
+    }
+
+    /// The owner's report (0.2.2): a word underlined by picking Underline with it selected could not be
+    /// un-underlined by selecting it again and picking Underline. Now that takes the underline off.
+    func testPickingUnderlineOverAnUnderlinedWordTakesItOff() throws {
+        try markTheWordThenTakeItOff(with: "underline", listedAs: "Underline")
+    }
+
+    /// Strikethrough picked over a struck-through word takes the strikethrough off.
+    func testPickingStrikethroughOverAStruckWordTakesItOff() throws {
+        try markTheWordThenTakeItOff(with: "strikeout", listedAs: "Strikethrough")
+    }
+
+    /// Highlight picked over a highlighted word takes the highlight off.
+    func testPickingHighlightOverAHighlightedWordTakesItOff() throws {
+        try markTheWordThenTakeItOff(with: "highlight", listedAs: "Highlight")
+    }
+
+    /// The selection's menu over a highlighted word offers Remove Highlight in place of Highlight, and it
+    /// takes the highlight off.
+    func testTheMenusRemoveHighlightTakesTheHighlightOff() throws {
+        try markTheWordThenTakeItOff(with: "highlight", listedAs: "Highlight", throughTheMenu: true)
+    }
+
+    /// Opens sample.pdf, selects the first word of its first line under Select (a long press) and marks
+    /// it with `tool` (the palette's button, or `throughTheMenu` the menu's item): the pixels around it
+    /// change and Comments lists one row reading `kind`. Then selects the word again and picks `tool`
+    /// again (or the menu's "Remove `kind`"): the pixels are as they were before the mark, Comments lists
+    /// none, and Undo puts the mark back.
+    private func markTheWordThenTakeItOff(with tool: String, listedAs kind: String, throughTheMenu: Bool = false) throws {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        let undo = app.buttons["undoButton"]
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let button = app.buttons["tool-\(tool)"]
+        let select = app.buttons["tool-select"]
+        XCTAssertTrue(button.waitForEnabled(timeout: 5), "\(tool) is disabled on a document that allows markup")
+        let line = textLine(in: app, page: app.scrollViews["pageScrollView"].firstMatch)
+        let around = CGRect(x: line.start.screenPoint.x - 10, y: line.start.screenPoint.y - 14,
+                            width: line.end.screenPoint.x - line.start.screenPoint.x + 20, height: 28)
+        let before = try pixels(of: around, in: app)
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-'"))
+        /// Selects the word under Select; the menu comes up over it, offering `item`.
+        func selectTheWord(offering item: String) {
+            if !select.isSelected { select.tap() }
+            line.start.withOffset(CGVector(dx: 8, dy: 0)).press(forDuration: 1)
+            XCTAssertTrue(app.menuItems[item].waitForExistence(timeout: 5), "the menu does not offer \(item)")
+        }
+
+        selectTheWord(offering: throughTheMenu ? kind : "Copy")
+        if throughTheMenu { app.menuItems[kind].tap() } else { button.tap() }
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "\(tool) marked nothing")
+        sleep(1)
+        let marked = try pixels(of: around, in: app)
+        XCTAssertNotEqual(marked, before, "the \(tool) does not show on the page")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the \(tool) is not listed")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertTrue(rows.firstMatch.label.contains(kind), "the row reads \"\(rows.firstMatch.label)\"")
+        app.buttons["commentsDoneButton"].tap()
+        XCTAssertTrue(rows.firstMatch.waitForNonExistence(timeout: 5), "Done did not put the list away")
+
+        selectTheWord(offering: throughTheMenu ? "Remove \(kind)" : "Copy")
+        attach(app, "toggle-\(tool)-selected-again")
+        if throughTheMenu { app.menuItems["Remove \(kind)"].tap() } else { button.tap() }
+        let unmarked = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (try? self.pixels(of: around, in: app)) == before }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [unmarked], timeout: 5), .completed, "the \(tool) still shows on the page")
+        attach(app, "toggle-\(tool)-removed")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        XCTAssertTrue(app.staticTexts["No comments yet"].waitForExistence(timeout: 5), "the \(tool) is still listed")
+        XCTAssertEqual(rows.count, 0)
+        app.buttons["commentsDoneButton"].tap()
+        XCTAssertTrue(tapToolbarButton("undoButton", titled: "Undo", in: app), "no Undo button")
+        let back = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in (try? self.pixels(of: around, in: app)) == marked }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [back], timeout: 5), .completed, "Undo did not put the \(tool) back")
     }
 
     /// A highlight dragged across "Page one" is listed in Comments, one row under its page; Done puts
