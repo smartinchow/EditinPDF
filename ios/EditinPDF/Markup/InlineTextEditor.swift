@@ -12,8 +12,12 @@ import UIKit
 /// the reader's text, and is never logged.
 ///
 /// It also changes the text of a text box on the page (`existing`, Select's Edit): it is put over that
-/// box, with its text, on white, so the text as it was does not show through; it keeps the box's width
-/// (the engine wraps the new text in it) and grows down as the text does.
+/// box, with its text, on white (or the box's background), so the text as it was does not show
+/// through; it keeps the box's width (the engine wraps the new text in it) and grows down as the text
+/// does.
+///
+/// Its look (`format`: the text's size and colour, the background, the border) is the format bar's
+/// over the keyboard (`TextBoxFormatBar`, its `inputAccessoryView`), and follows every change there.
 final class InlineTextEditor: UITextView {
     /// The box's own undo manager: what is typed is undone here, not in the document's history.
     private let localUndo = UndoManager()
@@ -26,10 +30,18 @@ final class InlineTextEditor: UITextView {
     /// The revision of the document the box was put on the page at: the text box is worked out
     /// against it, so that one placed before a turn of its page is refused as stale.
     let revision: UInt64
-    /// The style it is typed and added in: Text Box's when the box was put there.
-    let style: ToolStyle
-    /// The text's size, in PDF points: the style's, held to what the bridge takes.
-    let fontSize: CGFloat
+    /// The look it is typed and added in: Text Box's when a new box was put there, the text box's
+    /// own over one on the page; the format bar changes it.
+    var format: TextBoxFormat {
+        didSet {
+            guard format != oldValue else { return }
+            applyFormat()
+        }
+    }
+    /// The look the text box on the page had when this was put over it; nil for a new one.
+    let originalFormat: TextBoxFormat?
+    /// The text's size, in PDF points: the format's.
+    var fontSize: CGFloat { CGFloat(format.fontSize) }
     /// The size of its page as shown, in PDF points: the text box keeps to it.
     let pageSize: CGSize
     /// How many points on screen a PDF point is at the layout it was last given; 0 before the first.
@@ -41,13 +53,13 @@ final class InlineTextEditor: UITextView {
     /// That text box's box (view space), when this changes one.
     let existingBox: CGRect?
 
-    init(page: Int, origin: CGPoint, revision: UInt64, style: ToolStyle, pageSize: CGSize,
+    init(page: Int, origin: CGPoint, revision: UInt64, format: TextBoxFormat, pageSize: CGSize,
          existing: AnnotationRef? = nil, originalText: String = "", existingBox: CGRect? = nil) {
         self.page = page
         self.origin = origin
         self.revision = revision
-        self.style = style
-        self.fontSize = CGFloat(ShapeGeometry.fontSize(style.fontSize))
+        self.format = format
+        self.originalFormat = existing == nil ? nil : format
         self.pageSize = pageSize
         self.existing = existing
         self.originalText = originalText
@@ -58,15 +70,7 @@ final class InlineTextEditor: UITextView {
         isScrollEnabled = false
         scrollsToTop = false
         textContainer.lineFragmentPadding = 0
-        // A tint shows where the box is while it is typed in; it goes when the text is added. Over a text
-        // box on the page, white hides the text as it was, and a line shows the box.
-        if existing == nil {
-            backgroundColor = UIColor.systemBlue.withAlphaComponent(0.08)
-        } else {
-            backgroundColor = .white
-            layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.5).cgColor
-            layer.borderWidth = 1
-        }
+        applyBackground()
         // Text on white paper, in the colour picked, whatever the appearance.
         overrideUserInterfaceStyle = .light
         accessibilityLabel = Strings.toolTextBox
@@ -77,8 +81,38 @@ final class InlineTextEditor: UITextView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The colour of the text: the style's.
-    private var color: UIColor { style.color.uiColor }
+    /// The colour of the text: the format's.
+    private var color: UIColor { format.color.uiColor }
+
+    /// The format changed: the type, its colour and margins, the background and the border are set
+    /// again, at the scale the box is shown at.
+    private func applyFormat() {
+        let scale = screenScale
+        screenScale = 0
+        if scale > 0 { show(atScreenScale: scale) }
+        applyBackground()
+    }
+
+    /// The box's background and its line. A tint shows where a new box is while it is typed in; it goes
+    /// when the text is added. Over a text box on the page, white hides the text as it was, and a line
+    /// shows the box. A background picked is shown as it will be; a border, in the text's colour as wide
+    /// as it will be, in place of the line.
+    private func applyBackground() {
+        if let background = format.background {
+            backgroundColor = background.uiColor
+        } else {
+            backgroundColor = existing == nil ? UIColor.systemBlue.withAlphaComponent(0.08) : .white
+        }
+        if format.hasBorder {
+            layer.borderColor = color.cgColor
+            layer.borderWidth = CGFloat(format.borderWidth) * max(screenScale, 1)
+        } else if existing != nil {
+            layer.borderColor = UIColor.systemBlue.withAlphaComponent(0.5).cgColor
+            layer.borderWidth = 1
+        } else {
+            layer.borderWidth = 0
+        }
+    }
 
     /// Sets the type, its spacing and its margins for `scale` points on screen per PDF point, as the
     /// engine draws a text box: the text `ShapeGeometry.textInset` in from the box's left and right,
@@ -99,10 +133,12 @@ final class InlineTextEditor: UITextView {
         typingAttributes = attributes
         selectedRange = selection
         // A line as tall as `spacing` has its baseline `spacing + descender` below its top (the room
-        // over the face's own height goes above it).
-        let baseline = (ShapeGeometry.textInset + 0.9 * fontSize) * scale
-        let inset = ShapeGeometry.textInset * scale
+        // over the face's own height goes above it). The engine sets the text in by the border's width
+        // too.
+        let baseline = (format.textInset + 0.9 * fontSize) * scale
+        let inset = format.textInset * scale
         textContainerInset = UIEdgeInsets(top: max(0, baseline - (spacing + font.descender)), left: inset, bottom: 0, right: inset)
+        if format.hasBorder { layer.borderWidth = CGFloat(format.borderWidth) * scale }
     }
 
     /// Cuts what is typed to the most a text box takes (`ShapeGeometry.maxTextLength`), as a form
@@ -127,36 +163,53 @@ final class InlineTextEditor: UITextView {
     /// Takes the tint off, for the picture of the text shown while it is added (over a text box on the
     /// page, the white stays: it hides the text as it was until the page shows the new).
     func showAsAdded() {
-        if existing == nil { backgroundColor = .clear }
-        layer.borderWidth = 0
+        if existing == nil, format.background == nil { backgroundColor = .clear }
+        if !format.hasBorder { layer.borderWidth = 0 }
     }
 
     /// The box the text box will have, in view space: for a new one, `ShapeGeometry.textBoxRect` of
-    /// what is typed; over one on the page, that box's width, and as tall as what is typed wrapped in
-    /// it, the box's own height at least.
+    /// what is typed; over one on the page, that box's width (grown or shrunk with a new text size, as
+    /// the bridge does: `ShapeGeometry.restyledWidth`), and as tall as what is typed wrapped in it, the
+    /// box's own height at least.
     var box: CGRect {
         let text = self.text ?? ""
         guard let existingBox else {
             return ShapeGeometry.textBoxRect(at: origin, text: text, fontSize: fontSize, pageSize: pageSize)
         }
+        let width = originalFormat.map {
+            ShapeGeometry.restyledWidth(existingBox.width, from: $0, to: format, room: max(pageSize.width - origin.x, existingBox.width))
+        } ?? existingBox.width
+        let scale = originalFormat.map { CGFloat(format.fontSize / max($0.fontSize, 1)) } ?? 1
         let fitted = ShapeGeometry.textBoxRect(at: origin, text: text, fontSize: fontSize,
-                                               pageSize: CGSize(width: origin.x + existingBox.width, height: pageSize.height))
-        return CGRect(x: origin.x, y: origin.y, width: existingBox.width, height: max(existingBox.height, fitted.height))
+                                               pageSize: CGSize(width: origin.x + width, height: pageSize.height))
+        return CGRect(x: origin.x, y: origin.y, width: width, height: max(existingBox.height * scale, fitted.height))
+    }
+
+    /// Whether the text typed over a text box on the page is other than it had (spaces and new lines
+    /// after the last character aside); false for a new one.
+    var wordsChanged: Bool {
+        existing != nil && ShapeGeometry.committedText(text ?? "") != ShapeGeometry.committedText(originalText)
+    }
+
+    /// Whether the look picked over a text box on the page is other than it had; false for a new one.
+    var formatChanged: Bool {
+        originalFormat.map { $0 != format } ?? false
     }
 
     /// Whether what is typed would change the page: for a new text box, anything but spaces and new
-    /// lines; over one on the page, text other than it had (spaces and new lines after the last
-    /// character aside).
+    /// lines; over one on the page, text other than it had, or another look.
     var isWaiting: Bool {
         let typed = ShapeGeometry.committedText(text ?? "")
-        return existing == nil ? !typed.isEmpty : typed != ShapeGeometry.committedText(originalText)
+        return existing == nil ? !typed.isEmpty : wordsChanged || formatChanged
     }
 
     /// The name of the change what is typed makes (`TextBoxInteraction.commitPendingText`): a new text
-    /// box is added; over one on the page, its text is changed, or, all of it taken away, it is deleted.
+    /// box is added; over one on the page, it is formatted (another look), its text is changed, or, all
+    /// of it taken away, it is deleted.
     var actionName: String {
         guard existing != nil else { return Strings.actionAddAnnotation }
-        return ShapeGeometry.committedText(text ?? "").isEmpty ? Strings.actionDeleteAnnotation : Strings.actionEditAnnotation
+        if ShapeGeometry.committedText(text ?? "").isEmpty { return Strings.actionDeleteAnnotation }
+        return formatChanged ? Strings.formatTextBox : Strings.actionEditAnnotation
     }
 }
 

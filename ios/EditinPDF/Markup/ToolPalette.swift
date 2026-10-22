@@ -252,7 +252,8 @@ struct ToolPalette: View {
 }
 
 /// The colour, width, text size and fill of one tool: eight swatches and a colour well, then
-/// whichever of the others the tool uses. Each change is kept at once.
+/// whichever of the others the tool uses. Text Box's is the text box format's controls
+/// (`TextBoxFormatPanel`: size, colour, background, border). Each change is kept at once.
 struct ToolStyleEditor: View {
     let tool: Tool
     let store: ToolStyleStore
@@ -271,36 +272,46 @@ struct ToolStyleEditor: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(tool.title)
                 .font(.headline)
-            swatchRow
-            ColorPicker(Strings.styleColor, selection: colorBinding, supportsOpacity: false)
-                .accessibilityIdentifier("toolColorPicker")
-            if tool.usesWidth {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(Strings.styleWidth)
-                        Spacer()
-                        Text(Strings.styleWidthValue(style.wrappedValue.width))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    // Kept to half points; without a `step`, which draws a tick for each.
-                    Slider(value: halfPoints(style.width), in: 0.5...12) {
-                        Text(Strings.styleWidth)
-                    }
-                    .accessibilityIdentifier("toolWidthSlider")
-                }
-            }
-            if tool.usesFontSize {
-                Stepper(Strings.styleFontSize(style.wrappedValue.fontSize), value: style.fontSize, in: 6...72)
-                    .accessibilityIdentifier("toolFontSizeStepper")
-            }
-            if tool.usesFill {
-                Toggle(Strings.styleFill, isOn: style.fill)
-                    .accessibilityIdentifier("toolFillToggle")
+            if tool == .textBox {
+                TextBoxFormatPanel(format: Binding(get: { TextBoxFormat(style: store[tool]) },
+                                                   set: { store[tool] = $0.applied(to: store[tool]) }))
+            } else {
+                controls
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The colour, and whichever of width, text size and fill the tool uses.
+    @ViewBuilder private var controls: some View {
+        swatchRow
+        ColorPicker(Strings.styleColor, selection: colorBinding, supportsOpacity: false)
+            .accessibilityIdentifier("toolColorPicker")
+        if tool.usesWidth {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(Strings.styleWidth)
+                    Spacer()
+                    Text(Strings.styleWidthValue(style.wrappedValue.width))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                // Kept to half points; without a `step`, which draws a tick for each.
+                Slider(value: halfPoints(style.width), in: 0.5...12) {
+                    Text(Strings.styleWidth)
+                }
+                .accessibilityIdentifier("toolWidthSlider")
+            }
+        }
+        if tool.usesFontSize {
+            Stepper(Strings.styleFontSize(style.wrappedValue.fontSize), value: style.fontSize, in: 6...72)
+                .accessibilityIdentifier("toolFontSizeStepper")
+        }
+        if tool.usesFill {
+            Toggle(Strings.styleFill, isOn: style.fill)
+                .accessibilityIdentifier("toolFillToggle")
+        }
     }
 
     private var swatchRow: some View {

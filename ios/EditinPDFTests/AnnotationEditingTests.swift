@@ -419,12 +419,13 @@ final class AnnotationEditingTests: XCTestCase {
     }
 
     /// The edit menu offers what may be done with an annotation: Edit for a note and for a text box on
-    /// an upright page, Delete for any the file does not lock.
+    /// an upright page, Format for such a text box the file does not lock, Delete for any the file does
+    /// not lock.
     func testTheMenuOffersWhatMayBeDone() async throws {
         let (controller, model, _) = await makeController()
         let selecting = controller.markupInteraction.selecting
         XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .note)), [.edit, .delete])
-        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .textBox)), [.edit, .delete])
+        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .textBox)), [.edit, .format, .delete])
         XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .rectangle)), [.delete])
         XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .note, locked: true)), [.edit],
                        "a locked note's text may still be changed, but it is not deleted")

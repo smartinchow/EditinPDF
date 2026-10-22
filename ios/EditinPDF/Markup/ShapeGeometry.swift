@@ -146,6 +146,19 @@ enum ShapeGeometry {
         return CGRect(x: point.x, y: point.y, width: width, height: CGFloat(max(count, 1)) * fontSize * lineHeight + textBoxMargin)
     }
 
+    /// The width a text box `width` points wide, drawn as `old`, has once it is drawn as `new`, as the
+    /// bridge works it out when it adds the box again (`RestyleTextBox`): the room across for the text
+    /// (inside the engine's margins, `TextBoxFormat.textInset`) scaled with the text's size, so its
+    /// lines break where they did, with the new margins; `room` at most (as far as the page's right
+    /// edge, or the box's own width when it already went past it). With the same size and background
+    /// the bridge changes the box in place, and its width stays.
+    static func restyledWidth(_ width: CGFloat, from old: TextBoxFormat, to new: TextBoxFormat, room: CGFloat) -> CGFloat {
+        guard old.fontSize != new.fontSize || old.background != new.background else { return width }
+        let ratio = CGFloat(new.fontSize / max(old.fontSize, 1))
+        let across = max(max(width - 2 * old.textInset, 1) * ratio, 1)
+        return max(min(across + 2 * new.textInset, room), 1)
+    }
+
     /// The width of `line` set in `font`, on one line.
     private static func width(of line: String, in font: UIFont) -> CGFloat {
         guard !line.isEmpty else { return 0 }

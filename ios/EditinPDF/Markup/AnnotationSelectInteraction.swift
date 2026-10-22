@@ -5,6 +5,8 @@ import UIKit
 enum AnnotationAction: Equatable {
     /// Change its text: a note's in the note sheet, a text box's in the box to type in.
     case edit
+    /// Change a text box's look in the format sheet: its text's size and colour, background and border.
+    case format
     case delete
 }
 
@@ -24,7 +26,8 @@ enum AnnotationAction: Equatable {
 ///   page, say) leaves nothing where it was dropped. Anywhere else one finger scrolls; two fingers
 ///   always scroll and zoom (the pan fails on a second finger: `MarkupPanGestureRecognizer`).
 /// - The menu offers Edit for a note (the note sheet) and for a text box on an upright page (the box
-///   to type in, over it, with its text: `TextBoxInteraction.beginEditing`), and Delete for one the
+///   to type in, over it, with its text: `TextBoxInteraction.beginEditing`), Format for such a text box
+///   the file does not lock (the format sheet, `DocumentModel.formatTextBox`), and Delete for one the
 ///   file does not lock; nothing while the document forbids markup.
 @MainActor
 final class AnnotationSelectInteraction: NSObject {
@@ -200,6 +203,7 @@ final class AnnotationSelectInteraction: NSObject {
             default: break
             }
         }
+        if model.canFormat(info) { actions.append(.format) }
         if model.canChange(info) { actions.append(.delete) }
         return actions
     }
@@ -220,6 +224,8 @@ final class AnnotationSelectInteraction: NSObject {
             } else {
                 textBoxes.beginEditing(info, workedOutAt: revision)
             }
+        case .format:
+            model.formatTextBox(info, workedOutAt: revision)
         case .delete:
             model.enqueueDelete(AnnotationRef(page: Int(info.page), index: info.index), workedOutAt: revision)
         }
@@ -295,6 +301,10 @@ extension AnnotationSelectInteraction: @preconcurrency UIEditMenuInteractionDele
             case .edit:
                 UIAction(title: Strings.edit, image: UIImage(systemName: "pencil")) { [weak self] _ in
                     self?.perform(.edit, on: info, workedOutAt: builtAt)
+                }
+            case .format:
+                UIAction(title: Strings.format, image: UIImage(systemName: "textformat")) { [weak self] _ in
+                    self?.perform(.format, on: info, workedOutAt: builtAt)
                 }
             case .delete:
                 UIAction(title: Strings.delete, image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in

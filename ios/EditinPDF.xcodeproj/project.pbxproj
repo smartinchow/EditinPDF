@@ -56,6 +56,7 @@
 		674B15860BF911ECDAA99635 /* InkSavingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA5A212ABFEE6DA9F90A06E6 /* InkSavingTests.swift */; };
 		71947DC55566F1E7C7AC8B44 /* EngineHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2F0687A7D1EB7B1B81F848 /* EngineHandle.swift */; };
 		72CF57977167D1B867F5104B /* FormFillingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D872782DBB2FAC67912671CE /* FormFillingTests.swift */; };
+		768D41201B66A003C1CAF25C /* TextBoxFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DC9637792D889094E621ABB /* TextBoxFormat.swift */; };
 		773CE255CD38AB803E93395E /* PageLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531FCA150C659E74AADC8B53 /* PageLayoutTests.swift */; };
 		7903C8F43FED5B3ACF05C1FD /* OrganizeMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB04A44731160E44C9AA23DE /* OrganizeMathTests.swift */; };
 		79BFA52DB07FEEA3ABACDCA0 /* OpenOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A321A8794D9F6E3A05F37107 /* OpenOutcome.swift */; };
@@ -122,6 +123,7 @@
 		EDDB928C6531851971C6463E /* EditQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76F21D75399FE612FC1D81FA /* EditQueue.swift */; };
 		EE81A3E124032E1B488D4AB6 /* FormFieldEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C17955EA11415C17C6057963 /* FormFieldEditor.swift */; };
 		EEBF42B37A47DC4E9832A0CF /* DocumentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B361ABE0616959A045C71957 /* DocumentScreen.swift */; };
+		EF0B1BF91B299B0344D19C42 /* TextBoxFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEE8EFFD34D1685BB15BCAC3 /* TextBoxFormatTests.swift */; };
 		F01AC37D4DE3B29A0CCAF87E /* sample.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 1D7A79832AAD1D92FC1F4E8A /* sample.pdf */; };
 		F1B92F5EA5A80BDBC8708C50 /* TextMarkupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A251CBFBE6CA026DAF3F783A /* TextMarkupTests.swift */; };
 		F2369F1BC22A70765767B6BF /* TileRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F72434B26DC8C06AC6AB44F6 /* TileRenderer.swift */; };
@@ -176,6 +178,7 @@
 		252B5EC2E090AB12AC4AE7AE /* PDFFileDocumentSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFFileDocumentSaveTests.swift; sourceTree = "<group>"; };
 		28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPalette.swift; sourceTree = "<group>"; };
 		2943D75B9FCE584A3897479A /* PencilKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PencilKit.framework; path = System/Library/Frameworks/PencilKit.framework; sourceTree = SDKROOT; };
+		2DC9637792D889094E621ABB /* TextBoxFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextBoxFormat.swift; sourceTree = "<group>"; };
 		2E917228F7BFF9ED855A4FAD /* MessageUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MessageUI.framework; path = System/Library/Frameworks/MessageUI.framework; sourceTree = SDKROOT; };
 		2F472452DDACC231079CB6A3 /* rotated.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = rotated.pdf; sourceTree = "<group>"; };
 		333AE47B2FC7D5C0B9CA66F5 /* TileMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileMath.swift; sourceTree = "<group>"; };
@@ -265,6 +268,7 @@
 		DB04A44731160E44C9AA23DE /* OrganizeMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeMathTests.swift; sourceTree = "<group>"; };
 		DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "locked-markup.pdf"; sourceTree = "<group>"; };
 		DBEBAFEAFFB9D73A05C95CCA /* ToolModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModeTests.swift; sourceTree = "<group>"; };
+		DEE8EFFD34D1685BB15BCAC3 /* TextBoxFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextBoxFormatTests.swift; sourceTree = "<group>"; };
 		E04D05A418F8067C1B304BE7 /* Feedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Feedback.swift; sourceTree = "<group>"; };
 		E214CEFD25FB448BA6DFA4AF /* PageOverlayViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageOverlayViewTests.swift; sourceTree = "<group>"; };
 		E57E34C8A3831D36D54CD04A /* FormFilling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormFilling.swift; sourceTree = "<group>"; };
@@ -343,6 +347,7 @@
 				F46F9AAAE3C9EFD5337A1207 /* SignatureStoreTests.swift */,
 				786AAADE64963EB0CAA8D386 /* SigningTests.swift */,
 				7A4310632D0D90390638FB56 /* StringsTests.swift */,
+				DEE8EFFD34D1685BB15BCAC3 /* TextBoxFormatTests.swift */,
 				A251CBFBE6CA026DAF3F783A /* TextMarkupTests.swift */,
 				C886BE236F046F62791FDD5E /* ThumbnailStoreTests.swift */,
 				5890ABDC3D59A1CB8A126264 /* TileMathTests.swift */,
@@ -501,6 +506,7 @@
 				1A83135E856075D9367EB868 /* NoteEditorSheet.swift */,
 				BAD60DCCBF3A78F05BCE85E3 /* PageTextBoxes.swift */,
 				55F9390D1B6826E2C418D6DD /* ShapeGeometry.swift */,
+				2DC9637792D889094E621ABB /* TextBoxFormat.swift */,
 				3EAECDA38F22008AE720BBCE /* TextBoxInteraction.swift */,
 				71D3B0AB0D03422F8570F999 /* ToolMode.swift */,
 				28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */,
@@ -784,6 +790,7 @@
 				22EC1B4A8D38386FF466772A /* SignatureStoreTests.swift in Sources */,
 				86A18728803E948DB59E0513 /* SigningTests.swift in Sources */,
 				7CBBA7ECDDB055F0291A00ED /* StringsTests.swift in Sources */,
+				EF0B1BF91B299B0344D19C42 /* TextBoxFormatTests.swift in Sources */,
 				F1B92F5EA5A80BDBC8708C50 /* TextMarkupTests.swift in Sources */,
 				206E694BA5DB96C5B95002B8 /* ThumbnailStoreTests.swift in Sources */,
 				7B0825C102EA2D1C942E302B /* TileMathTests.swift in Sources */,
@@ -860,6 +867,7 @@
 				A33078941F9670027B262972 /* SignaturePadSheet.swift in Sources */,
 				3E6672E554E8F11CEAAE77CA /* SignatureStore.swift in Sources */,
 				991F199DE1FAAC91B076D798 /* Strings.swift in Sources */,
+				768D41201B66A003C1CAF25C /* TextBoxFormat.swift in Sources */,
 				DF3ED19587BE1D3155F94EF4 /* TextBoxInteraction.swift in Sources */,
 				811F22A75C3D879FEDF10ADE /* ThumbnailStore.swift in Sources */,
 				4A83D1AB0DDAE61FD63BA9AF /* ThumbnailsSheet.swift in Sources */,

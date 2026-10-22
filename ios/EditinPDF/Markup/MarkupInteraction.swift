@@ -529,6 +529,8 @@ final class MarkupInteraction: NSObject {
     func fingerWentDown(on view: UIView?) {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
         if let view, view.isDescendant(of: host.scrollView) { return }
+        // The colour picker the box being typed in waits for (More Colors…), over the pages.
+        if textBoxes.isPickingColor, let picker = host.presentedViewController, let view, view.isDescendant(of: picker.view) { return }
         if model.commitPendingInk(closing: true) { host.countChangeNow() }
     }
 
@@ -555,6 +557,7 @@ final class MarkupInteraction: NSObject {
     /// Full Keyboard Access), and the document closes at once then too.
     func focusMoved(to item: Any?) {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
+        if textBoxes.isPickingColor, host.presentedViewController != nil { return }
         if Self.focusLeavesPages(item, pages: host.scrollView) { model.commitPendingInk(closing: true) }
     }
 

@@ -194,6 +194,11 @@ struct DocumentScreen: View {
         Binding(get: { model.failure }, set: { model.failure = $0 })
     }
 
+    /// The text box the format sheet is up for, while it is.
+    private var formatDraft: Binding<TextBoxFormatDraft?> {
+        Binding(get: { model.formatDraft }, set: { model.formatDraft = $0 })
+    }
+
     /// The list box the sheet of options is up for, while it is.
     private var choiceDraft: Binding<ChoiceDraft?> {
         Binding(get: { model.choiceDraft }, set: { model.choiceDraft = $0 })
@@ -323,6 +328,15 @@ struct DocumentScreen: View {
                         model.noteDraft = nil
                     }, written: { text in
                         model.noteTextDidChange(text)
+                    })
+                }
+                // Select's Format over a text box opens its look here: Apply gives it the look picked, one
+                // change; Cancel leaves it as it was.
+                .sheet(item: formatDraft) { draft in
+                    TextBoxFormatSheet(draft: draft, apply: { format in
+                        Task { await model.applyFormatDraft(format) }
+                    }, cancel: {
+                        model.formatDraft = nil
                     })
                 }
                 // Sign picked or tapped with no signature saved, or Change Signature, opens the pad here:

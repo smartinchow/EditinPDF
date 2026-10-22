@@ -244,4 +244,22 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.copyAddress, "Copy Address")
         XCTAssertEqual(Strings.ok, "OK")
     }
+
+    func testTextBoxFormatWording() {
+        XCTAssertEqual(Strings.formatTextBox, "Format Text Box")
+        XCTAssertEqual(Strings.format, "Format")
+        XCTAssertEqual(Strings.smallerText, "Smaller Text")
+        XCTAssertEqual(Strings.largerText, "Larger Text")
+        XCTAssertEqual(Strings.textSize, "Text Size")
+        XCTAssertEqual(Strings.textSizeValue(14), "14 pt")
+        XCTAssertEqual(Strings.textSizeValue(9.5), "9.5 pt")
+        XCTAssertEqual(Strings.textColor, "Text Color")
+        XCTAssertEqual(Strings.moreColors, "More Colors…")
+        XCTAssertEqual(Strings.background, "Background")
+        XCTAssertEqual(Strings.noBackground, "No Background")
+        XCTAssertEqual(Strings.backgroundNames, ["Light Yellow", "Light Blue", "Light Green", "Light Pink", "White"])
+        XCTAssertEqual(Strings.backgroundNames.count, TextBoxFormat.backgrounds.count)
+        XCTAssertEqual(Strings.border, "Border")
+        XCTAssertEqual(Strings.apply, "Apply")
+    }
 }

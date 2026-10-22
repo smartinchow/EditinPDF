@@ -688,6 +688,79 @@ enum Strings {
          String(localized: "Purple", comment: "Colour swatch name")]
     }
 
+    // MARK: Text box format
+
+    /// The bar over the keyboard while a text box is typed in, and the sheet Select's Format opens:
+    /// their name, for VoiceOver, and the sheet's title. Also the name of the change it makes, in Undo
+    /// and Redo.
+    static var formatTextBox: String {
+        String(localized: "Format Text Box", comment: "Title of the controls that change a text box's size, colours and border; also the name of that change in Undo and Redo")
+    }
+
+    /// The menu item over a selected text box that opens its format.
+    static var format: String {
+        String(localized: "Format", comment: "Menu item over the selected text box that changes its text size, colours and border")
+    }
+
+    /// The format's button that makes the text smaller.
+    static var smallerText: String {
+        String(localized: "Smaller Text", comment: "Button in the text box format bar that makes the text smaller")
+    }
+
+    /// The format's button that makes the text larger.
+    static var largerText: String {
+        String(localized: "Larger Text", comment: "Button in the text box format bar that makes the text larger")
+    }
+
+    /// The text's size in the format, in points (for the bar, and for VoiceOver).
+    static func textSizeValue(_ size: Double) -> String {
+        String(localized: "textSizeValue", defaultValue: "\(size.formatted(.number.precision(.fractionLength(0...1)))) pt", comment: "A text box's text size in points, between the Smaller and Larger buttons of the format bar")
+    }
+
+    /// The name of the text's size, for VoiceOver.
+    static var textSize: String {
+        String(localized: "Text Size", comment: "Name of a text box's text size in the format bar, for VoiceOver")
+    }
+
+    /// The format's text colour menu and picker.
+    static var textColor: String {
+        String(localized: "Text Color", comment: "Menu in the text box format bar that picks the colour of the text")
+    }
+
+    /// The format's item that opens the system's colour picker for the text.
+    static var moreColors: String {
+        String(localized: "More Colors…", comment: "Item of the text colour menu that opens a colour picker with every colour")
+    }
+
+    /// The format's background menu.
+    static var background: String {
+        String(localized: "Background", comment: "Menu in the text box format bar that picks the box's background colour")
+    }
+
+    /// The format's choice of no background.
+    static var noBackground: String {
+        String(localized: "No Background", comment: "Item of the text box background menu: the box has no background")
+    }
+
+    /// The names of the format's background colours, in their order (`TextBoxFormat.backgrounds`).
+    static var backgroundNames: [String] {
+        [String(localized: "background.yellow", defaultValue: "Light Yellow", comment: "A text box background colour"),
+         String(localized: "background.blue", defaultValue: "Light Blue", comment: "A text box background colour"),
+         String(localized: "background.green", defaultValue: "Light Green", comment: "A text box background colour"),
+         String(localized: "background.pink", defaultValue: "Light Pink", comment: "A text box background colour"),
+         String(localized: "background.white", defaultValue: "White", comment: "A text box background colour")]
+    }
+
+    /// The format's switch that draws a border round the box.
+    static var border: String {
+        String(localized: "Border", comment: "Switch in the text box format bar that draws a border round the box")
+    }
+
+    /// The format sheet's button that makes the change.
+    static var apply: String {
+        String(localized: "Apply", comment: "Button of the text box format sheet that changes the text box")
+    }
+
     // MARK: Signing
 
     /// The markup tool that places the reader's saved signature.

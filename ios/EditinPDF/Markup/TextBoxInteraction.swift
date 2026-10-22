@@ -1,4 +1,5 @@
 import EditinPDFCore
+import SwiftUI
 import UIKit
 
 /// **Text Box**: the box a text box is typed in (`InlineTextEditor`), from the tap that puts it on a
@@ -17,6 +18,13 @@ import UIKit
 /// The same box changes the text of a text box already on the page (`beginEditing`, Select's Edit): put
 /// over it, with its text, it ends the same ways, and its text replaces the text box's, in place; all
 /// of it taken away deletes the text box, and left as it was, nothing changes.
+///
+/// Over the keyboard, the format bar (`TextBoxFormatBar`, the box's `inputAccessoryView`) changes the
+/// box's look: the text's size and colour, the background and the border. The box shows each change at
+/// once. A new text box is made with the look picked, and Text Box keeps it for the next one
+/// (`ToolStyleStore`); a text box on the page is given it (`DocumentModel.enqueueRestyle`) as its
+/// text is changed, the two one step of Undo. More Colors… opens the system's colour picker over the
+/// page, while the box waits for it (`isPickingColor`).
 @MainActor
 final class TextBoxInteraction: NSObject {
     private weak var host: PageScrollViewController?
@@ -24,6 +32,13 @@ final class TextBoxInteraction: NSObject {
 
     /// The box being typed in with Text Box, in the scroll view over its page; nil while there is none.
     private(set) var textEditor: InlineTextEditor?
+    /// The look the format bar over the keyboard shows and changes, for the box being typed in.
+    private(set) var formatState: TextBoxFormatState?
+    /// The format bar, the box's `inputAccessoryView`.
+    private var formatBar: UIHostingController<TextBoxFormatBar>?
+    /// Whether the system's colour picker is up for the box being typed in (More Colors…): the box
+    /// waits for it, and the keyboard going, or a finger or focus on the picker, does not end the box.
+    private(set) var isPickingColor = false
     /// Pictures of text boxes on their way into the document, over their page, each until the page has
     /// been drawn again with it (or at once when it is refused).
     private(set) var textPreviews: [UIView] = []
@@ -50,13 +65,14 @@ final class TextBoxInteraction: NSObject {
     /// and brings up the keyboard.
     func beginTextBox(onPage page: Int, at point: CGPoint, pageSize size: CGSize) {
         guard host != nil else { return }
-        let style = model.toolStyles[.textBox]
-        let origin = ShapeGeometry.textBoxOrigin(at: point, fontSize: CGFloat(ShapeGeometry.fontSize(style.fontSize)), pageSize: size)
-        show(InlineTextEditor(page: page, origin: origin, revision: model.revision, style: style, pageSize: size))
+        let format = TextBoxFormat(style: model.toolStyles[.textBox])
+        let origin = ShapeGeometry.textBoxOrigin(at: point, fontSize: CGFloat(format.fontSize), pageSize: size)
+        show(InlineTextEditor(page: page, origin: origin, revision: model.revision, format: format, pageSize: size))
     }
 
     /// Puts the box to type in over `info`, a text box on a page shown upright, with its text, in its
-    /// colour (Text Box's when it has none) at Text Box's size, and brings up the keyboard; the box
+    /// own look (`TextBoxFormat(_:otherwise:)`: its size, colour, background and border, Text Box's
+    /// for what the file does not say), and brings up the keyboard; the box
     /// being typed in before, if any, is ended first. Says whether it is there: not for another kind,
     /// nor on a turned page, where the text would be typed sideways. What is typed is worked out
     /// against `revision`, the one `info` was read at (the model's now when nil).
@@ -65,10 +81,9 @@ final class TextBoxInteraction: NSObject {
         let page = Int(info.page)
         guard info.kind == .textBox, model.pages.indices.contains(page), model.pages[page].rotationDegrees % 360 == 0 else { return false }
         commitPendingText()
-        var style = model.toolStyles[.textBox]
-        if let color = info.color { style.color = RGBA(r: color.red, g: color.green, b: color.blue) }
+        let format = TextBoxFormat(info, otherwise: model.toolStyles[.textBox])
         let size = CGSize(width: model.pages[page].widthPt, height: model.pages[page].heightPt)
-        let editor = InlineTextEditor(page: page, origin: CGPoint(x: info.rect.x, y: info.rect.y), revision: revision ?? model.revision, style: style,
+        let editor = InlineTextEditor(page: page, origin: CGPoint(x: info.rect.x, y: info.rect.y), revision: revision ?? model.revision, format: format,
                                       pageSize: size, existing: AnnotationRef(page: page, index: info.index),
                                       originalText: info.contents ?? "", existingBox: info.box)
         editor.text = info.contents ?? ""
@@ -76,14 +91,58 @@ final class TextBoxInteraction: NSObject {
         return true
     }
 
-    /// Puts `editor` in the scroll view over its place, and brings up the keyboard.
+    /// Puts `editor` in the scroll view over its place, with the format bar over the keyboard, and
+    /// brings up the keyboard.
     private func show(_ editor: InlineTextEditor) {
         guard let host else { return }
         editor.delegate = self
+        let state = TextBoxFormatState(editor.format)
+        state.changed = { [weak self, weak editor] format in
+            guard let self, let editor else { return }
+            self.formatDidChange(to: format, in: editor)
+        }
+        state.pickColor = { [weak self] in self?.pickColor() }
+        let bar = UIHostingController(rootView: TextBoxFormatBar(state: state))
+        bar.view.backgroundColor = .clear
+        bar.view.frame = CGRect(x: 0, y: 0, width: host.view.bounds.width, height: 52)
+        bar.view.autoresizingMask = [.flexibleWidth]
+        editor.inputAccessoryView = bar.view
+        formatState = state
+        formatBar = bar
         host.scrollView.addSubview(editor)
         textEditor = editor
         layoutTextEditor()
         editor.becomeFirstResponder()
+    }
+
+    /// The format bar changed the look of `editor`, the box being typed in: the box shows it, grown or
+    /// shrunk with the text, the palette's Done follows (over a text box on the page, another look is
+    /// a change to make), and, for a new text box, Text Box keeps the look for the next one.
+    private func formatDidChange(to format: TextBoxFormat, in editor: InlineTextEditor) {
+        guard editor === textEditor else { return }
+        editor.format = format
+        if editor.existing == nil {
+            model.toolStyles[.textBox] = format.applied(to: model.toolStyles[.textBox])
+        }
+        model.pendingTextDidChange(editor.isWaiting, named: editor.actionName)
+        layoutTextEditor()
+        keyboard.reveal()
+    }
+
+    /// More Colors…: the system's colour picker, over the page, for the text of the box being typed in.
+    /// The box waits for it (`isPickingColor`), follows each colour picked, and takes the keyboard
+    /// back when it goes.
+    private func pickColor() {
+        guard let host, let editor = textEditor, host.presentedViewController == nil else { return }
+        let picker = UIColorPickerViewController()
+        picker.supportsAlpha = false
+        picker.selectedColor = editor.format.color.uiColor
+        picker.title = Strings.textColor
+        picker.delegate = self
+        isPickingColor = true
+        host.present(picker, animated: true)
+        // A swipe down puts it away too.
+        picker.presentationController?.delegate = self
     }
 
     /// Puts the box being typed in over its place on its page, as big as the text box will be at the
@@ -117,6 +176,12 @@ final class TextBoxInteraction: NSObject {
         // which adds what is waiting first) finds no box to end again.
         textEditor = nil
         editor.delegate = nil
+        formatState = nil
+        formatBar = nil
+        if isPickingColor {
+            isPickingColor = false
+            host?.presentedViewController.flatMap { $0 as? UIColorPickerViewController }?.dismiss(animated: true)
+        }
         model.pendingTextDidChange(false)
         // Held to the limit again: a character being composed when the box ended was not cut yet.
         let text = ShapeGeometry.limitedText(editor.text ?? "")
@@ -125,14 +190,27 @@ final class TextBoxInteraction: NSObject {
         editor.resignFirstResponder()
         let preview = committed.isEmpty || !changes ? nil : showPreview(of: editor)
         editor.removeFromSuperview()
+        editor.inputAccessoryView = nil
         keyboard.editingDidChange()
         let made: Task<Bool, Never>
         if let existing = editor.existing {
             guard changes else { return nil }
-            made = committed.isEmpty ? model.enqueueDelete(existing, workedOutAt: editor.revision)
-                : model.enqueueContents(of: existing, to: committed, workedOutAt: editor.revision, keepingText: true)
+            if committed.isEmpty {
+                made = model.enqueueDelete(existing, workedOutAt: editor.revision)
+            } else {
+                // New words first (the engine fits the box to them), then the new look: handed over in
+                // the same turn, they are one step of Undo.
+                let words = editor.wordsChanged
+                    ? model.enqueueContents(of: existing, to: committed, workedOutAt: editor.revision, keepingText: true) : nil
+                let look = editor.formatChanged ? model.enqueueRestyle(existing, to: editor.format, workedOutAt: editor.revision) : nil
+                made = Task {
+                    let wordsMade = await words?.value ?? true
+                    let lookMade = await look?.value ?? true
+                    return wordsMade && lookMade
+                }
+            }
         } else {
-            made = model.enqueueTextBox(page: editor.page, at: editor.origin, text: text, workedOutAt: editor.revision, style: editor.style)
+            made = model.enqueueTextBox(page: editor.page, at: editor.origin, text: text, workedOutAt: editor.revision, format: editor.format)
         }
         return MarkupInteraction.settlePreview(of: made) { [weak self] in self?.removeTextPreview(preview) }
     }
@@ -186,9 +264,40 @@ extension TextBoxInteraction: UITextViewDelegate {
         keyboard.reveal()
     }
 
-    /// Editing ended (the keyboard put away, another field taking it): the text is added.
+    /// Editing ended (the keyboard put away, another field taking it): the text is added. Not while the
+    /// colour picker is up for it: the box waits for it.
     func textViewDidEndEditing(_ textView: UITextView) {
-        guard textView === textEditor else { return }
+        guard textView === textEditor, !isPickingColor else { return }
         commitPendingText()
+    }
+}
+
+// MARK: - UIColorPickerViewControllerDelegate
+
+extension TextBoxInteraction: UIColorPickerViewControllerDelegate {
+    /// A colour picked: the box being typed in takes it, as a swatch of the bar would.
+    func colorPickerViewController(_ viewController: UIColorPickerViewController, didSelect color: UIColor, continuously: Bool) {
+        guard isPickingColor, let state = formatState else { return }
+        state.format.color = RGBA(Color(uiColor: color))
+    }
+
+    /// The picker went: the box takes the keyboard back.
+    func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
+        colorPickerWent()
+    }
+
+    private func colorPickerWent() {
+        guard isPickingColor else { return }
+        isPickingColor = false
+        textEditor?.becomeFirstResponder()
+    }
+}
+
+// MARK: - UIAdaptivePresentationControllerDelegate
+
+extension TextBoxInteraction: UIAdaptivePresentationControllerDelegate {
+    /// The colour picker was swiped away.
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        colorPickerWent()
     }
 }

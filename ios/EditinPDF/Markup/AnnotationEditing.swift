@@ -162,6 +162,49 @@ extension DocumentModel {
                        whenStale: whenStale)
     }
 
+    // MARK: Formatting a text box
+
+    /// Whether `info` is a text box whose look Select's Format may change: the document allows markup,
+    /// the file does not lock it, and its page is shown upright (a new size or background adds it again,
+    /// which the bridge does only there).
+    func canFormat(_ info: AnnotationInfo) -> Bool {
+        info.kind == .textBox && canChange(info) && canAddTextBox(onPage: Int(info.page))
+    }
+
+    /// Opens the format sheet (`formatDraft`) for `box`, a text box on its page, with the look it has:
+    /// Apply gives it the look picked, worked out against `revision`, the one `box` was read at (the
+    /// model's now when nil).
+    func formatTextBox(_ box: AnnotationInfo, workedOutAt revision: UInt64? = nil) {
+        formatDraft = TextBoxFormatDraft(ref: AnnotationRef(page: Int(box.page), index: box.index),
+                                         format: TextBoxFormat(box, otherwise: toolStyles[.textBox]),
+                                         revision: revision ?? self.revision)
+    }
+
+    /// The format sheet's Apply: the text box it is open for gets `format` (`enqueueRestyle`), unless it
+    /// is the look it had, and the sheet goes. Says whether a change was made.
+    @discardableResult
+    func applyFormatDraft(_ format: TextBoxFormat) async -> Bool {
+        guard let draft = formatDraft else { return false }
+        formatDraft = nil
+        guard format != draft.format else { return false }
+        return await enqueueRestyle(draft.ref, to: format, workedOutAt: draft.revision).value
+    }
+
+    /// Gives the text box `ref` names the look `format`, handed over at once: one change named
+    /// `Strings.formatTextBox`, addressed as at `revision` (the model's now when nil, and then only a
+    /// text box the document has now). The bridge changes the colour and the border in place, and adds
+    /// the box again for a new size or background (`Edit.restyleTextBox`). One the file locks is
+    /// refused, saying the document does not allow it.
+    @discardableResult
+    func enqueueRestyle(_ ref: AnnotationRef, to format: TextBoxFormat, workedOutAt revision: UInt64? = nil) -> Task<Bool, Never> {
+        let info = annotationIndex.annotation(ref)
+        guard revision != nil || info?.kind == .textBox, let edit = format.restyle(ref) else { return Task { false } }
+        if let refusal = changeRefusal(onPage: ref.page) { return refuse(refusal) }
+        let namesInfo = revision.map(stillNamesTheSame(workedOutAt:)) ?? true
+        if namesInfo, info?.locked == true { return refuse(Strings.editNotAllowed) }
+        return enqueue([edit], named: Strings.formatTextBox, touching: [ref.page], workedOutAt: revision)
+    }
+
     /// Opens the note sheet (`noteDraft`) for `note`, a note on its page, with its text: Save changes
     /// that text, worked out against `revision`, the one `note` was read at (the model's now when nil).
     func editNote(_ note: AnnotationInfo, workedOutAt revision: UInt64? = nil) {

@@ -103,13 +103,40 @@ struct RGBA: Codable, Equatable, Sendable {
     var rgbColor: RgbColor { RgbColor(red: r, green: g, blue: b) }
 }
 
-/// How a tool draws: its colour, its line width (points), its text size (points) and whether a
-/// shape is filled. Every tool has all four; the style picker shows the ones the tool uses.
+/// How a tool draws: its colour, its line width (points), its text size (points), whether a
+/// shape is filled, and a text box's background and border. Every tool has all of them; the style
+/// picker shows the ones the tool uses.
 struct ToolStyle: Codable, Equatable, Sendable {
     var color: RGBA
     var width: Double
     var fontSize: Double
     var fill: Bool
+    /// A text box's background; none when nil.
+    var background: RGBA?
+    /// Whether a text box has a border (`TextBoxFormat.borderWidth` wide, in its text's colour).
+    var border: Bool
+
+    init(color: RGBA, width: Double, fontSize: Double, fill: Bool, background: RGBA? = nil, border: Bool = false) {
+        self.color = color
+        self.width = width
+        self.fontSize = fontSize
+        self.fill = fill
+        self.background = background
+        self.border = border
+    }
+
+    private enum CodingKeys: String, CodingKey { case color, width, fontSize, fill, background, border }
+
+    /// A style kept by an earlier version has no background and no border: it reads as none.
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        color = try values.decode(RGBA.self, forKey: .color)
+        width = try values.decode(Double.self, forKey: .width)
+        fontSize = try values.decode(Double.self, forKey: .fontSize)
+        fill = try values.decode(Bool.self, forKey: .fill)
+        background = try values.decodeIfPresent(RGBA.self, forKey: .background)
+        border = try values.decodeIfPresent(Bool.self, forKey: .border) ?? false
+    }
 
     /// The style a tool starts with, before the reader picks another.
     static func initial(for tool: Tool) -> ToolStyle {

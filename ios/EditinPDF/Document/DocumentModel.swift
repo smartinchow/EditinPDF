@@ -413,6 +413,10 @@ final class DocumentModel {
     /// leave nothing to redo).
     var hasPendingMarkup: Bool { hasPendingInk || hasPendingText }
 
+    /// The text box the format sheet is open for (Select's Format), with the look it has; nil while the
+    /// sheet is not up.
+    var formatDraft: TextBoxFormatDraft?
+
     /// The note the note sheet is open for: one to add, where a tap with Note put it, or one on the page
     /// to read and change. Nil while the sheet is not up. Its text is the reader's, and never logged.
     var noteDraft: NoteDraft? {
@@ -488,34 +492,36 @@ final class DocumentModel {
 
     /// `addTextBox`, handed over at once: one change named `Strings.actionAddAnnotation`, of a box
     /// `ShapeGeometry.textBoxRect` gives, showing `text` without the spaces and new lines after its
-    /// last character, in Text Box's colour and size (held to what the bridge takes). `style` is Text
-    /// Box's own when nil; `revision` as for `enqueueShape`. Nothing typed is no text box, and no
+    /// last character, in `format` (its size held to what the bridge takes): Text Box's own look
+    /// (`TextBoxFormat(style:)`) when nil. `revision` as for `enqueueShape`. Nothing typed is no text box, and no
     /// change. On a turned page it is refused (`Strings.textBoxNeedsUprightPage`), even before the
     /// permissions are read: its text would read sideways.
     @discardableResult
-    func enqueueTextBox(page: Int, at point: CGPoint, text: String, workedOutAt revision: UInt64? = nil, style: ToolStyle? = nil) -> Task<Bool, Never> {
+    func enqueueTextBox(page: Int, at point: CGPoint, text: String, workedOutAt revision: UInt64? = nil,
+                        format: TextBoxFormat? = nil) -> Task<Bool, Never> {
         let text = ShapeGeometry.committedText(text)
         guard !text.isEmpty else { return Task { false } }
         if let refusal = refusal(of: .textBox, onPage: page) { return refuse(refusal) }
         // Before the permissions are read, `refusal` says nothing: a turned page is still no place for one.
         if pages.indices.contains(page), pages[page].rotationDegrees % 360 != 0 { return refuse(Strings.textBoxNeedsUprightPage) }
         guard pages.indices.contains(page), let pageNumber = UInt32(exactly: page) else { return Task { false } }
-        let style = style ?? toolStyles[.textBox]
-        let fontSize = ShapeGeometry.fontSize(style.fontSize)
+        let format = format ?? TextBoxFormat(style: toolStyles[.textBox])
+        let fontSize = format.fontSize
         let box = ShapeGeometry.textBoxRect(at: point, text: text, fontSize: fontSize,
                                             pageSize: CGSize(width: pages[page].widthPt, height: pages[page].heightPt))
         guard ShapeGeometry.isDrawable(box) else {
             return refuseInvalid("a text box is a box at least \(ShapeGeometry.bridgeMinimumSide) point each way, within reach")
         }
         let edit = Edit.addTextBox(page: pageNumber, rect: Rect(x: box.minX, y: box.minY, width: box.width, height: box.height),
-                                   text: text, fontSize: fontSize, color: style.color.rgbColor, fill: nil, borderWidth: 0)
+                                   text: text, fontSize: fontSize, color: format.color.rgbColor,
+                                   fill: format.background?.rgbColor, borderWidth: format.borderWidth)
         // Refused as stale, the text is not lost: on its page as it was, it is handed over again, for
         // the page as it is now (the same); otherwise it is kept on the pasteboard.
         let typedAt = revision ?? self.revision
         return enqueue([edit], named: Strings.actionAddAnnotation, touching: [page], workedOutAt: typedAt, whenStale: { [weak self] in
             guard let self else { return nil }
             guard self.pageIsUnchanged(page, since: typedAt) else { return self.keepTypedText(text) }
-            self.enqueueTextBox(page: page, at: point, text: text, style: style)
+            self.enqueueTextBox(page: page, at: point, text: text, format: format)
             return nil
         })
     }

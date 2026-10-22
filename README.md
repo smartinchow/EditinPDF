@@ -51,7 +51,9 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
   - **Text markup**: highlight, underline and strikethrough over text you drag across.
   - **Draw** with a finger or an Apple Pencil.
   - **Shapes and arrows**: rectangle, oval, line and arrow, with an optional fill for rectangles and ovals.
-  - **Text boxes** and **notes**: type on the page, or leave a sticky note.
+  - **Text boxes** and **notes**: type on the page, or leave a sticky note. While you type in a text box, a bar
+    over the keyboard sets its text size and colour, a background and a border; Select's **Format** changes them
+    later.
   - **Select, move, edit and delete** marks and notes. The **eraser** deletes whole marks it touches.
   - A **Comments list** of the marks and notes in the file, by page. Tap one to jump to it; swipe to delete it.
 - **Fill in forms**: text fields, check boxes, radio buttons, and lists (drop-down and list boxes).
@@ -83,6 +85,9 @@ tracking and no data collected.
   adding the changes after them. A damaged file that is digitally signed can't be changed at all, since that would
   break its signatures; the app says so.
 - Undo goes back at most 100 changes.
+- Text boxes have no bold, italic, alignment or choice of font: the engine sets them in one standard font
+  (Helvetica). A new text size or background is made by adding the text box again with the same text and author,
+  so it loses what other PDF apps may have set on it (its replies, its alignment) and is drawn over other marks.
 - Text outside the Latin alphabet (Greek, Cyrillic, Chinese, Japanese, Korean, emoji and the like) typed in a text
   box shows on the page as "?": the engine draws text boxes in a standard font that has only Western European
   letters. The text itself is kept as typed (the Comments list shows it). A form field is drawn the same way,
