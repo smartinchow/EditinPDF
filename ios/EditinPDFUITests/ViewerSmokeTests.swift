@@ -130,15 +130,16 @@ final class ViewerSmokeTests: XCTestCase {
         shot.name = "save-a-copy-exporter"
         shot.lifetime = .keepAlways
         add(shot)
-        // Cancel: on the iOS 27 simulator an element of its own under the picker's bar, not a button.
-        let cancel = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Cancel'")).firstMatch
-        if cancel.exists, cancel.isHittable {
-            cancel.tap()
-        } else {
-            name.swipeDown(velocity: .fast)
-            app.navigationBars["FullDocumentManagerViewControllerNavigationBar"].swipeDown(velocity: .fast)
+        // Cancelled: on the iOS 27 simulator the picker's Cancel is an element no tap reaches (behind its
+        // More button), so the sheet is dragged down by its top, as a person would put it away.
+        let bar = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+        for _ in 0..<3 where name.exists {
+            let top = bar.exists ? bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+                                 : app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+            top.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+            _ = name.waitForNonExistence(timeout: 4)
         }
-        XCTAssertTrue(name.waitForNonExistence(timeout: 10), "the exporter did not go")
+        XCTAssertTrue(name.waitForNonExistence(timeout: 6), "the exporter did not go")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 5)
         XCTAssertFalse(app.alerts.firstMatch.exists, "a cancelled copy says nothing")
     }
