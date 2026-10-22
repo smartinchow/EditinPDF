@@ -94,8 +94,9 @@ tracking and no data collected.
   have none (replies other apps wrote are kept in the file, not shown). Both are the next step for comments.
 - Text boxes have no bold, italic, alignment or choice of font: the engine sets them in one standard font
   (Helvetica). A new text size or background is made by adding the text box again with the same text and author,
-  so it loses what other PDF apps may have set on it (its alignment, its opacity) and is drawn over other marks. A
-  text box with replies, or whose text is all rich text, or a callout, can only change its colour and border.
+  so it loses what other PDF apps may have set on it (its pop-up, its name and creation date, its alignment and
+  opacity) and is drawn over other marks. A text box with replies, or whose text is all rich text, or a callout,
+  can only change its colour and border.
 - Text outside the Latin alphabet (Greek, Cyrillic, Chinese, Japanese, Korean, emoji and the like) typed in a text
   box shows on the page as "?": the engine draws text boxes in a standard font that has only Western European
   letters. The text itself is kept as typed (the Comments list shows it). A form field is drawn the same way,
