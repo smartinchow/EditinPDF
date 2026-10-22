@@ -641,7 +641,7 @@ final class AnnotationEditingTests: XCTestCase {
         AnnotationInfo(page: UInt32(page), index: index, kind: kind,
                        rect: Rect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
                        contents: contents, author: author, modified: modified, color: nil, locked: locked,
-                       fontSize: nil, fill: nil, borderWidth: nil)
+                       fontSize: nil, fill: nil, borderWidth: nil, restyleInPlaceOnly: false)
     }
 
     /// Types `text` into the text box being edited, as the keyboard does.

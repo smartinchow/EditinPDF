@@ -46,10 +46,10 @@ fn restyle(
     Edit::RestyleTextBox {
         page: 0,
         index,
-        font_size,
+        font_size: Some(font_size),
         color,
         fill,
-        border_width: border,
+        border_width: Some(border),
     }
 }
 
@@ -368,10 +368,10 @@ fn only_a_text_box_is_restyled_and_its_values_are_checked() {
         Edit::RestyleTextBox {
             page: 4,
             index: 0,
-            font_size: 12.0,
+            font_size: Some(12.0),
             color: RED,
             fill: None,
-            border_width: 0.0,
+            border_width: Some(0.0),
         },
         2,
     );
@@ -497,12 +497,17 @@ fn hostile_numbers_in_a_text_box_are_bounded_and_never_panic() {
         .find(|x| x.contents.as_deref() == Some("b"))
         .unwrap();
     assert_eq!(b.border_width, Some(144.0));
-    // Restyling either by adding it again: the first is refused or made, the second refused; no panic.
-    let first = doc.apply(restyle(a.index, 20.0, RED, Some(PALE), 1.0), 0);
     assert!(
-        first.is_ok() || matches!(first, Err(EditError::Invalid { .. })),
-        "{first:?}"
+        [b.rect.x, b.rect.y, b.rect.width, b.rect.height]
+            .iter()
+            .all(|n| n.is_finite()),
+        "a huge /Rect is listed as a finite box: {:?}",
+        b.rect
     );
+    // Restyling either by adding it again: the first, held to its ranges, is made; the second, whose
+    // box is far off any page, is refused; no panic.
+    let first = doc.apply(restyle(a.index, 20.0, RED, Some(PALE), 1.0), 0);
+    assert!(first.is_ok(), "{first:?}");
     let at = doc.revision();
     let b_index = doc
         .annotations()
@@ -515,4 +520,215 @@ fn hostile_numbers_in_a_text_box_are_bounded_and_never_panic() {
         matches!(second, Err(EditError::Invalid { .. })),
         "{second:?}"
     );
+}
+
+/// A restyle that changes nothing (the colour read back from the file in single precision, say) is
+/// refused, so no empty step is made: no revision, nothing to undo.
+#[test]
+fn a_restyle_that_changes_nothing_makes_no_step() {
+    let doc = one_page();
+    let red = RgbColor {
+        red: 0.9,
+        green: 0.1,
+        blue: 0.1,
+    };
+    doc.apply(
+        Edit::AddTextBox {
+            page: 0,
+            rect: BOX,
+            text: "Same".into(),
+            font_size: 14.0,
+            color: red,
+            fill: Some(PALE),
+            border_width: 1.0,
+        },
+        0,
+    )
+    .unwrap();
+    let info = only_text_box(&doc);
+    let read_back = info.color.unwrap();
+    assert_ne!(read_back, red, "the file keeps it in single precision");
+    for edit in [
+        restyle(0, 14.0, red, Some(PALE), 1.0),
+        restyle(0, 14.0, read_back, info.fill, 1.0),
+        Edit::RestyleTextBox {
+            page: 0,
+            index: 0,
+            font_size: None,
+            color: red,
+            fill: Some(PALE),
+            border_width: None,
+        },
+    ] {
+        let refused = doc.apply(edit, 1);
+        assert!(
+            matches!(refused, Err(EditError::Invalid { .. })),
+            "{refused:?}"
+        );
+    }
+    assert_eq!(doc.revision(), 1);
+    doc.undo().unwrap();
+    assert!(!doc.can_undo(), "only the box's add was on the history");
+}
+
+/// A colour alone changes in place and keeps what is not asked for as the file has it: a size the
+/// apps could not give (300 points) and a border thinner than they offer (0.2 point).
+#[test]
+fn a_colour_alone_keeps_the_size_and_border_the_file_gave() {
+    let doc = PdfDocument::open(
+        fixtures::hand_annotated_doc(
+            &[
+                "<< /Type /Annot /Subtype /FreeText /Rect [100 300 500 700] /Contents (Big) \
+               /DA (/Helv 300 Tf 0 0 0 rg) /BS << /W 0.2 >> >>",
+            ],
+            &[],
+        ),
+        None,
+    )
+    .unwrap();
+    let before = only_text_box(&doc);
+    assert_eq!(before.font_size, Some(300.0));
+    assert_eq!(before.border_width, Some(0.2));
+    doc.apply(
+        Edit::RestyleTextBox {
+            page: 0,
+            index: 0,
+            font_size: None,
+            color: RED,
+            fill: None,
+            border_width: None,
+        },
+        0,
+    )
+    .unwrap();
+    let after = only_text_box(&doc);
+    assert_eq!(after.index, before.index, "in place");
+    assert_eq!(after.font_size, Some(300.0));
+    assert_eq!(after.border_width, Some(0.2));
+    assert_eq!(after.rect, before.rect);
+    assert_color_close(after.color, RED);
+}
+
+/// A box with replies, or whose text is all rich text, is not added again (that would lose them):
+/// a new size or background is refused, the list says it can only be restyled in place, and a new
+/// colour or border still works.
+#[test]
+fn a_box_a_re_add_would_lose_data_from_is_restyled_in_place_only() {
+    let doc = PdfDocument::open(
+        fixtures::hand_annotated_doc(
+            &[
+                "<< /Type /Annot /Subtype /FreeText /Rect [100 600 300 640] /Contents (Replied) \
+                 /NM (box) /DA (/Helv 12 Tf 0 0 0 rg) >>",
+                "<< /Type /Annot /Subtype /Text /Rect [100 600 120 620] /Contents (A reply) \
+                 /IRT 4 0 R >>",
+                "<< /Type /Annot /Subtype /FreeText /Rect [100 400 300 440] /Contents () \
+                 /RC (<body><p>Rich</p></body>) /DA (/Helv 12 Tf 0 0 0 rg) >>",
+                "<< /Type /Annot /Subtype /FreeText /Rect [100 200 300 240] /Contents (Plain) \
+                 /DA (/Helv 12 Tf 0 0 0 rg) >>",
+            ],
+            &[],
+        ),
+        None,
+    )
+    .unwrap();
+    let boxes: Vec<_> = doc
+        .annotations()
+        .into_iter()
+        .filter(|a| a.kind == AnnotationKind::TextBox)
+        .collect();
+    let by_index = |i: u32| boxes.iter().find(|a| a.index == i).unwrap().clone();
+    assert!(by_index(0).restyle_in_place_only, "replies");
+    assert!(by_index(2).restyle_in_place_only, "all rich text");
+    assert!(!by_index(3).restyle_in_place_only);
+    for index in [0, 2] {
+        let at = doc.revision();
+        let refused = doc.apply(restyle(index, 20.0, BLUE, None, 0.0), at);
+        assert!(
+            matches!(refused, Err(EditError::Invalid { .. })),
+            "{refused:?}"
+        );
+        let refused = doc.apply(restyle(index, 12.0, BLUE, Some(PALE), 0.0), at);
+        assert!(
+            matches!(refused, Err(EditError::Invalid { .. })),
+            "{refused:?}"
+        );
+        doc.apply(restyle(index, 12.0, BLUE, None, 1.0), at)
+            .unwrap();
+    }
+    assert_eq!(
+        doc.annotations().len(),
+        3,
+        "the reply is still there, under its box"
+    );
+}
+
+/// A comment's date is the file's own, with its time zone: `/M`, else `/CreationDate`.
+#[test]
+fn dates_are_the_files_own_with_their_time_zone() {
+    let doc = PdfDocument::open(
+        fixtures::hand_annotated_doc(
+            &[
+                "<< /Type /Annot /Subtype /Square /Rect [100 600 200 700] /M (D:20261021090500-05'00') >>",
+                "<< /Type /Annot /Subtype /Square /Rect [100 400 200 500] \
+                 /CreationDate (D:20261021160500+02'00') >>",
+                "<< /Type /Annot /Subtype /Square /Rect [100 200 200 300] >>",
+            ],
+            &[],
+        ),
+        None,
+    )
+    .unwrap();
+    let dates: Vec<_> = doc.annotations().into_iter().map(|a| a.modified).collect();
+    assert_eq!(
+        dates,
+        vec![
+            Some("D:20261021090500-05'00'".to_owned()),
+            Some("D:20261021160500+02'00'".to_owned()),
+            None,
+        ]
+    );
+}
+
+/// A page of many text boxes, each with a reply: every one is found to have replies, and the list
+/// is read in linear time (one pass over the page's comments for their replies, not one per box).
+#[test]
+fn many_text_boxes_with_replies_are_listed_quickly_and_correctly() {
+    const BOXES: usize = 1_500;
+    let mut annots: Vec<String> = (0..BOXES)
+        .map(|i| {
+            format!(
+                "<< /Type /Annot /Subtype /FreeText /Rect [100 {y} 300 {top}] /Contents (Box {i}) \
+                 /DA (/Helv 12 Tf 0 0 0 rg) >>",
+                y = 100 + i % 600,
+                top = 120 + i % 600
+            )
+        })
+        .collect();
+    // A reply to every other box, and to none past them.
+    annots.extend((0..BOXES).step_by(2).map(|i| {
+        format!(
+            "<< /Type /Annot /Subtype /Text /Rect [100 100 120 120] /Contents (Reply) /IRT {} 0 R >>",
+            4 + i
+        )
+    }));
+    let refs: Vec<&str> = annots.iter().map(String::as_str).collect();
+    let doc = PdfDocument::open(fixtures::hand_annotated_doc(&refs, &[]), None).unwrap();
+    let start = std::time::Instant::now();
+    let boxes: Vec<_> = doc
+        .annotations()
+        .into_iter()
+        .filter(|a| a.kind == AnnotationKind::TextBox)
+        .collect();
+    let took = start.elapsed();
+    assert_eq!(boxes.len(), BOXES);
+    for info in &boxes {
+        assert_eq!(
+            info.restyle_in_place_only,
+            info.index % 2 == 0,
+            "box at place {} (replies to every other box)",
+            info.index
+        );
+    }
+    // Loose: a pass per box over the page's 2,250 comments would be millions of reads.
+    assert!(took.as_secs() < 5, "listing took {took:?}");
 }

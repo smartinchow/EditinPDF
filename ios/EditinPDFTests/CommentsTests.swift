@@ -94,7 +94,7 @@ final class CommentsTests: XCTestCase {
             let contents: String? = i % 2 == 0 ? "Comment \(i)" : nil
             let rect = Rect(x: 0, y: Double(i), width: 10, height: 10)
             infos.append(AnnotationInfo(page: UInt32(i % 50), index: UInt32(i), kind: kind, rect: rect, contents: contents, author: nil,
-                                        modified: "2026-10-21 14:05", color: nil, locked: false, fontSize: nil, fill: nil, borderWidth: nil))
+                                        modified: "2026-10-21 14:05", color: nil, locked: false, fontSize: nil, fill: nil, borderWidth: nil, restyleInPlaceOnly: false))
         }
         let index = AnnotationIndex(infos)
         let start = Date()

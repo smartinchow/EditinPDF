@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
 
-use crate::annotations::{self, AnnotationInfo, AnnotationKind};
+use crate::annotations::{self, AnnotationInfo};
 use crate::edit::{Edit, EditCapabilities, EditOutcome, MAX_STEP_EDITS, SaveMode};
 use crate::forms::{self, FormField};
 use crate::render::{self, RendererPool};
@@ -910,21 +910,22 @@ impl PdfDocument {
     /// Replies to other comments are left out. Read the list again after every change, undo and
     /// redo: a comment's `index` is its position on its page, which those can move.
     ///
-    /// A text box's text size, background and border are read from the file as it is now
-    /// (`AnnotationInfo::font_size`, `fill`, `border_width`).
+    /// Each comment's date as the file writes it, and a text box's text size, background, border and
+    /// whether it can only be restyled in place, are read from the file as it is now
+    /// (`AnnotationInfo::modified`, `font_size`, `fill`, `border_width`, `restyle_in_place_only`).
     pub fn annotations(&self) -> Vec<AnnotationInfo> {
         // The list only reads what the engine read when it opened or last changed the document, and
-        // turns the boxes with the page's plain arithmetic: nothing there can panic. The text boxes'
-        // looks are read from the working file again; were that to panic, they are left out (the
-        // rest of the list is as it was), and the lock is not poisoned.
+        // turns the boxes with the page's plain arithmetic: nothing there can panic. The dates and the
+        // text boxes' looks are read from the working file again; were that to panic, they are left
+        // out (the rest of the list is as it was), and the lock is not poisoned.
         self.read(Vec::new(), |doc| {
             let mut list = annotations::list(&doc.info);
-            if !list.iter().any(|a| a.kind == AnnotationKind::TextBox) {
+            if list.is_empty() {
                 return list;
             }
             let plain = list.clone();
             match panic::catch_unwind(AssertUnwindSafe(|| {
-                annotations::with_text_box_looks(doc, &mut list);
+                annotations::with_file_details(doc, &mut list);
                 list
             })) {
                 Ok(list) => list,

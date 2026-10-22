@@ -122,7 +122,7 @@ func info(page: Int = 0, index: UInt32, rect: CGRect = CGRect(x: 0, y: 0, width:
     AnnotationInfo(page: UInt32(page), index: index, kind: kind,
                    rect: Rect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
                    contents: nil, author: nil, modified: nil, color: nil, locked: false,
-                   fontSize: nil, fill: nil, borderWidth: nil)
+                   fontSize: nil, fill: nil, borderWidth: nil, restyleInPlaceOnly: false)
 }
 
 /// A 10 × 10 rectangle annotation whose top is at `y` on `page`.

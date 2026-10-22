@@ -73,9 +73,11 @@ pub struct AnnotationInfo {
     pub contents: Option<String>,
     /// Who the file says wrote it.
     pub author: Option<String>,
-    /// When it was last changed, as the engine reads the file's PDF date (`D:…`): `YYYY-MM-DD HH:MM`
-    /// with the time zone left out (the engine writes its own dates in UTC), or the file's text as it
-    /// is when it is not a date the engine reads.
+    /// When it was last changed: the file's own PDF date (`/M`, or `/CreationDate` when it has no
+    /// `/M`), as the file writes it (`D:YYYYMMDDHHmmSS` and its offset from UTC, `Z`, `+HH'mm'`,
+    /// `-HH'mm'`; at most 64 characters), for the apps to read with its time zone. When the file
+    /// cannot be read again, the engine's reading of it: `YYYY-MM-DD HH:MM` with the time zone left
+    /// out. Text from the file: parse it as untrusted.
     pub modified: Option<String>,
     /// For a text box, the colour of its text (as its `/DA` gives it); for any other kind, the
     /// colour it is drawn in.
@@ -90,6 +92,11 @@ pub struct AnnotationInfo {
     /// How wide a text box's border is drawn, in points (its `/BS` `/W`, or its `/Border`; 0 for no
     /// border). None for every other kind.
     pub border_width: Option<f64>,
+    /// A text box whose text size and background `RestyleTextBox` does not change, only its colour
+    /// and border: adding it again would lose something (its replies, or rich text that is all its
+    /// text), or it is a callout or typed text, which a plain box would replace. False for every other
+    /// kind. (On a page shown turned, every text box keeps its size and background too.)
+    pub restyle_in_place_only: bool,
 }
 
 /// The comments of the document the engine read, page by page and top to bottom within a page.
@@ -105,7 +112,7 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
                 page: u32::try_from(a.page).ok()?,
                 index: u32::try_from(a.index).ok()?,
                 kind: AnnotationKind::from_subtype(&a.subtype),
-                rect: geometry::rect_to_view(page, a.rect),
+                rect: finite_rect(geometry::rect_to_view(page, a.rect)),
                 contents: a.contents.clone(),
                 author: a.author.clone(),
                 modified: a.modified.clone(),
@@ -115,10 +122,11 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
                     blue: f64::from(blue),
                 }),
                 locked: a.locked,
-                // Filled in for text boxes, from the file, by `with_text_box_looks`.
+                // Filled in for text boxes, from the file, by `with_file_details`.
                 font_size: None,
                 fill: None,
                 border_width: None,
+                restyle_in_place_only: false,
             })
         })
         .collect();
@@ -130,6 +138,29 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
             .then(a.index.cmp(&b.index))
     });
     list
+}
+
+/// The farthest from a page's origin, in points, a box the list gives may reach: a file's box past it
+/// (or one that is not a number, as a single-precision box from a huge `/Rect` can become) is held to
+/// it, so the apps are never handed an infinite or undefined box.
+const MAX_LISTED_COORD: f64 = 1.0e6;
+
+/// `rect` with every number finite and within `MAX_LISTED_COORD`: one that is not a number is 0, and
+/// one past the reach is held to it.
+fn finite_rect(rect: Rect) -> Rect {
+    let held = |n: f64| {
+        if n.is_finite() {
+            n.clamp(-MAX_LISTED_COORD, MAX_LISTED_COORD)
+        } else {
+            0.0
+        }
+    };
+    Rect {
+        x: held(rect.x),
+        y: held(rect.y),
+        width: held(rect.width).max(0.0),
+        height: held(rect.height).max(0.0),
+    }
 }
 
 /// The engine's change that deletes the comments at `indices` (places in the 0-based `page`'s
@@ -273,14 +304,9 @@ impl TextBoxLook {
     /// there, and none when neither is. A number that is not finite counts as none.
     fn of(cos: &pdfcraft_cos::Document, d: &Dict) -> Self {
         let (color, font_size) = pdfcraft_annot::appearance::parse_da(d);
-        let numbers = |object: Option<&Object>| -> Option<Vec<f64>> {
-            let array = cos.resolve(object?);
-            array
-                .as_array()?
-                .iter()
-                .map(|o| cos.resolve(o).as_f64().filter(|n| n.is_finite()))
-                .collect()
-        };
+        // At most four numbers are read of either array (a colour has at most four, a border's width
+        // is its third): a longer one is not resolved element by element.
+        let numbers = |object: Option<&Object>| -> Option<Vec<f64>> { numbers_of(cos, object?, 4) };
         let fill = numbers(d.get(b"C")).and_then(|c| match c.as_slice() {
             [g] => Some([*g; 3]),
             [r, g, b] => Some([*r, *g, *b]),
@@ -327,32 +353,108 @@ impl TextBoxLook {
             },
         }
     }
+}
 
-    /// Whether `other` draws its text at the same size and with the same background, to within what
-    /// the file's numbers keep: then only the colour and the border change, which the engine can
-    /// change in place.
-    fn same_size_and_fill(&self, other: &Self) -> bool {
-        let close = |a: f64, b: f64| (a - b).abs() < 0.005;
-        close(self.font_size, other.font_size)
-            && match (self.fill, other.fill) {
-                (None, None) => true,
-                (Some(a), Some(b)) => a.iter().zip(b).all(|(a, b)| close(*a, b)),
-                _ => false,
-            }
+/// Whether two of a file's numbers are the same to within what it keeps of them.
+fn close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 0.005
+}
+
+/// Whether two colours are the same to within what a file keeps of them.
+fn same_color(a: Rgb, b: Rgb) -> bool {
+    a.iter().zip(b).all(|(a, b)| close(*a, b))
+}
+
+/// Whether two backgrounds are the same: none both, or the same colour.
+fn same_fill(a: Option<Rgb>, b: Option<Rgb>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => same_color(a, b),
+        _ => false,
     }
 }
+
+/// The numbers of the array `object` is (resolved), each finite; none when it is not an array of
+/// at most `most` numbers. Its elements are resolved only once its length is known to be within that.
+fn numbers_of(cos: &pdfcraft_cos::Document, object: &Object, most: usize) -> Option<Vec<f64>> {
+    let array = cos.resolve(object);
+    let items = array.as_array().filter(|items| items.len() <= most)?;
+    items
+        .iter()
+        .map(|o| cos.resolve(o).as_f64().filter(|n| n.is_finite()))
+        .collect()
+}
+
+/// What `RestyleTextBox` asks for: a text size (none to keep the box's), the text's colour, the
+/// background, and a border width (none to keep the box's).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TextBoxRestyle {
+    pub(crate) font_size: Option<f64>,
+    pub(crate) color: Rgb,
+    pub(crate) fill: Option<Rgb>,
+    pub(crate) border_width: Option<f64>,
+}
+
+/// The objects some entry of a page's `/Annots` (`entries`) replies to (`/IRT`): read in one pass
+/// over the list, so that asking whether a comment has replies is a lookup, not another pass.
+fn replied_to(cos: &pdfcraft_cos::Document, entries: &[Object]) -> HashSet<ObjRef> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            cos.resolve(entry)
+                .as_dict()
+                .and_then(|d| d.reference(b"IRT"))
+        })
+        .collect()
+}
+
+/// Why a text box can't be added again with a new size or background (`restyle_text_box`), when it
+/// can't: it is a callout or typed text, it has replies (the delete would take them out), or its
+/// text is all in rich text (`/RC` with no `/Contents`), which a plain box would lose. `d` is the
+/// text box `entry` (an entry of its page's `/Annots`) is; `replied` the objects of that page that
+/// have replies (`replied_to`).
+fn re_add_refusal(
+    cos: &pdfcraft_cos::Document,
+    replied: &HashSet<ObjRef>,
+    entry: &Object,
+    d: &Dict,
+) -> Option<&'static str> {
+    if d.get(b"CL").is_some() || d.name(b"IT").is_some_and(|it| it != b"FreeText") {
+        return Some("a callout or typed text keeps its text size and background");
+    }
+    let contents_empty = d
+        .get(b"Contents")
+        .map(|o| cos.resolve(o))
+        .and_then(|o| o.as_string().map(|s| s.to_text().trim().is_empty()))
+        .unwrap_or(true);
+    if d.get(b"RC").is_some() && contents_empty {
+        return Some("a text box whose text is all rich text keeps its text size and background");
+    }
+    if entry
+        .as_ref()
+        .is_some_and(|object| replied.contains(&object))
+    {
+        return Some("a text box with replies keeps its text size and background");
+    }
+    None
+}
+
+/// The most characters of a file's date the list passes on: a PDF date has at most 23.
+const MAX_DATE_CHARS: usize = 64;
 
 fn rgb_color([red, green, blue]: Rgb) -> RgbColor {
     RgbColor { red, green, blue }
 }
 
-/// Fills in the text size, background and border width of every text box of `list` (read from the
-/// document as it is, `doc`), and its colour when the engine's list gave none (a gray `/DA`, or none
-/// at all: the engine draws black). The rest of `list` is left as it is. A text box whose page or
-/// place the file no longer has, or that is not a `/FreeText` there, is left as it is; so is every
-/// one when the file cannot be read again. Reads only, and never panics on a file's numbers.
-pub(crate) fn with_text_box_looks(doc: &pdfcraft_engine::Document, list: &mut [AnnotationInfo]) {
-    if !list.iter().any(|a| a.kind == AnnotationKind::TextBox) {
+/// Fills in, from the document as it is (`doc`, its working file read again), what the engine's list
+/// does not give: every annotation's date as the file writes it (`/M`, else `/CreationDate`, with its
+/// time zone, when it has at most `MAX_DATE_CHARS` characters), and every text box's size,
+/// background, border width and whether it can only be restyled in place, and its colour when the
+/// engine's list gave none (a gray `/DA`, or none at all: the engine draws black). An annotation whose
+/// page or place the file no longer has is left as it is; so is every one when the file cannot be
+/// read again. Reads only, and never panics on a file's numbers.
+pub(crate) fn with_file_details(doc: &pdfcraft_engine::Document, list: &mut [AnnotationInfo]) {
+    if list.is_empty() {
         return;
     }
     let Ok(cos) = working_file(doc) else {
@@ -362,10 +464,9 @@ pub(crate) fn with_text_box_looks(doc: &pdfcraft_engine::Document, list: &mut [A
         return;
     };
     let mut lists: HashMap<u32, Vec<Object>> = HashMap::new();
-    for info in list
-        .iter_mut()
-        .filter(|a| a.kind == AnnotationKind::TextBox)
-    {
+    // For each page with a text box: what its comments reply to, read once (`replied_to`).
+    let mut replies: HashMap<u32, HashSet<ObjRef>> = HashMap::new();
+    for info in list.iter_mut() {
         let entries = lists.entry(info.page).or_insert_with(|| {
             usize::try_from(info.page)
                 .ok()
@@ -380,16 +481,31 @@ pub(crate) fn with_text_box_looks(doc: &pdfcraft_engine::Document, list: &mut [A
             continue;
         };
         let object = cos.resolve(entry);
-        let Some(d) = object
-            .as_dict()
-            .filter(|d| d.name(b"Subtype") == Some(b"FreeText"))
-        else {
+        let Some(d) = object.as_dict() else {
             continue;
         };
+        let date = [b"M".as_slice(), b"CreationDate".as_slice()]
+            .into_iter()
+            .find_map(|key| {
+                d.get(key)
+                    .map(|o| cos.resolve(o))
+                    .and_then(|o| o.as_string().map(pdfcraft_cos::PdfString::to_text))
+            })
+            .filter(|date| !date.trim().is_empty() && date.chars().count() <= MAX_DATE_CHARS);
+        if let Some(date) = date {
+            info.modified = Some(date);
+        }
+        if info.kind != AnnotationKind::TextBox || d.name(b"Subtype") != Some(b"FreeText") {
+            continue;
+        }
         let look = TextBoxLook::of(&cos, d);
         info.font_size = Some(look.font_size);
         info.fill = look.fill.map(rgb_color);
         info.border_width = Some(look.border_width);
+        let replied = replies
+            .entry(info.page)
+            .or_insert_with(|| replied_to(&cos, entries));
+        info.restyle_in_place_only = re_add_refusal(&cos, replied, entry, d).is_some();
         if info.color.is_none() {
             info.color = Some(rgb_color(look.color));
         }
@@ -407,30 +523,31 @@ const MAX_USER_COORD: f64 = 1.0e6;
 const RESTYLE_LABEL: &str = "Format text box";
 
 /// The engine's change that gives the text box at place `index` of the 0-based `page` (`info`, as
-/// the document has it before the change, `doc`) the look `look`: one batch, so one undo step.
+/// the document has it before the change, `doc`) what `asked` asks for: one batch, so one undo step.
+/// A size or a border not asked for is the box's own, kept as the file has it.
 ///
-/// - The same text size and background: the engine's `StyleAnnotation`, in place, with the new
-///   colour (which the engine writes into `/DA`, keeping the size) and border width.
+/// - The same text size and background: the engine's `StyleAnnotation`, in place, with the colour
+///   (which the engine writes into `/DA`, keeping the size) and the border width, when they change.
 /// - Otherwise the engine has no change that does it, so the text box is deleted and added again:
 ///   the same text and author, its top-left corner where it was, as wide as keeps its lines where
 ///   they broke at the new size (no further than the page's right edge, unless it was already past
 ///   it), and as tall as its text then needs, at least as tall as it was in proportion. The box added
 ///   again goes at the end of the page's list, so it moves the places of the comments after it (as
 ///   a delete does), and it is drawn over the others. What it does not keep: its name (`/NM`),
-///   creation date, opacity, alignment, rich text, replies and pop-up (the delete takes those out
-///   with it, as the engine's delete does), and any other entry the file gave it. This is refused on
-///   a page shown turned (the engine would set its text upright in the file), and for a callout or
-///   a typewriter's text, which a plain box added again would not be.
+///   creation date, opacity, alignment and rich text, and any other entry the file gave it. This is
+///   refused on a page shown turned (the engine would set its text upright in the file), and where
+///   it would lose more (`re_add_refusal`: a callout or typed text, a box with replies, one whose
+///   text is all rich text).
 ///
-/// `Invalid` when the page has no comment at `index`, it is not a text box, or the file locks it;
-/// the document's own refusal when it cannot be changed, or its security settings forbid changing
-/// comments.
+/// `Invalid` when the page has no comment at `index`, it is not a text box, the file locks it, or
+/// nothing would change (so no empty step is ever made); the document's own refusal when it cannot
+/// be changed, or its security settings forbid changing comments.
 pub(crate) fn restyle_text_box(
     doc: &pdfcraft_engine::Document,
     info: &pdfcraft_render::PageInfo,
     page: usize,
     index: u32,
-    look: TextBoxLook,
+    asked: TextBoxRestyle,
 ) -> Result<pdfcraft_engine::Edit, EditError> {
     comments_may_change(doc)?;
     let cos = working_file(doc)?;
@@ -449,15 +566,28 @@ pub(crate) fn restyle_text_box(
         return Err(invalid(format!("comment {index} is locked")));
     }
     let now = TextBoxLook::of(&cos, d);
-    if now.same_size_and_fill(&look) {
+    let look = TextBoxLook {
+        font_size: asked.font_size.unwrap_or(now.font_size),
+        color: asked.color,
+        fill: asked.fill,
+        border_width: asked.border_width.unwrap_or(now.border_width),
+    };
+    let size_changes = !close(look.font_size, now.font_size);
+    let fill_changes = !same_fill(look.fill, now.fill);
+    let color_changes = !same_color(look.color, now.color);
+    let border_changes = !close(look.border_width, now.border_width);
+    if !(size_changes || fill_changes || color_changes || border_changes) {
+        return Err(invalid(format!("text box {index} already looks like that")));
+    }
+    if !(size_changes || fill_changes) {
         return Ok(pdfcraft_engine::Edit::Batch {
             label: RESTYLE_LABEL.to_owned(),
             edits: vec![pdfcraft_engine::Edit::StyleAnnotation {
                 page,
                 index: place,
-                color: Some(look.color),
+                color: color_changes.then_some(look.color),
                 opacity: None,
-                width: Some(look.border_width),
+                width: border_changes.then_some(look.border_width),
                 endings: None,
             }],
         });
@@ -467,11 +597,8 @@ pub(crate) fn restyle_text_box(
             "a text box on a page shown turned keeps its text size and background".to_owned(),
         ));
     }
-    let intent = d.name(b"IT");
-    if d.get(b"CL").is_some() || intent.is_some_and(|it| it != b"FreeText") {
-        return Err(invalid(
-            "a callout or typed text keeps its text size and background".to_owned(),
-        ));
+    if let Some(why) = re_add_refusal(&cos, &replied_to(&cos, &list), entry, d) {
+        return Err(invalid(why.to_owned()));
     }
     let text = |key: &[u8]| {
         d.get(key)
@@ -483,13 +610,7 @@ pub(crate) fn restyle_text_box(
     let author = text(b"T");
     let rect = d
         .get(b"Rect")
-        .map(|o| cos.resolve(o))
-        .and_then(|o| {
-            o.as_array()?
-                .iter()
-                .map(|n| cos.resolve(n).as_f64().filter(|n| n.is_finite()))
-                .collect::<Option<Vec<f64>>>()
-        })
+        .and_then(|o| numbers_of(&cos, o, 4))
         .and_then(|r| <[f64; 4]>::try_from(r).ok())
         .filter(|r| r.iter().all(|n| n.abs() <= MAX_USER_COORD))
         .ok_or_else(|| invalid(format!("text box {index} has no box on its page")))?;

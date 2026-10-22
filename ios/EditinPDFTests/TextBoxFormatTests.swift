@@ -134,7 +134,7 @@ final class TextBoxFormatTests: XCTestCase {
 
     private func annotation(kind: AnnotationKind) -> AnnotationInfo {
         AnnotationInfo(page: 0, index: 0, kind: kind, rect: Rect(x: 0, y: 0, width: 10, height: 10), contents: nil, author: nil,
-                       modified: nil, color: nil, locked: false, fontSize: nil, fill: nil, borderWidth: nil)
+                       modified: nil, color: nil, locked: false, fontSize: nil, fill: nil, borderWidth: nil, restyleInPlaceOnly: false)
     }
 }
 

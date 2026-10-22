@@ -278,11 +278,17 @@ with the same text and author, its top-left corner where it was, as wide as keep
 scaled with the size, no further than the page's right edge) and as tall as its text then needs. The new one goes
 at the end of the page's list: the places after the old one move down, as after a delete, which is why the
 mixing rule and the rebase rule treat a restyle as a delete. It loses what the engine does not set on a new
-comment: its name (`/NM`), creation date, opacity, alignment, rich text, its pop-up and replies (the delete takes
-those out), and it is drawn over the others. The bridge refuses a locked text box, a re-add on a page shown
-turned (its text would be set upright in the file) and one of a callout or typed text, which a plain box would
-replace. The text size, background and border the app starts from are read from the file
-(`AnnotationInfo.font_size`, `fill`, `border_width`, `annotations::with_text_box_looks`), as the engine draws them.
+comment: its name (`/NM`), creation date, opacity, alignment and rich text, and it is drawn over the others. The
+bridge refuses a locked text box, a re-add on a page shown turned (its text would be set upright in the file),
+and a re-add that would lose more (`re_add_refusal`: a callout or typed text, which a plain box would replace; a
+box with replies, which the delete would take out; one whose text is all rich text); such a box keeps its colour
+and border changes in place, and the list says so (`AnnotationInfo.restyle_in_place_only`). A size or border the
+app does not ask for (`None`) is the box's own, kept as the file has it, so a colour change never resizes a box
+or adds it again. A restyle that changes nothing (a colour read back in single precision, say) is refused as
+`Invalid`, so no empty step reaches the history; the app compares looks to within what a file keeps and does not
+send one. The text size, background and border the app starts from are read from the file
+(`AnnotationInfo.font_size`, `fill`, `border_width`, `annotations::with_file_details`), as the engine draws them,
+and so is each comment's date, with its time zone (`AnnotationInfo.modified`).
 
 ## Consequences
 

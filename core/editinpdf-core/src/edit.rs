@@ -250,29 +250,32 @@ pub enum Edit {
         border_width: f64,
     },
     /// Gives the text box at `index` in the page's list (`AnnotationInfo.index`) its text in
-    /// `font_size` points (4 through 144) and `color`, the background `fill` (none when `None`) and a
-    /// border `border_width` points wide (0 for none, or 0.5 through 12): one change, which one undo
-    /// takes back. Its text and its place on the page stay.
+    /// `font_size` points (4 through 144; `None` keeps the box's own, whatever it is) and `color`, the
+    /// background `fill` (none when `None`) and a border `border_width` points wide (0 for none, or
+    /// 0.5 through 12; `None` keeps the box's own): one change, which one undo takes back. Its text
+    /// and its place on the page stay.
     ///
     /// When only the colour or the border changes, the text box is changed in place. A new size or
     /// background is more than the engine can change in place, so the text box is deleted and added
     /// again: its top-left corner stays, it grows or shrinks across with the text so that its lines
     /// break where they did (no further than the page's right edge), and down to hold the text. It
     /// keeps its text and its author, and loses what the engine does not set on a new one: its name
-    /// (`/NM`), creation date, opacity, alignment and replies. It goes at the end of the page's list,
-    /// over the others, and the comments after its old place move down one: so in `apply_all` no other
-    /// change of the step may address a comment of that page by its place, as with
-    /// `DeleteAnnotation`. Adding it again is refused on a page shown turned (`PageInfo.rotation_degrees`
-    /// not 0), where its text would be set upright in the file, and for a callout or typed text.
+    /// (`/NM`), creation date, opacity, alignment and rich text. It goes at the end of the page's
+    /// list, over the others, and the comments after its old place move down one: so in `apply_all` no
+    /// other change of the step may address a comment of that page by its place, as with
+    /// `DeleteAnnotation`. Adding it again is refused on a page shown turned
+    /// (`PageInfo.rotation_degrees` not 0), where its text would be set upright in the file, and
+    /// where it would lose more: `AnnotationInfo.restyle_in_place_only` says which boxes.
     ///
-    /// `Invalid` for a comment that is not a text box, one the file locks, or a value out of range.
+    /// `Invalid` for a comment that is not a text box, one the file locks, a value out of range, or
+    /// a change that changes nothing (no empty step is made).
     RestyleTextBox {
         page: u32,
         index: u32,
-        font_size: f64,
+        font_size: Option<f64>,
         color: RgbColor,
         fill: Option<RgbColor>,
-        border_width: f64,
+        border_width: Option<f64>,
     },
     /// Adds a rectangle or an oval in `rect` (at least 1 point wide and tall), outlined in `color`
     /// `width` points wide (0.1 through 50) and filled with `fill`, if any.
@@ -521,13 +524,13 @@ impl Edit {
                 border_width,
             } => {
                 let info = page_of(pages, *page)?;
-                let look = annotations::TextBoxLook {
-                    font_size: text_size(*font_size)?,
+                let asked = annotations::TextBoxRestyle {
+                    font_size: font_size.map(text_size).transpose()?,
                     color: rgb(*color)?,
                     fill: fill.map(rgb).transpose()?,
-                    border_width: border(*border_width)?,
+                    border_width: border_width.map(border).transpose()?,
                 };
-                annotations::restyle_text_box(doc, info, index_of(pages, *page)?, *index, look)?
+                annotations::restyle_text_box(doc, info, index_of(pages, *page)?, *index, asked)?
             }
             Self::AddShape {
                 page,
