@@ -216,6 +216,58 @@ enum Strings {
         String(localized: "Try again, or choose another place to save it.", comment: "Message of the alert when Save a Copy could not make or write the copy")
     }
 
+    // MARK: Send Feedback
+
+    /// The More menu's item that writes an email to the app's makers.
+    static var sendFeedback: String {
+        String(localized: "Send Feedback", comment: "More menu item: writes an email with feedback about the app to its makers")
+    }
+
+    /// The subject of the feedback email: the app's version and build.
+    static func feedbackSubject(version: String, build: String) -> String {
+        String(localized: "EditinPDF feedback (\(version), build \(build))", comment: "Subject of the feedback email: the app's version, then its build number")
+    }
+
+    /// The heading of the block about the device at the end of the feedback email.
+    static var feedbackAboutThisDevice: String {
+        String(localized: "About this device", comment: "Heading of the block at the end of the feedback email that says which app version, system and device it was sent from")
+    }
+
+    /// The feedback email's line naming the app's version and build.
+    static func feedbackAppLine(version: String, build: String) -> String {
+        String(localized: "App: EditinPDF \(version) (\(build))", comment: "Line of the feedback email: the app's version, then its build number in parentheses")
+    }
+
+    /// The feedback email's line naming the system and its version ("iOS 27.0").
+    static func feedbackSystemLine(_ system: String) -> String {
+        String(localized: "System: \(system)", comment: "Line of the feedback email: the operating system and its version, e.g. iOS 27.0")
+    }
+
+    /// The feedback email's line naming the device model ("iPhone17,1").
+    static func feedbackDeviceLine(_ model: String) -> String {
+        String(localized: "Device: \(model)", comment: "Line of the feedback email: the device's model identifier, e.g. iPhone17,1")
+    }
+
+    /// The title of the alert shown when no mail app could write the feedback email.
+    static var feedbackNoMailTitle: String {
+        String(localized: "Email Your Feedback", comment: "Title of the alert shown when the device has no mail app set up to write the feedback email")
+    }
+
+    /// What that alert says: where to write.
+    static func feedbackNoMailMessage(address: String) -> String {
+        String(localized: "No mail app is set up here. Send your feedback to \(address) from any email app.", comment: "Message of the alert shown when no mail app could write the feedback email: the address to write to")
+    }
+
+    /// The alert's button that copies the feedback address.
+    static var copyAddress: String {
+        String(localized: "Copy Address", comment: "Button that copies the feedback email address")
+    }
+
+    /// The button that puts an alert away.
+    static var ok: String {
+        String(localized: "OK", comment: "Button that puts an alert away")
+    }
+
     // MARK: Editing
 
     /// The toolbar button that takes back the last change.

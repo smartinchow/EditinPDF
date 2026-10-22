@@ -14,6 +14,7 @@
 		0E2933F3E8301F6E34783DE3 /* FormInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA7A876625A851CD90DE2875 /* FormInteraction.swift */; };
 		0EECBD8B2D0DEF1A70CF27B1 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CB7C655ABDBB7F63EB993 /* UITestSupport.swift */; };
 		1073C409E61E635E09D2F082 /* OrganizeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F41A6CBEBB600930F951039 /* OrganizeController.swift */; };
+		10FF49A08913CC4F5CED3682 /* FeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E89AD7D64CB54D03A1728A /* FeedbackTests.swift */; };
 		12F8D2422646EE960883D602 /* InkDrawingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A452061FDE50418C6CCF138 /* InkDrawingTests.swift */; };
 		17906BD03910A44C66DCB90C /* KeyboardAvoidance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66A8570B0FA370EF38ED2177 /* KeyboardAvoidance.swift */; };
 		19E3DD5EDF3390B14D6074DD /* ToolMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71D3B0AB0D03422F8570F999 /* ToolMode.swift */; };
@@ -58,6 +59,7 @@
 		773CE255CD38AB803E93395E /* PageLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 531FCA150C659E74AADC8B53 /* PageLayoutTests.swift */; };
 		7903C8F43FED5B3ACF05C1FD /* OrganizeMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB04A44731160E44C9AA23DE /* OrganizeMathTests.swift */; };
 		79BFA52DB07FEEA3ABACDCA0 /* OpenOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A321A8794D9F6E3A05F37107 /* OpenOutcome.swift */; };
+		7A3F00BB2B4849ADD67FD395 /* Feedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04D05A418F8067C1B304BE7 /* Feedback.swift */; };
 		7B0825C102EA2D1C942E302B /* TileMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5890ABDC3D59A1CB8A126264 /* TileMathTests.swift */; };
 		7CBBA7ECDDB055F0291A00ED /* StringsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A4310632D0D90390638FB56 /* StringsTests.swift */; };
 		80169B64E18CC4BB759CAA9C /* ReadingPositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43F569EDE026CEAB51368D68 /* ReadingPositionTests.swift */; };
@@ -84,6 +86,7 @@
 		A19335DE0BFC936889598E2D /* ToolPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */; };
 		A33078941F9670027B262972 /* SignaturePadSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 530FDB09C408E24DA0C3815F /* SignaturePadSheet.swift */; };
 		A413F6AF560A16018A988D1F /* InlineTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7182941450B00A7B7523D7E9 /* InlineTextEditor.swift */; };
+		A4417E8B9348260C1901B5CC /* MessageUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2E917228F7BFF9ED855A4FAD /* MessageUI.framework */; };
 		A7736A17ACA202E878FB5739 /* FormFilling.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57E34C8A3831D36D54CD04A /* FormFilling.swift */; };
 		A844E2B9A520DB22C36D007B /* TileRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D671E13DDD6E967E359AC59 /* TileRendererTests.swift */; };
 		AA987A090CC435A4D0521F98 /* AnnotationEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B384EF570A0C260D9580F51 /* AnnotationEditingTests.swift */; };
@@ -166,12 +169,14 @@
 		1F41A6CBEBB600930F951039 /* OrganizeController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeController.swift; sourceTree = "<group>"; };
 		1F945A9BD2014B3DE807ACFE /* form-kinds.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "form-kinds.pdf"; sourceTree = "<group>"; };
 		1FC41F11AF49E48B5BDC9F86 /* OrganizeMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeMath.swift; sourceTree = "<group>"; };
+		20E89AD7D64CB54D03A1728A /* FeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackTests.swift; sourceTree = "<group>"; };
 		22177CB12AF8A846F8AE260E /* hello.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = hello.pdf; sourceTree = "<group>"; };
 		2236A6981F127AB554C1E49B /* rotated.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = rotated.pdf; sourceTree = "<group>"; };
 		25040FA92841FEC2602C8763 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		252B5EC2E090AB12AC4AE7AE /* PDFFileDocumentSaveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PDFFileDocumentSaveTests.swift; sourceTree = "<group>"; };
 		28C46A8DDB470715E50E3CD0 /* ToolPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolPalette.swift; sourceTree = "<group>"; };
 		2943D75B9FCE584A3897479A /* PencilKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PencilKit.framework; path = System/Library/Frameworks/PencilKit.framework; sourceTree = SDKROOT; };
+		2E917228F7BFF9ED855A4FAD /* MessageUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MessageUI.framework; path = System/Library/Frameworks/MessageUI.framework; sourceTree = SDKROOT; };
 		2F472452DDACC231079CB6A3 /* rotated.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = rotated.pdf; sourceTree = "<group>"; };
 		333AE47B2FC7D5C0B9CA66F5 /* TileMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileMath.swift; sourceTree = "<group>"; };
 		33ACD35DD113A4BED1584983 /* PageSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageSelectionTests.swift; sourceTree = "<group>"; };
@@ -260,6 +265,7 @@
 		DB04A44731160E44C9AA23DE /* OrganizeMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeMathTests.swift; sourceTree = "<group>"; };
 		DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "locked-markup.pdf"; sourceTree = "<group>"; };
 		DBEBAFEAFFB9D73A05C95CCA /* ToolModeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolModeTests.swift; sourceTree = "<group>"; };
+		E04D05A418F8067C1B304BE7 /* Feedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Feedback.swift; sourceTree = "<group>"; };
 		E214CEFD25FB448BA6DFA4AF /* PageOverlayViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageOverlayViewTests.swift; sourceTree = "<group>"; };
 		E57E34C8A3831D36D54CD04A /* FormFilling.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FormFilling.swift; sourceTree = "<group>"; };
 		EA495041C6A5DBDA4EE8ADCF /* form-kinds.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = "form-kinds.pdf"; sourceTree = "<group>"; };
@@ -285,6 +291,7 @@
 			files = (
 				9F6449B8D8C79AD3EDE8B41D /* EditinPDFCore in Frameworks */,
 				9ABEECF405575D3B8B834ABA /* PencilKit.framework in Frameworks */,
+				A4417E8B9348260C1901B5CC /* MessageUI.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -309,6 +316,7 @@
 				D0EFE7925C9963412D714A02 /* DocumentModelTests.swift */,
 				07A56D39394536122201D519 /* EditingTestSupport.swift */,
 				F614116086187558CE80DC4A /* ExtractedPagesTests.swift */,
+				20E89AD7D64CB54D03A1728A /* FeedbackTests.swift */,
 				C1B1F544650AF31086A3A94C /* FixtureStagingTests.swift */,
 				D872782DBB2FAC67912671CE /* FormFillingTests.swift */,
 				933CE8DF35DC968673A1FFCD /* GlyphLinesTests.swift */,
@@ -383,6 +391,7 @@
 		174DEBB6F32D131DE78A3602 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				2E917228F7BFF9ED855A4FAD /* MessageUI.framework */,
 				2943D75B9FCE584A3897479A /* PencilKit.framework */,
 			);
 			name = Frameworks;
@@ -456,6 +465,7 @@
 			isa = PBXGroup;
 			children = (
 				BD94C82B0C570CCAA23791C4 /* Diagnostics.swift */,
+				E04D05A418F8067C1B304BE7 /* Feedback.swift */,
 				A09A727CE94FC70B23ED5AAE /* Strings.swift */,
 			);
 			path = Support;
@@ -747,6 +757,7 @@
 				914FA6CBAD6E9AED3A732585 /* DocumentModelTests.swift in Sources */,
 				E2F4557EA9BA538A879F8A5E /* EditingTestSupport.swift in Sources */,
 				FBC56934DB9034FBFF1E83D1 /* ExtractedPagesTests.swift in Sources */,
+				10FF49A08913CC4F5CED3682 /* FeedbackTests.swift in Sources */,
 				534EEAACBFA7E590D13502DE /* FixtureStagingTests.swift in Sources */,
 				72CF57977167D1B867F5104B /* FormFillingTests.swift in Sources */,
 				A0C977C0069A3D69E4936487 /* GlyphLinesTests.swift in Sources */,
@@ -811,6 +822,7 @@
 				71947DC55566F1E7C7AC8B44 /* EngineHandle.swift in Sources */,
 				54382921DDB7DFB7048307C2 /* EraserInteraction.swift in Sources */,
 				CF9F6EC4F7513B91D77165CD /* ExtractedPages.swift in Sources */,
+				7A3F00BB2B4849ADD67FD395 /* Feedback.swift in Sources */,
 				9F951352CAAC51C0C2D8DD91 /* FixtureStaging.swift in Sources */,
 				EE81A3E124032E1B488D4AB6 /* FormFieldEditor.swift in Sources */,
 				A7736A17ACA202E878FB5739 /* FormFilling.swift in Sources */,

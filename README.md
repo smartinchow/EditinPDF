@@ -61,6 +61,9 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **Save a Copy** from the More menu: the document with all its changes, saved in the folder and under the name you
   choose (the name offered is the document's, with " copy"). The document you are working on stays open. A copy of
   a password-protected document keeps its password.
+- **Send Feedback** from the More menu: an email to info@consultin.ai, ready to write, that names the app's
+  version, the system and the device model, and nothing of your documents. Your own mail app sends it (where none is
+  set up, the app shows the address to copy); EditinPDF itself sends nothing.
 
 Still to come: the Licenses screen and the App Store release (M4). The privacy manifest ships already: no
 tracking and no data collected.
@@ -88,6 +91,10 @@ tracking and no data collected.
 - The iOS 27 SDK marks `ReferenceFileDocument` and the `DocumentGroup` initializer the app uses as deprecated, in
   favour of a `Document` protocol that needs iOS 27. The app supports iOS 17, so it keeps them. The build prints
   no warning for this today; the switch comes when the minimum moves to iOS 27.
+
+## Feedback and support
+
+Send feedback from the app's More menu, or email info@consultin.ai. Bug reports and pull requests are welcome on GitHub.
 
 ## Building
 

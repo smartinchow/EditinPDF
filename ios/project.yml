@@ -27,7 +27,7 @@ targets:
       # app that carries them, not the UI-test bundle. Check a Release build's .app for *.pdf after
       # touching this.
       - { path: EditinPDFUITests/Fixtures, buildPhase: resources }
-    dependencies: [{ package: EditinPDFCore }, { sdk: PencilKit.framework }]
+    dependencies: [{ package: EditinPDFCore }, { sdk: PencilKit.framework }, { sdk: MessageUI.framework }]
     info:
       path: EditinPDF/Info.plist
       properties:

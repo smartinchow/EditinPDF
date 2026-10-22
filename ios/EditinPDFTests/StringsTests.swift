@@ -230,4 +230,17 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.copySignedMessage, "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.")
         XCTAssertEqual(Strings.copyFailedMessage, "Try again, or choose another place to save it.")
     }
+
+    func testSendFeedbackWording() {
+        XCTAssertEqual(Strings.sendFeedback, "Send Feedback")
+        XCTAssertEqual(Strings.feedbackSubject(version: "1.2", build: "3"), "EditinPDF feedback (1.2, build 3)")
+        XCTAssertEqual(Strings.feedbackAboutThisDevice, "About this device")
+        XCTAssertEqual(Strings.feedbackAppLine(version: "1.2", build: "3"), "App: EditinPDF 1.2 (3)")
+        XCTAssertEqual(Strings.feedbackSystemLine("iOS 27.0"), "System: iOS 27.0")
+        XCTAssertEqual(Strings.feedbackDeviceLine("iPhone17,1"), "Device: iPhone17,1")
+        XCTAssertEqual(Strings.feedbackNoMailTitle, "Email Your Feedback")
+        XCTAssertEqual(Strings.feedbackNoMailMessage(address: "a@b.c"), "No mail app is set up here. Send your feedback to a@b.c from any email app.")
+        XCTAssertEqual(Strings.copyAddress, "Copy Address")
+        XCTAssertEqual(Strings.ok, "OK")
+    }
 }

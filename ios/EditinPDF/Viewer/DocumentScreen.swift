@@ -75,6 +75,8 @@ struct DocumentScreen: View {
     @State private var makingCopy = false
     /// Why Save a Copy made or wrote no copy, while the alert that says so is up.
     @State private var copyFailure: CopyFailure?
+    /// Set by Send Feedback; the feedback sender acts on it and clears it (`feedbackSender`).
+    @State private var feedbackRequested = false
 
     private static let log = Logger(subsystem: Diagnostics.subsystem, category: "copy")
 
@@ -300,6 +302,9 @@ struct DocumentScreen: View {
                 } message: { failure in
                     Text(failure.message)
                 }
+                // Send Feedback: Mail's composer, prefilled with the app's version and the device, and
+                // nothing of the document; or a mailto: link; or the address to copy.
+                .feedbackSender(isRequested: $feedbackRequested)
                 .sheet(isPresented: $showsSearch) {
                     if let search = model.search {
                         SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
@@ -465,7 +470,7 @@ struct DocumentScreen: View {
     /// iPhone simulator). iOS can also move trailing items into its More menu, and not leading ones.
     /// On a compact width the bar is short of room: Comments, Thumbnails and Organize Pages are in the
     /// bar's own menu of further actions there, listed with their titles. On a regular one all are shown.
-    /// Save a Copy is in that menu at every width.
+    /// Save a Copy and Send Feedback are in that menu at every width.
     @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
         if horizontalSizeClass == .compact {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -480,6 +485,7 @@ struct DocumentScreen: View {
                 thumbnailsButton
                 organizeButton
                 saveCopyButton
+                feedbackButton
             }
         } else {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -495,6 +501,7 @@ struct DocumentScreen: View {
             // The bar's More menu, as on a compact width.
             ToolbarItemGroup(placement: .secondaryAction) {
                 saveCopyButton
+                feedbackButton
             }
         }
     }
@@ -611,6 +618,16 @@ struct DocumentScreen: View {
         }
         .disabled(model.pageCount == 0 || makingCopy)
         .accessibilityIdentifier("saveCopyButton")
+    }
+
+    /// Writes an email of feedback to the app's makers (`feedbackSender`).
+    private var feedbackButton: some View {
+        Button {
+            feedbackRequested = true
+        } label: {
+            Label(Strings.sendFeedback, systemImage: "envelope")
+        }
+        .accessibilityIdentifier("sendFeedbackButton")
     }
 
     /// Makes the copy's bytes (`DocumentModel.copyBytes`: what waits is added first, and the changes on

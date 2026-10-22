@@ -143,6 +143,34 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertFalse(app.alerts.firstMatch.exists, "a cancelled copy says nothing")
     }
 
+    /// Send Feedback is in the More menu. The simulator cannot send mail: Mail's composer comes up where
+    /// a mail account is set up, else the mailto: link opens a mail app, else (the simulator, which has
+    /// no Mail app) an alert gives the address, with a button that copies it.
+    func testSendFeedbackOffersTheComposerOrTheAddress() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("sendFeedbackButton", titled: "Send Feedback", in: app), "no Send Feedback")
+        let alert = app.alerts["Email Your Feedback"]
+        let composer = app.navigationBars.matching(NSPredicate(format: "identifier CONTAINS[c] 'Compose' OR identifier CONTAINS 'EditinPDF feedback'")).firstMatch
+        let deadline = Date(timeIntervalSinceNow: 15)
+        while Date() < deadline, !alert.exists, !composer.exists, app.state == .runningForeground { usleep(250_000) }
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "send-feedback"
+        shot.lifetime = .keepAlways
+        add(shot)
+        if alert.exists {
+            XCTAssertTrue(alert.staticTexts.matching(NSPredicate(format: "label CONTAINS 'info@consultin.ai'")).firstMatch.exists,
+                          "the alert gives the address")
+            let copy = alert.buttons["Copy Address"].firstMatch
+            XCTAssertTrue(copy.exists, "no Copy Address")
+            copy.tap()
+            XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+            expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 5)
+        } else {
+            XCTAssertTrue(composer.exists || app.state != .runningForeground, "neither the composer, a mail app nor the address came up")
+        }
+    }
+
     /// Undo and Redo lead the bar's buttons, with their titles (for the More menu), and
     /// are disabled while there is nothing to undo or redo.
     func testUndoAndRedoAreThereAndDisabledOnAnUnchangedDocument() {
