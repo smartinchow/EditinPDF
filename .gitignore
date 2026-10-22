@@ -32,3 +32,15 @@ Package.resolved
 # Local secrets / signing
 ios/Signing.local.xcconfig
 .superpowers/
+
+# Never commit keys, signing material, env files or test output
+.env
+.env.*
+*.p8
+*.p12
+*.pem
+*.mobileprovision
+AuthKey_*
+*.xcresult
+*.log
+.claude/settings.local.json
