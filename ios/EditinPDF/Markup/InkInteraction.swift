@@ -113,6 +113,9 @@ final class InkInteraction: NSObject {
         return canvas
     }
 
+    /// Whether a stroke is being drawn on the canvas (`InkCaptureView.isDrawing`).
+    var isDrawingStroke: Bool { ink?.isDrawing ?? false }
+
     /// Adds the strokes on the canvas, if any, to the document as one drawing, handed over before this
     /// returns: in page points (`InkGeometry.strokes`, sampled about every point on screen and kept
     /// within half a point on screen, half a page point at most), in the style they were drawn in,

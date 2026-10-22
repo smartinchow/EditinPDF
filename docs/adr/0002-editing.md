@@ -70,7 +70,10 @@ not on the undo manager, so whatever undoes must add them first, or the undo mov
 them and they are refused as stale when they come. The toolbar's Undo and Redo and the Edit menu's (the iPad's
 menu bar, and ⌘Z and ⇧⌘Z on a hardware keyboard: `UndoRedoCommands`, in place of the system's group, which acted
 on the scene's undo manager directly, ⇧⌘Z even while the toolbar's Redo was off) go through `DocumentModel.undo`
-and `redo`, which add what waits first, under one rule (`UndoAvailability`). The menu names the change each makes, as
+and `redo`, which add what waits first, under one rule (`UndoAvailability`). While a stroke is being drawn they do
+nothing: what waits cannot be added before the stroke is over without cutting it, so an undo then would take back the
+change before the strokes, and the strokes, added a moment later, would clear Redo; adding them at once, as the
+closing paths do, would cut the stroke being drawn and undo the drawing under the pen. The menu names the change each makes, as
 the system's did ("Undo Add Markup"), by the same rule: what waits, when something does, else the undo manager's
 last change (`undoTitle`, `redoTitle`). The commands find the document through
 `FrontDocument`: SwiftUI's focused values never reached them from a document scene's view. Each screen says which

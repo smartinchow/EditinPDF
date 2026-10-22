@@ -583,6 +583,9 @@ final class MarkupInteraction: NSObject {
         return nil
     }
 
+    /// Whether a stroke is being drawn with Draw (`InkInteraction.isDrawingStroke`).
+    var isDrawingStroke: Bool { drawing.isDrawingStroke }
+
     /// Adds the strokes drawn with Draw and waiting, if any (`InkInteraction.commitPendingInk`).
     @discardableResult
     func commitPendingInk(closing: Bool = false) -> Task<Bool, Never>? {

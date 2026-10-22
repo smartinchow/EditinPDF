@@ -217,6 +217,10 @@ final class DocumentModel {
         return changesHandedOver != before
     }
 
+    /// Whether a stroke is being drawn with Draw (the finger or Pencil is down): what waits cannot be
+    /// added until it is over, short of cutting it (`InkInteraction.commitPendingInk`).
+    var isDrawingStroke: Bool { inkHolder?.isDrawingStroke ?? false }
+
     /// How many changes have been handed over (`enqueue`) since the model was made.
     @ObservationIgnored private(set) var changesHandedOver = 0
 
@@ -816,17 +820,29 @@ final class DocumentModel {
         await enqueue(edits, named: actionName, touching: pages).value
     }
 
-    /// Takes back the last change: the toolbar's Undo. Through the undo manager, so its stack and
-    /// the engine's history move together. Strokes drawn with Draw and waiting are added first, so
-    /// Undo then takes back the whole drawing.
+    /// Takes back the last change: the toolbar's Undo, and the Edit menu's (⌘Z). Through the undo
+    /// manager, so its stack and the engine's history move together. Strokes drawn with Draw and
+    /// waiting are added first, so Undo then takes back the whole drawing.
+    ///
+    /// Nothing happens while a stroke is being drawn (`isDrawingStroke`: ⌘Z, or the toolbar's Undo
+    /// tapped with another finger, as the Pencil draws). The strokes waiting cannot be added before the
+    /// stroke is over without cutting it (`InkInteraction.commitPendingInk`), so an undo then would take
+    /// back the change before them, and the strokes, added once the stroke lands, would clear Redo.
+    /// Adding them at once, as the closing paths do, would cut the stroke the reader is still drawing,
+    /// and the undo would then take away the drawing under their pen. Doing nothing loses nothing: once
+    /// the stroke is over, Undo adds the drawing and takes it back.
     func undo() {
+        guard !isDrawingStroke else { return }
         commitPendingInk()
         undoManager?.undo()
     }
 
-    /// Makes again the change last taken back: the toolbar's Redo. Strokes drawn with Draw and waiting
-    /// are added first (they are the latest change, and the screen does not offer Redo meanwhile).
+    /// Makes again the change last taken back: the toolbar's Redo, and the Edit menu's (⇧⌘Z). Strokes
+    /// drawn with Draw and waiting are added first (they are the latest change, and the screen does not
+    /// offer Redo meanwhile). Nothing happens while a stroke is being drawn, as for `undo`: the stroke
+    /// is a change on its way.
     func redo() {
+        guard !isDrawingStroke else { return }
         commitPendingInk()
         undoManager?.redo()
     }
@@ -1129,6 +1145,9 @@ final class DocumentModel {
 /// document yet: the page view's markup (`MarkupInteraction`).
 @MainActor
 protocol PendingInkHolder: AnyObject {
+    /// Whether a stroke is being drawn on the canvas: from its start until it is on the drawing.
+    var isDrawingStroke: Bool { get }
+
     /// Adds the strokes waiting, if any, as one change, handed over before this returns; the task says
     /// whether it was made. Nil with none waiting. While a stroke is being drawn, only when `closing`
     /// (`DocumentModel.commitPendingInk`); otherwise they wait for it, and this is nil.

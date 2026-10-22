@@ -499,6 +499,63 @@ final class InkDrawingTests: XCTestCase {
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "what waited was added")
     }
 
+    /// Undo and Redo while a stroke is being drawn (⌘Z, the menu bar's, the toolbar's tapped with
+    /// another finger) do nothing: the strokes waiting cannot be added before the stroke is over, so an
+    /// undo then would take back the change before them, and the strokes, added a moment later, would
+    /// clear Redo. Nothing moves, and once the stroke is over Undo adds the drawing and takes it back.
+    func testUndoAndRedoWhileAStrokeIsDrawnDoNothing() async throws {
+        let (controller, model, undoManager) = await makeController()
+        let drawing = controller.markupInteraction.drawing
+        XCTAssertTrue(drawing.prepareToDraw(atContentPoint: CGPoint(x: 200, y: 200)))
+        let ink = try XCTUnwrap(drawing.ink)
+        draw([line], on: ink)
+        drawing.canvasViewDrawingDidChange(ink)
+        let first = try XCTUnwrap(drawing.commitPendingInk())
+        let made = await first.value
+        XCTAssertTrue(made)
+        await model.settle()
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink])
+
+        // Another line waits, and a stroke is being drawn: Undo does nothing.
+        let lower = line.map { CGPoint(x: $0.x, y: $0.y + 200) }
+        draw([lower], on: ink)
+        drawing.canvasViewDrawingDidChange(ink)
+        drawing.canvasViewDidBeginUsingTool(ink)
+        XCTAssertTrue(model.isDrawingStroke)
+        model.undo()
+        await model.settle()
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "the drawing before was not taken back")
+        XCTAssertTrue(undoManager.canUndo)
+        XCTAssertFalse(undoManager.canRedo)
+        XCTAssertEqual(ink.drawing.strokes.count, 1, "the line waiting stays on the canvas, mid-stroke")
+        XCTAssertTrue(model.hasPendingInk)
+
+        // The stroke ends and lands: it waits with the line, and nothing was handed over for it.
+        drawing.canvasViewDidEndUsingTool(ink)
+        await Task.yield()
+        draw([line.map { CGPoint(x: $0.x, y: $0.y + 400) }], on: ink)
+        drawing.canvasViewDrawingDidChange(ink)
+        for _ in 0..<5 { await Task.yield() }
+        await model.settle()
+        XCTAssertFalse(model.isDrawingStroke)
+        XCTAssertEqual(ink.drawing.strokes.count, 2)
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).count, 1)
+
+        // Now Undo adds the line and the stroke, as one drawing, and takes them back; Redo can bring them back.
+        model.undo()
+        await model.settle()
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink], "the first drawing stays")
+        XCTAssertTrue(ink.drawing.strokes.isEmpty)
+        XCTAssertTrue(undoManager.canRedo)
+
+        // A stroke begun on the empty canvas: Redo does nothing either, and Redo stays.
+        drawing.canvasViewDidBeginUsingTool(ink)
+        model.redo()
+        await model.settle()
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).count, 1, "nothing was redone mid-stroke")
+        XCTAssertTrue(undoManager.canRedo)
+    }
+
     /// The paths after which the document or the screen may go before a stroke being drawn is over
     /// (Back touched, the scene leaving the screen, the screen going, focus leaving the pages) add the
     /// strokes drawn at once, even mid-stroke: they are not lost with the document. The stroke being
