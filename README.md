@@ -55,7 +55,11 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
     over the keyboard sets its text size and colour, a background and a border; Select's **Format** changes them
     later.
   - **Select, move, edit and delete** marks and notes. The **eraser** deletes whole marks it touches.
-  - A **Comments list** of the marks and notes in the file, by page. Tap one to jump to it; swipe to delete it.
+  - **Comments**: Select's **Comment** writes a comment on any mark (a highlight, a drawing, a shape, a
+    signature); a note's and a text box's text are their comments. The **Comments list** shows every comment by
+    page, with the kind of mark, its author and when it changed, and can show only the marks with a comment or
+    all of them. Tap a comment to write or change it, tap the arrow beside it to jump to its mark, swipe to delete
+    it, or use **Add Comment** to put a new one where you tap.
 - **Fill in forms**: text fields, check boxes, radio buttons, and lists (drop-down and list boxes).
 - **Sign**: draw your signature once, then place it on any page, as often as you need. It is a drawn mark on the
   page, not a digital signature. The saved signature is stored only on your device, in the app's own folder with
@@ -85,6 +89,8 @@ tracking and no data collected.
   adding the changes after them. A damaged file that is digitally signed can't be changed at all, since that would
   break its signatures; the app says so.
 - Undo goes back at most 100 changes.
+- Comments have no replies or threads yet, and the app does not ask for an author name, so comments it writes
+  have none (replies other apps wrote are kept in the file, not shown). Both are the next step for comments.
 - Text boxes have no bold, italic, alignment or choice of font: the engine sets them in one standard font
   (Helvetica). A new text size or background is made by adding the text box again with the same text and author,
   so it loses what other PDF apps may have set on it (its replies, its alignment) and is drawn over other marks.

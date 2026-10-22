@@ -10,6 +10,7 @@
 		0116A5DE83F679ACC3D8140E /* AnnotationEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C730FC0FA514D1E2ABCA646 /* AnnotationEditing.swift */; };
 		03FB0FD8C9C8F79BD73B9310 /* locked-markup.pdf in Resources */ = {isa = PBXBuildFile; fileRef = DBA93AF8FCF4A8213ADF227A /* locked-markup.pdf */; };
 		07252C2B7839DC88CE87589A /* ChoiceSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0BE887D281A061232EB4FA5 /* ChoiceSheet.swift */; };
+		07DB889C50191647951A3C90 /* CommentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 929024FCCAF89F35EEF482F6 /* CommentsTests.swift */; };
 		0B84E0745D79C7456B3B9404 /* ViewerSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E31D0F54FEE759D2B890E9 /* ViewerSmokeTests.swift */; };
 		0E2933F3E8301F6E34783DE3 /* FormInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA7A876625A851CD90DE2875 /* FormInteraction.swift */; };
 		0EECBD8B2D0DEF1A70CF27B1 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8CB7C655ABDBB7F63EB993 /* UITestSupport.swift */; };
@@ -229,6 +230,7 @@
 		8310CC2E867D5C492E8B65DC /* OrganizeControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrganizeControllerTests.swift; sourceTree = "<group>"; };
 		872B29FBFB80D8E673D90592 /* EditFailure.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditFailure.swift; sourceTree = "<group>"; };
 		8B6658CE4C759BBD49389820 /* PageTiledLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTiledLayerTests.swift; sourceTree = "<group>"; };
+		929024FCCAF89F35EEF482F6 /* CommentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentsTests.swift; sourceTree = "<group>"; };
 		933CE8DF35DC968673A1FFCD /* GlyphLinesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlyphLinesTests.swift; sourceTree = "<group>"; };
 		984C365033689202DB4131F4 /* EditinPDFApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditinPDFApp.swift; sourceTree = "<group>"; };
 		99DB16EDA82D406E4E0BC98F /* SearchControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchControllerTests.swift; sourceTree = "<group>"; };
@@ -316,6 +318,7 @@
 			children = (
 				4B384EF570A0C260D9580F51 /* AnnotationEditingTests.swift */,
 				9F5652E0774A95EA21FB389E /* AnnotationIndexTests.swift */,
+				929024FCCAF89F35EEF482F6 /* CommentsTests.swift */,
 				663A356725A88F611265AF96 /* DocumentEditingTests.swift */,
 				D0EFE7925C9963412D714A02 /* DocumentModelTests.swift */,
 				07A56D39394536122201D519 /* EditingTestSupport.swift */,
@@ -759,6 +762,7 @@
 			files = (
 				AA987A090CC435A4D0521F98 /* AnnotationEditingTests.swift in Sources */,
 				91A6F7D718450CBAB28C87D4 /* AnnotationIndexTests.swift in Sources */,
+				07DB889C50191647951A3C90 /* CommentsTests.swift in Sources */,
 				9FBCFD591C6116AFEC871D19 /* DocumentEditingTests.swift in Sources */,
 				914FA6CBAD6E9AED3A732585 /* DocumentModelTests.swift in Sources */,
 				E2F4557EA9BA538A879F8A5E /* EditingTestSupport.swift in Sources */,

@@ -184,9 +184,10 @@ struct DocumentScreen: View {
         )
     }
 
-    /// The note the note sheet is up for, while it is.
+    /// The note the note sheet is up for, while it is. While the Comments list is up, the list shows the
+    /// sheet over itself.
     private var noteDraft: Binding<NoteDraft?> {
-        Binding(get: { model.noteDraft }, set: { model.noteDraft = $0 })
+        Binding(get: { showsComments ? nil : model.noteDraft }, set: { model.noteDraft = $0 })
     }
 
     /// Why a change was not made, for the note sheet to show over itself while it is up.
@@ -266,8 +267,12 @@ struct DocumentScreen: View {
                     if showsFormHint, model.tool == nil {
                         formHint
                             .transition(.move(edge: .top).combined(with: .opacity))
+                    } else if model.showsAddCommentHint {
+                        addCommentHint
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
+                .animation(.snappy, value: model.showsAddCommentHint)
                 .task(id: hasFormToFill) { await showFormHintOnce() }
                 .animation(.snappy, value: showsFormHint)
                 .animation(.snappy, value: model.tool == nil)
@@ -307,7 +312,10 @@ struct DocumentScreen: View {
                 }
                 // The comments, page by page: a tap jumps to one and selects it, a swipe deletes it.
                 .sheet(isPresented: $showsComments) {
-                    CommentsSheet(model: model, failure: editFailure) { row in jump(to: row) }
+                    CommentsSheet(model: model, failure: editFailure, jump: { row in jump(to: row) }, addComment: {
+                        showsComments = false
+                        model.startAddingComment()
+                    })
                 }
                 // A tap on a list box of several choices opens its options here: Done fills it with those
                 // checked, Cancel leaves it as it was.
@@ -574,7 +582,20 @@ struct DocumentScreen: View {
         .accessibilityIdentifier("commentsButton")
     }
 
-    /// What a tap on a row of the Comments list does: the list goes, Markup's Select is picked, and the
+    /// After Add Comment, until the comment is placed: where it goes. It only says something: a tap on
+    /// it goes through to the page under it.
+    private var addCommentHint: some View {
+        Label(Strings.addCommentHint, systemImage: "hand.tap")
+            .font(.subheadline)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: Capsule())
+            .padding(.top, 8)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("addCommentHint")
+    }
+
+    /// What Show on Page beside a row of the Comments list does: the list goes, Markup's Select is picked, and the
     /// annotation is selected and brought into view (its page to the top, then its box into view).
     private func jump(to row: CommentRow) {
         showsComments = false

@@ -101,6 +101,7 @@ final class DocumentModel {
             guard tool != oldValue else { return }
             commitPendingInk()
             if tool != .select { selectedAnnotation = nil }
+            if tool != .note, showsAddCommentHint { showsAddCommentHint = false }
         }
     }
     /// Each tool's colour and size, kept between documents and launches.
@@ -420,7 +421,21 @@ final class DocumentModel {
     /// The note the note sheet is open for: one to add, where a tap with Note put it, or one on the page
     /// to read and change. Nil while the sheet is not up. Its text is the reader's, and never logged.
     var noteDraft: NoteDraft? {
-        didSet { if noteDraft?.id != oldValue?.id { noteText = nil } }
+        didSet {
+            if noteDraft?.id != oldValue?.id { noteText = nil }
+            if noteDraft != nil, showsAddCommentHint { showsAddCommentHint = false }
+        }
+    }
+
+    /// Whether the page says where the comment Add Comment puts goes (`Strings.addCommentHint`): from
+    /// Add Comment until the note is placed, or another tool picked.
+    private(set) var showsAddCommentHint = false
+
+    /// The list of comments' Add Comment: Note is picked, and the page says to tap where the comment
+    /// goes. The next tap puts a note there and opens its sheet, as Note does.
+    func startAddingComment() {
+        tool = .note
+        showsAddCommentHint = true
     }
     /// What is written in the note sheet, once it has been changed there (`noteTextDidChange`); nil
     /// until then, and while the sheet is not up. Kept here so that the scene leaving the screen can
@@ -563,7 +578,8 @@ final class DocumentModel {
             return enqueueNote(page: draft.page, at: draft.point, contents: text, workedOutAt: draft.revision)
         }
         guard text != draft.text else { return nil }
-        return enqueueContents(of: existing, to: text, workedOutAt: draft.revision)
+        return enqueueContents(of: existing, to: text, workedOutAt: draft.revision,
+                               named: draft.isComment ? Strings.actionEditComment : Strings.actionEditAnnotation)
     }
 
     /// The scene is going to the background with the note sheet up: what is written in it, when it was
@@ -1207,6 +1223,24 @@ struct NoteDraft: Identifiable, Equatable {
     let existing: AnnotationRef?
     let text: String
     let revision: UInt64
+    /// Whether it is the comment of a mark (a highlight, a drawing, a shape…: Select's Comment, a row
+    /// of the list of comments), rather than a sticky note: the sheet is called Comment, and its change
+    /// Edit Comment.
+    let isComment: Bool
+
+    init(page: Int, point: CGPoint, existing: AnnotationRef?, text: String, revision: UInt64, isComment: Bool = false) {
+        self.page = page
+        self.point = point
+        self.existing = existing
+        self.text = text
+        self.revision = revision
+        self.isComment = isComment
+    }
+
+    /// The sheet's title: Comment for a mark's comment, Note for a sticky note.
+    var title: String { isComment ? Strings.comment : Strings.noteTitle }
+    /// What the sheet's empty text says.
+    var placeholder: String { isComment ? Strings.addACommentPlaceholder : Strings.notePlaceholder }
 }
 
 /// What one change, undo or redo did, for the views that redraw pages: its revision, the pages it

@@ -840,6 +840,58 @@ enum Strings {
         String(localized: "Edit", comment: "Menu item over the selected note or text box that changes its text")
     }
 
+    /// The menu item over a selected mark (a highlight, a drawing, a shape…) that writes or changes its
+    /// comment; also the title of the sheet it is written in.
+    static var comment: String {
+        String(localized: "comment", defaultValue: "Comment", comment: "Menu item over a selected mark that writes its comment, and the title of the sheet the comment is written in")
+    }
+
+    /// What the comment sheet's empty text says, and what a row of the list of comments says for a mark
+    /// with none.
+    static var addACommentPlaceholder: String {
+        String(localized: "Add a comment", comment: "Placeholder of an empty comment, and shown in the list of comments for a mark with no comment")
+    }
+
+    /// The name Undo and Redo give a comment written or changed on a mark.
+    static var actionEditComment: String {
+        String(localized: "Edit Comment", comment: "Name of the change in Undo and Redo: a mark's comment was written or changed")
+    }
+
+    /// The list of comments' button that puts a new comment on a page.
+    static var addComment: String {
+        String(localized: "Add Comment", comment: "Button in the list of comments that closes it and lets the reader tap where a new comment goes")
+    }
+
+    /// What the page says once Add Comment is tapped, until the comment is placed.
+    static var addCommentHint: String {
+        String(localized: "Tap where the comment goes", comment: "Hint over the page after Add Comment: the next tap places a comment there")
+    }
+
+    /// Under a comment in the list: what kind of mark it is on, and its page (counting from 1).
+    static func markOnPage(_ kind: String, page: Int) -> String {
+        String(localized: "markOnPage", defaultValue: "\(kind) on page \(page)", comment: "In the list of comments, under a comment: the kind of mark it is on (Highlight, Drawing…) and its page")
+    }
+
+    /// The list of comments' filter: every mark.
+    static var allMarks: String {
+        String(localized: "All Marks", comment: "Filter of the list of comments: every mark, with a comment or not")
+    }
+
+    /// The list of comments' filter: only the marks with a comment.
+    static var withComments: String {
+        String(localized: "With Comments", comment: "Filter of the list of comments: only the marks that have a comment")
+    }
+
+    /// The name of the list of comments' filter, for VoiceOver.
+    static var commentsFilter: String {
+        String(localized: "Show", comment: "Name of the filter of the list of comments, for VoiceOver")
+    }
+
+    /// The button beside a comment in the list that brings its mark into view on the page.
+    static var showOnPage: String {
+        String(localized: "Show on Page", comment: "Button beside a comment in the list of comments: brings its mark into view and selects it")
+    }
+
     /// The heading over the comments of one page in the list of comments; `page` counts from 1. Its
     /// own key: the thumbnails' "Page n" may be translated otherwise.
     static func commentsPage(_ page: Int) -> String {

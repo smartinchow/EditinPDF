@@ -1,11 +1,16 @@
 import EditinPDFCore
 import SwiftUI
 
-/// The document's comments and markup, listed page by page ("Page n"), top to bottom on a page
-/// (`DocumentModel.commentRows`): each named for its kind, with its text and its author when it has
-/// them. A tap on one jumps there (`jump`: the screen brings it into view and selects it, and the sheet
-/// goes); a swipe deletes one the file does not lock, while the document allows markup. With none, it
-/// says so (`Strings.noComments`). The list follows every change, undo and redo.
+/// The document's comments: every mark and note, page by page ("Page n"), top to bottom on a page
+/// (`DocumentModel.commentRows`). Each row leads with its comment (or a muted "Add a comment"), and
+/// under it, small, the kind of mark and its page, its author when the file names one, and when it was
+/// last changed. A filter at the top shows all the marks or only those with a comment (`CommentFilter`:
+/// the latter to start with, when any has one). A tap on a row's text opens its comment to write or
+/// change (a note's sheet for a note), over the list; the button beside it jumps there (`jump`: the
+/// screen brings the mark into view and selects it, and the list goes). A swipe deletes one the file
+/// does not lock, while the document allows markup. Add Comment, in the bar, closes the list and lets
+/// the next tap on a page place a comment (`addComment`). With none, it says so (`Strings.noComments`).
+/// The list follows every change, undo and redo.
 ///
 /// The text and the authors' names are the file's, shown as they are, and never logged.
 struct CommentsSheet: View {
@@ -14,29 +19,52 @@ struct CommentsSheet: View {
     @Binding var failure: EditFailure?
     /// Brings `row`'s annotation into view and selects it; the screen puts the sheet away.
     let jump: (CommentRow) -> Void
+    /// Add Comment: the screen puts the sheet away and the next tap on a page places a comment.
+    let addComment: () -> Void
     @Environment(\.dismiss) private var dismiss
+    /// The filter picked; until one is, the one the rows start with (`CommentFilter.initial`).
+    @State private var picked: CommentFilter?
 
-    /// The rows, by page, in page order.
-    private var pages: [(page: Int, rows: [CommentRow])] {
-        let rows = DocumentModel.commentRows(model.annotationIndex)
-        return Dictionary(grouping: rows, by: \.page).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-    }
-
-    /// Whether the alert about a refused delete is up: while there is a failure to show.
+    /// Whether the alert about a refused change is up: while there is a failure to show, and no comment
+    /// sheet over the list, which shows its own.
     private var showsFailure: Binding<Bool> {
-        Binding(get: { failure != nil }, set: { isShown in if !isShown { failure = nil } })
+        Binding(get: { failure != nil && model.noteDraft == nil }, set: { isShown in if !isShown { failure = nil } })
     }
+
+    /// The comment sheet over the list, while it is up.
+    private var noteDraft: Binding<NoteDraft?> {
+        Binding(get: { model.noteDraft }, set: { model.noteDraft = $0 })
+    }
+
+    private var canAnnotate: Bool { model.capabilities?.canAnnotate == true }
 
     var body: some View {
         NavigationStack {
             Group {
-                let pages = pages
-                if pages.isEmpty {
+                let all = DocumentModel.commentRows(model.annotationIndex)
+                let filter = picked ?? CommentFilter.initial(for: all)
+                let shown = filter.rows(all)
+                if all.isEmpty {
                     ContentUnavailableView(Strings.noComments, systemImage: "text.bubble")
                         .accessibilityIdentifier("noComments")
                 } else {
                     List {
-                        ForEach(pages, id: \.page) { group in
+                        Section {
+                            Picker(Strings.commentsFilter, selection: Binding(get: { filter }, set: { picked = $0 })) {
+                                ForEach(CommentFilter.allCases) { choice in
+                                    Text(choice.title).tag(choice)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .accessibilityIdentifier("commentsFilter")
+                        }
+                        if shown.isEmpty {
+                            Text(Strings.noComments)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("noComments")
+                        }
+                        ForEach(Self.byPage(shown), id: \.page) { group in
                             Section(Strings.commentsPage(group.page + 1)) {
                                 ForEach(group.rows) { row in rowView(row) }
                             }
@@ -51,6 +79,13 @@ struct CommentsSheet: View {
             .navigationTitle(Strings.comments)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: addComment) {
+                        Label(Strings.addComment, systemImage: "plus.bubble")
+                    }
+                    .disabled(!canAnnotate)
+                    .accessibilityIdentifier("addCommentButton")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(Strings.done) { dismiss() }
                         .accessibilityIdentifier("commentsDoneButton")
@@ -60,44 +95,69 @@ struct CommentsSheet: View {
             } message: { failure in
                 if !failure.message.isEmpty { Text(failure.message) }
             }
+            // A row's comment, written or changed over the list: Save changes it, and the sheet goes.
+            .sheet(item: noteDraft) { draft in
+                NoteEditorSheet(draft: draft, failure: $failure, save: { text in
+                    await model.saveNoteDraft(text: text)
+                }, cancel: {
+                    model.noteDraft = nil
+                }, written: { text in
+                    model.noteTextDidChange(text)
+                })
+            }
         }
         .presentationDetents([.medium, .large])
     }
 
+    /// `rows`, by page, in page order.
+    private static func byPage(_ rows: [CommentRow]) -> [(page: Int, rows: [CommentRow])] {
+        Dictionary(grouping: rows, by: \.page).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+    }
+
     private func rowView(_ row: CommentRow) -> some View {
-        Button {
-            jump(row)
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Image(systemName: Self.symbol(of: row.kind))
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                if canAnnotate { model.editComment(of: row) } else { jump(row) }
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.headline)
+                        .foregroundStyle(row.hasComment ? .primary : .secondary)
+                        .italic(!row.hasComment)
+                        .lineLimit(3)
+                    HStack(spacing: 6) {
+                        Image(systemName: Self.symbol(of: row.kind))
+                            .accessibilityHidden(true)
+                        Text(row.subtitle)
+                        if let author = row.author {
+                            Text(author)
+                        }
+                        if let modified = row.modified {
+                            Text(CommentDate.text(for: modified))
+                        }
+                    }
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title)
-                        .foregroundStyle(.primary)
-                    if let detail = row.detail {
-                        Text(detail)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(3)
-                    }
-                    if let author = row.author {
-                        Text(author)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
+                    .lineLimit(1)
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("commentRow-\(row.page)-\(row.id.index)")
+            Button {
+                jump(row)
+            } label: {
+                Label(Strings.showOnPage, systemImage: "arrow.up.forward.circle")
+                    .labelStyle(.iconOnly)
+                    .font(.title3)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("commentJump-\(row.page)-\(row.id.index)")
         }
-        // Read as the list's text, not as a tinted button's.
-        .tint(.primary)
-        .accessibilityIdentifier("commentRow-\(row.page)-\(row.id.index)")
         .swipeActions(edge: .trailing) {
-            if !row.isLocked, model.capabilities?.canAnnotate == true {
+            if !row.isLocked, canAnnotate {
                 Button(role: .destructive) {
                     model.enqueueDelete(row.id)
                 } label: {

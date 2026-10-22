@@ -262,4 +262,18 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.border, "Border")
         XCTAssertEqual(Strings.apply, "Apply")
     }
+
+    func testCommentingOnMarksWording() {
+        XCTAssertEqual(Strings.comments, "Comments", "the toolbar button's title")
+        XCTAssertEqual(Strings.comment, "Comment")
+        XCTAssertEqual(Strings.addACommentPlaceholder, "Add a comment")
+        XCTAssertEqual(Strings.actionEditComment, "Edit Comment")
+        XCTAssertEqual(Strings.addComment, "Add Comment")
+        XCTAssertEqual(Strings.addCommentHint, "Tap where the comment goes")
+        XCTAssertEqual(Strings.markOnPage("Highlight", page: 3), "Highlight on page 3")
+        XCTAssertEqual(Strings.allMarks, "All Marks")
+        XCTAssertEqual(Strings.withComments, "With Comments")
+        XCTAssertEqual(Strings.commentsFilter, "Show")
+        XCTAssertEqual(Strings.showOnPage, "Show on Page")
+    }
 }

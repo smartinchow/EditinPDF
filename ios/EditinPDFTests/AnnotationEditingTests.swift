@@ -419,14 +419,18 @@ final class AnnotationEditingTests: XCTestCase {
     }
 
     /// The edit menu offers what may be done with an annotation: Edit for a note and for a text box on
-    /// an upright page, Format for such a text box the file does not lock, Delete for any the file does
-    /// not lock.
+    /// an upright page, Format for such a text box the file does not lock, Comment for every other mark
+    /// the file does not lock, Delete for any the file does not lock.
     func testTheMenuOffersWhatMayBeDone() async throws {
         let (controller, model, _) = await makeController()
         let selecting = controller.markupInteraction.selecting
-        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .note)), [.edit, .delete])
-        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .textBox)), [.edit, .format, .delete])
-        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .rectangle)), [.delete])
+        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .note)), [.edit, .delete], "a note's Edit is its comment")
+        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .textBox)), [.edit, .format, .delete],
+                       "a text box's text is its comment: Edit")
+        XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .rectangle)), [.comment, .delete])
+        for kind: AnnotationKind in [.highlight, .underline, .strikeOut, .squiggly, .ink, .oval, .line, .stamp] {
+            XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: kind)), [.comment, .delete], "\(kind)")
+        }
         XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .note, locked: true)), [.edit],
                        "a locked note's text may still be changed, but it is not deleted")
         XCTAssertEqual(selecting.actions(for: annotation(page: 0, index: 0, kind: .rectangle, locked: true)), [])
@@ -633,10 +637,10 @@ final class AnnotationEditingTests: XCTestCase {
 
     /// An annotation of `kind` at `rect` on `page`, number `index` there.
     func annotation(page: Int, index: UInt32, kind: AnnotationKind, contents: String? = nil, author: String? = nil,
-                    rect: CGRect = CGRect(x: 0, y: 0, width: 10, height: 10), locked: Bool = false) -> AnnotationInfo {
+                    rect: CGRect = CGRect(x: 0, y: 0, width: 10, height: 10), locked: Bool = false, modified: String? = nil) -> AnnotationInfo {
         AnnotationInfo(page: UInt32(page), index: index, kind: kind,
                        rect: Rect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
-                       contents: contents, author: author, modified: nil, color: nil, locked: locked,
+                       contents: contents, author: author, modified: modified, color: nil, locked: locked,
                        fontSize: nil, fill: nil, borderWidth: nil)
     }
 

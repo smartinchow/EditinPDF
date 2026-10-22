@@ -7,6 +7,9 @@ enum AnnotationAction: Equatable {
     case edit
     /// Change a text box's look in the format sheet: its text's size and colour, background and border.
     case format
+    /// Write or change the comment of a mark (a highlight, a drawing, a shape…) in the comment sheet. A
+    /// note's text and a text box's text are their comments: their Edit.
+    case comment
     case delete
 }
 
@@ -27,8 +30,9 @@ enum AnnotationAction: Equatable {
 ///   always scroll and zoom (the pan fails on a second finger: `MarkupPanGestureRecognizer`).
 /// - The menu offers Edit for a note (the note sheet) and for a text box on an upright page (the box
 ///   to type in, over it, with its text: `TextBoxInteraction.beginEditing`), Format for such a text box
-///   the file does not lock (the format sheet, `DocumentModel.formatTextBox`), and Delete for one the
-///   file does not lock; nothing while the document forbids markup.
+///   the file does not lock (the format sheet, `DocumentModel.formatTextBox`), Comment for every other
+///   mark the file does not lock (the comment sheet, `DocumentModel.comment(on:)`), and Delete for one
+///   the file does not lock; nothing while the document forbids markup.
 @MainActor
 final class AnnotationSelectInteraction: NSObject {
     private weak var host: PageScrollViewController?
@@ -204,6 +208,7 @@ final class AnnotationSelectInteraction: NSObject {
             }
         }
         if model.canFormat(info) { actions.append(.format) }
+        if model.canComment(on: info) { actions.append(.comment) }
         if model.canChange(info) { actions.append(.delete) }
         return actions
     }
@@ -226,6 +231,9 @@ final class AnnotationSelectInteraction: NSObject {
             }
         case .format:
             model.formatTextBox(info, workedOutAt: revision)
+        case .comment:
+            model.selectedAnnotation = nil
+            model.comment(on: info, workedOutAt: revision)
         case .delete:
             model.enqueueDelete(AnnotationRef(page: Int(info.page), index: info.index), workedOutAt: revision)
         }
@@ -305,6 +313,10 @@ extension AnnotationSelectInteraction: @preconcurrency UIEditMenuInteractionDele
             case .format:
                 UIAction(title: Strings.format, image: UIImage(systemName: "textformat")) { [weak self] _ in
                     self?.perform(.format, on: info, workedOutAt: builtAt)
+                }
+            case .comment:
+                UIAction(title: Strings.comment, image: UIImage(systemName: "text.bubble")) { [weak self] _ in
+                    self?.perform(.comment, on: info, workedOutAt: builtAt)
                 }
             case .delete:
                 UIAction(title: Strings.delete, image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in

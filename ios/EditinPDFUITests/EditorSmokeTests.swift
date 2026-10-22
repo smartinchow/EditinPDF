@@ -638,6 +638,71 @@ final class EditorSmokeTests: XCTestCase {
         attach(app, "comments-empty")
     }
 
+    /// Comment on a mark: a highlight dragged across "Page one", selected, gets a comment from its menu's
+    /// Comment; the Comments list then leads its row with that comment, under the With Comments filter.
+    func testCommentingOnAHighlightShowsInTheCommentsList() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
+        let highlight = app.buttons["tool-highlight"]
+        XCTAssertTrue(highlight.waitForEnabled(timeout: 5))
+        highlight.tap()
+        let line = textLine(in: app, page: app.scrollViews["pageScrollView"].firstMatch)
+        line.start.press(forDuration: 0.05, thenDragTo: line.end)
+        XCTAssertTrue(app.buttons["undoButton"].waitForEnabled(timeout: 5), "dragging with Highlight marked nothing")
+        sleep(1)
+        app.buttons["tool-select"].tap()
+        line.start.withOffset(CGVector(dx: 12, dy: 0)).tap()
+        let comment = menuItem("Comment", in: app)
+        XCTAssertTrue(comment.waitForExistence(timeout: 5), "the selected highlight's menu offers no Comment")
+        attach(app, "comment-menu")
+        comment.tap()
+        let text = app.textViews["noteText"]
+        XCTAssertTrue(text.waitForExistence(timeout: 5), "no comment sheet")
+        XCTAssertTrue(app.navigationBars["Comment"].exists, "the sheet is not called Comment")
+        dismissKeyboardIntroduction(in: app)
+        type("Check this line", into: text)
+        attach(app, "comment-sheet")
+        app.buttons["noteSaveButton"].tap()
+        XCTAssertTrue(text.waitForNonExistence(timeout: 5), "the sheet stayed")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-'"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "nothing listed")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertTrue(rows.firstMatch.label.hasPrefix("Check this line"), "the row reads \"\(rows.firstMatch.label)\"")
+        XCTAssertTrue(rows.firstMatch.label.contains("Highlight on page 1"), "the row reads \"\(rows.firstMatch.label)\"")
+        attach(app, "comments-list-with-comment")
+        app.buttons["commentsDoneButton"].tap()
+    }
+
+    /// Add Comment in the Comments list: the list goes, the page says where to tap, and the tap puts a
+    /// note there and opens its sheet; saved, it is listed.
+    func testAddCommentFromTheListPlacesANote() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        let add = app.buttons["addCommentButton"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5), "no Add Comment")
+        attach(app, "comments-empty-add")
+        add.tap()
+        let hint = app.descendants(matching: .any)["addCommentHint"]
+        XCTAssertTrue(hint.waitForExistence(timeout: 5), "no hint to tap where the comment goes")
+        attach(app, "add-comment-hint")
+        pagePoint(CGPoint(x: 400, y: 200), pageWidth: 612, in: app).tap()
+        let text = app.textViews["noteText"]
+        XCTAssertTrue(text.waitForExistence(timeout: 5), "the tap opened no note")
+        XCTAssertFalse(hint.exists, "the hint stayed")
+        dismissKeyboardIntroduction(in: app)
+        type("A new comment", into: text)
+        app.buttons["noteSaveButton"].tap()
+        XCTAssertTrue(text.waitForNonExistence(timeout: 5), "the sheet stayed")
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-0-'"))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the note is not listed")
+        XCTAssertTrue(rows.firstMatch.label.hasPrefix("A new comment"), "the row reads \"\(rows.firstMatch.label)\"")
+        attach(app, "comments-list-added")
+    }
+
     /// Sign: picked with no signature saved (the launch forgets any), it opens the pad, where one finger
     /// draws a made-up squiggle and Save keeps it. Each tap on the page then places it: two taps, two
     /// drawings in the Comments list, and one Undo takes the second back. Delete Signature, in the

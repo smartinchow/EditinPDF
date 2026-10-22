@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The sheet a note is written and read in (`DocumentModel.noteDraft`): its text, Save and Cancel.
+/// The sheet a note, or a mark's comment (`NoteDraft.isComment`: Select's Comment, a row of the list of
+/// comments), is written and read in (`DocumentModel.noteDraft`): its text, Save and Cancel.
 /// For a new note, Save is there once something other than spaces is written; for a note on the page,
 /// once its text is changed. While the text differs from what the sheet opened with, a swipe does not
 /// put the sheet away (and what was written with it): Cancel does, on purpose. Save puts it away once
@@ -60,7 +61,7 @@ struct NoteEditorSheet: View {
                 .scrollContentBackground(.hidden)
                 .overlay(alignment: .topLeading) {
                     if text.isEmpty {
-                        Text(Strings.notePlaceholder)
+                        Text(draft.placeholder)
                             .foregroundStyle(.tertiary)
                             // Where the editor's own first line starts.
                             .padding(.top, 8)
@@ -70,13 +71,13 @@ struct NoteEditorSheet: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .accessibilityLabel(Strings.noteTitle)
+                .accessibilityLabel(draft.title)
                 .accessibilityIdentifier("noteText")
                 // A document scene puts its Back button on every navigation bar inside it (see
                 // `PasswordSheet`): here it would leave what was written without saying so. Cancel and
                 // Save are the ways out.
                 .navigationBarBackButtonHidden(true)
-                .navigationTitle(Strings.noteTitle)
+                .navigationTitle(draft.title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
