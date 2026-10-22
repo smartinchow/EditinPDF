@@ -268,6 +268,29 @@ extension DocumentModel {
 
     // MARK: Comments
 
+    /// Reads, off the main actor, the dates the file writes for its comments, with their time zones
+    /// (`PdfDocument.annotationDates`), for the list of comments: kept (`commentDates`) only when
+    /// they are for the revision the model shows, and the document did not change while they were read.
+    /// The list asks for them as it opens and after each change while it is up; the rows show the
+    /// engine's dates, without their zones, until they come.
+    func readCommentDates() async {
+        guard let document = document() else { return }
+        let shown = revision
+        let read = await EditQueue.offMain { () -> (UInt64, [AnnotationDate], UInt64) in
+            (document.revision(), document.annotationDates(), document.revision())
+        }
+        guard case .success(let (before, dates, after)) = read, before == after, after == shown, revision == shown else { return }
+        var byRef: [AnnotationRef: String] = [:]
+        for date in dates { byRef[AnnotationRef(page: Int(date.page), index: date.index)] = date.raw }
+        commentDates = CommentDates(revision: shown, byRef: byRef)
+    }
+
+    /// The dates of `commentDates` when they are for the revision shown; none otherwise.
+    var currentCommentDates: [AnnotationRef: String] {
+        guard let commentDates, commentDates.revision == revision else { return [:] }
+        return commentDates.byRef
+    }
+
     /// Whether Select's Comment is offered for `info`: a mark the file does not lock, in a document that
     /// allows markup. Not a note nor a text box: their text is their comment, which Edit changes.
     func canComment(on info: AnnotationInfo) -> Bool {
@@ -423,7 +446,7 @@ extension DocumentModel {
     /// (then left to right) on a page. Each is named for its kind (`Strings.annotationKindName`, looked
     /// up once for each kind), with its text, and its author's name, when it has them: without the
     /// blank around them, and at most `maxRowText` characters of each.
-    static func commentRows(_ index: AnnotationIndex) -> [CommentRow] {
+    static func commentRows(_ index: AnnotationIndex, dates: [AnnotationRef: String] = [:]) -> [CommentRow] {
         func key(_ info: AnnotationInfo) -> (UInt32, Double, Double, UInt32) {
             (info.page, info.rect.y.isFinite ? info.rect.y : 0, info.rect.x.isFinite ? info.rect.x : 0, info.index)
         }
@@ -447,7 +470,8 @@ extension DocumentModel {
             .map { info in
                 CommentRow(id: AnnotationRef(page: Int(info.page), index: info.index), page: Int(info.page), kind: info.kind,
                            title: name(of: info.kind), detail: shown(info.contents), author: shown(info.author),
-                           modified: info.modified.flatMap(CommentDate.parse), rect: info.box, isLocked: info.locked)
+                           modified: (dates[AnnotationRef(page: Int(info.page), index: info.index)] ?? info.modified).flatMap(CommentDate.parse),
+                           rect: info.box, isLocked: info.locked)
             }
     }
 }

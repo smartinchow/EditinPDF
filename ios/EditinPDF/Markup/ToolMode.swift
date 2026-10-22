@@ -108,10 +108,15 @@ struct RGBA: Codable, Equatable, Sendable {
         RGBA(r: 1, g: 0.9, b: 0), RGBA(r: 0.1, g: 0.7, b: 0.2), RGBA(r: 0, g: 0.4, b: 1), RGBA(r: 0.55, g: 0.2, b: 0.85),
     ]
 
-    /// Whether `other` is this colour as a file keeps it: each component within a 255th. A colour read
-    /// back from a file has been through the engine's single precision and its rounding.
+    /// How far apart two components (or a text size or a border, in points) may be and still be the
+    /// same: the bridge's own rule (`lookTolerance()`, about a 255th), so the app never sends a change
+    /// the bridge takes for none.
+    static let tolerance = lookTolerance()
+
+    /// Whether `other` is this colour as a file keeps it: each component within `tolerance`. A colour
+    /// read back from a file has been through the engine's single precision and its rounding.
     func matches(_ other: RGBA) -> Bool {
-        abs(r - other.r) < 0.004 && abs(g - other.g) < 0.004 && abs(b - other.b) < 0.004
+        abs(r - other.r) < Self.tolerance && abs(g - other.g) < Self.tolerance && abs(b - other.b) < Self.tolerance
     }
 
     /// The colour of `choices` this is (`matches`), when it is one; itself otherwise.

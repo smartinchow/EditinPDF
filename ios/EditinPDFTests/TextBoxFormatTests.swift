@@ -97,6 +97,33 @@ final class TextBoxFormatTests: XCTestCase {
         XCTAssertEqual(format.background?.r, TextBoxFormat.backgrounds[1].r)
     }
 
+    /// A slow drag in the colour picker moves less than a 255th at each step: every step still reaches
+    /// the box, and together they make a change that shows.
+    func testEveryStepOfASlowColourDragReachesTheBox() {
+        let start = RGBA(r: 0.2, g: 0.2, b: 0.2)
+        let state = TextBoxFormatState(TextBoxFormat(fontSize: 12, color: start))
+        var told: [TextBoxFormat] = []
+        state.changed = { told.append($0) }
+        for step in 1...20 {
+            state.format.color = RGBA(r: 0.2 + Double(step) * 0.0005, g: 0.2, b: 0.2)
+        }
+        XCTAssertEqual(told.count, 20, "each tiny step is told")
+        XCTAssertEqual(told.last?.color.r ?? 0, 0.21, accuracy: 0.000_001)
+        XCTAssertNotEqual(told.last?.color, start)
+        XCTAssertFalse(told.last.map { $0 == TextBoxFormat(fontSize: 12, color: start) } ?? true, "together, a change")
+    }
+
+    /// The app takes looks within the bridge's own tolerance for the same, and no further: a colour
+    /// just inside it is no change, one just outside is.
+    func testTheLookToleranceIsTheBridges() {
+        XCTAssertEqual(RGBA.tolerance, lookTolerance())
+        let grey = RGBA(r: 0.5, g: 0.5, b: 0.5)
+        XCTAssertTrue(grey.matches(RGBA(r: 0.5 + RGBA.tolerance * 0.9, g: 0.5, b: 0.5)))
+        XCTAssertFalse(grey.matches(RGBA(r: 0.5 + RGBA.tolerance * 1.5, g: 0.5, b: 0.5)))
+        XCTAssertEqual(TextBoxFormat(fontSize: 12, color: grey), TextBoxFormat(fontSize: 12 + RGBA.tolerance * 0.9, color: grey))
+        XCTAssertNotEqual(TextBoxFormat(fontSize: 12, color: grey), TextBoxFormat(fontSize: 12 + RGBA.tolerance * 1.5, color: grey))
+    }
+
     /// A box's own size and border are kept as the file has them, and sent only when changed: a
     /// colour change never resizes the box, nor turns a 0.2 point border into another.
     func testOnlyWhatChangedIsSent() {
@@ -172,9 +199,10 @@ final class TextBoxFormatTests: XCTestCase {
         XCTAssertEqual(state.backgroundChoice, 4)
         state.format.color = RGBA(r: 0.9, g: 0.1, b: 0.1)
         state.format.color = RGBA(r: Double(Float(0.9)), g: Double(Float(0.1)), b: 0.1)
-        XCTAssertEqual(told.count, 5)
+        XCTAssertEqual(told.count, 6, "the box follows every exact change (a slow drag's steps are this small)")
+        XCTAssertEqual(told[4], told[5], "though as a change from the box's look, it is none")
         state.format.color = ToolStyleEditor.swatches[2]
-        XCTAssertEqual(told.count, 5, "the same colour read back is no change")
+        XCTAssertEqual(told.count, 7)
         XCTAssertEqual(state.swatch, 2, "a colour read back from the file, in single precision, is still its swatch")
     }
 
@@ -338,6 +366,20 @@ extension AnnotationEditingTests {
         await model.settle()
         XCTAssertEqual(undoManager.undoActionName, Strings.actionAddAnnotation, "no Format Text Box step")
         XCTAssertNil(model.failure)
+    }
+
+    /// The box being typed in follows every step of a slow colour drag.
+    func testTheBoxFollowsASlowColourDrag() async throws {
+        let (controller, _, _) = await makeController(tool: .textBox)
+        let markup = controller.markupInteraction
+        markup.place(atContentPoint: try contentPoint(CGPoint(x: 100, y: 200), in: controller))
+        let editor = try XCTUnwrap(markup.textBoxes.textEditor)
+        let state = try XCTUnwrap(markup.textBoxes.formatState)
+        let start = state.format.color
+        for step in 1...10 {
+            state.format.color = RGBA(r: start.r + Double(step) * 0.0003, g: start.g, b: start.b)
+            XCTAssertEqual(editor.format.color.r, start.r + Double(step) * 0.0003, accuracy: 0.000_001, "step \(step)")
+        }
     }
 
     /// A new colour alone changes the box in place: same place in its page's list, same box.

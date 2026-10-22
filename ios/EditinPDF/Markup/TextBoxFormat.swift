@@ -8,8 +8,9 @@ import UIKit
 /// the page is given (`Edit.restyleTextBox`). Bold, italic, alignment and the face are not here: the
 /// engine sets every text box in Helvetica, aligned as the file says.
 ///
-/// Two looks are the same (`==`) to within what a file keeps of them: colours within a 255th
-/// (`RGBA.matches`), sizes and borders within a hundredth of a point. A look read back from the file
+/// Two looks are the same (`==`) to within what a file keeps of them: each colour component, size and
+/// border within the bridge's `lookTolerance()` (`RGBA.tolerance`, about a 255th), the rule the bridge
+/// itself says "no change" by. A look read back from the file
 /// is the look picked, and picking it again changes nothing.
 struct TextBoxFormat: Equatable, Sendable {
     /// The text's size, in points: one picked is held to what the bridge takes
@@ -28,8 +29,14 @@ struct TextBoxFormat: Equatable, Sendable {
         case let (x?, y?): x.matches(y)
         default: false
         }
-        return abs(a.fontSize - b.fontSize) < 0.01 && a.color.matches(b.color) && backgrounds
-            && abs(a.borderWidth - b.borderWidth) < 0.01
+        return abs(a.fontSize - b.fontSize) < RGBA.tolerance && a.color.matches(b.color) && backgrounds
+            && abs(a.borderWidth - b.borderWidth) < RGBA.tolerance
+    }
+
+    /// Whether `other` is exactly this look, number for number: what the box being typed in follows
+    /// (every step of a drag), where `==` says whether a look changed from the one the box had.
+    func isIdentical(to other: TextBoxFormat) -> Bool {
+        fontSize == other.fontSize && color == other.color && background == other.background && borderWidth == other.borderWidth
     }
 
     /// The sizes the format's Smaller and Larger step through, in points: 6 through 72.
@@ -122,8 +129,8 @@ struct TextBoxFormat: Equatable, Sendable {
     /// takes (left out, the box keeps its own as the file has it). Nil when nothing changed.
     func restyle(_ ref: AnnotationRef, from original: TextBoxFormat?) -> Edit? {
         guard let page = UInt32(exactly: ref.page), original.map({ $0 != self }) ?? true else { return nil }
-        let sizeChanged = original.map { abs($0.fontSize - fontSize) >= 0.01 } ?? true
-        let borderChanged = original.map { abs($0.borderWidth - borderWidth) >= 0.01 } ?? true
+        let sizeChanged = original.map { abs($0.fontSize - fontSize) >= RGBA.tolerance } ?? true
+        let borderChanged = original.map { abs($0.borderWidth - borderWidth) >= RGBA.tolerance } ?? true
         return .restyleTextBox(page: page, index: ref.index, fontSize: sizeChanged ? ShapeGeometry.fontSize(fontSize) : nil,
                                color: color.rgbColor, fill: background?.rgbColor,
                                borderWidth: borderChanged ? Self.heldBorder(borderWidth) : nil)
@@ -141,7 +148,9 @@ final class TextBoxFormatState {
     /// The look picked; the box is told of every change (`changed`).
     var format: TextBoxFormat {
         didSet {
-            if format != oldValue { changed?(format) }
+            // Exactly, not to within what a file keeps (`==`): a slow drag in the colour picker moves
+            // less than that at each step, and every step shows.
+            if !format.isIdentical(to: oldValue) { changed?(format) }
         }
     }
 

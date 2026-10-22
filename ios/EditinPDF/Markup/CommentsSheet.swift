@@ -41,7 +41,7 @@ struct CommentsSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                let all = DocumentModel.commentRows(model.annotationIndex)
+                let all = DocumentModel.commentRows(model.annotationIndex, dates: model.currentCommentDates)
                 let filter = picked ?? CommentFilter.initial(for: all)
                 let shown = filter.rows(all)
                 Group {
@@ -77,6 +77,9 @@ struct CommentsSheet: View {
                 // The filter is chosen once, as the list opens: a comment written meanwhile does not
                 // move the list to another filter on its own.
                 .onAppear { if picked == nil { picked = CommentFilter.initial(for: all) } }
+                // The dates as the file writes them, with their time zones: read as the list opens, and
+                // again after each change while it is up, off the main thread.
+                .task(id: model.revision) { await model.readCommentDates() }
             }
             // A document scene puts its Back button on every navigation bar inside it (see
             // `PasswordSheet`); Done is the way out here.

@@ -427,6 +427,10 @@ final class DocumentModel {
     /// sheet is not up.
     var formatDraft: TextBoxFormatDraft?
 
+    /// The dates the file writes for its comments, with their time zones, read for the list of
+    /// comments (`readCommentDates`) at a revision.
+    var commentDates: CommentDates?
+
     /// The note the note sheet is open for: one to add, where a tap with Note put it, or one on the page
     /// to read and change. Nil while the sheet is not up. Its text is the reader's, and never logged.
     var noteDraft: NoteDraft? {
@@ -1286,6 +1290,13 @@ private struct EngineState: Sendable {
                     formFieldsTruncated: document.formFieldsTruncated(),
                     capabilities: document.capabilities())
     }
+}
+
+/// The dates a file writes for its comments (`PdfDocument.annotationDates`), by page and place, at
+/// the revision they were read at.
+struct CommentDates: Equatable {
+    let revision: UInt64
+    let byRef: [AnnotationRef: String]
 }
 
 /// What a change, undo or redo can make an edit worked out before it mean (`DocumentModel.canRebase`):

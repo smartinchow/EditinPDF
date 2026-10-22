@@ -178,6 +178,23 @@ extension AnnotationEditingTests {
         XCTAssertEqual(undoManager.undoActionName, Strings.actionAddAnnotation, "nothing changed")
     }
 
+    /// The list reads the dates as the file writes them, with their zones, on request: the rows use them
+    /// for the revision they were read at, and the engine's zone-less dates otherwise.
+    func testTheListReadsTheFilesDatesOnRequest() async throws {
+        let (_, model, _) = await makeController()
+        _ = await model.addNote(page: 0, at: CGPoint(x: 100, y: 100), contents: "Dated")
+        XCTAssertTrue(model.currentCommentDates.isEmpty, "not read until asked")
+        let before = try XCTUnwrap(DocumentModel.commentRows(model.annotationIndex).first?.modified, "the engine's reading")
+        await model.readCommentDates()
+        let raw = try XCTUnwrap(model.currentCommentDates.values.first)
+        XCTAssertTrue(raw.hasPrefix("D:"), raw)
+        let row = try XCTUnwrap(DocumentModel.commentRows(model.annotationIndex, dates: model.currentCommentDates).first)
+        let after = try XCTUnwrap(row.modified)
+        XCTAssertEqual(after.timeIntervalSince(before), 0, accuracy: 60, "the same minute, now with its zone")
+        _ = await model.addNote(page: 0, at: CGPoint(x: 200, y: 100), contents: "Later")
+        XCTAssertTrue(model.currentCommentDates.isEmpty, "dates read at another revision are not used")
+    }
+
     /// A row of the list opens the same sheet for its mark (a note's is its own: Note).
     func testARowOfTheListOpensItsComment() async throws {
         let (_, model, _) = await makeController()

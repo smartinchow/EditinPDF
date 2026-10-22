@@ -582,6 +582,7 @@ final class SelectionProbe: PdfDocumentProtocol, @unchecked Sendable {
     func save(mode: SaveMode) throws -> Data { try document.save(mode: mode) }
     func extractPages(pages: [UInt32]) throws -> Data { try document.extractPages(pages: pages) }
     func annotations() -> [AnnotationInfo] { document.annotations() }
+    func annotationDates() -> [AnnotationDate] { document.annotationDates() }
     func formFields() -> [FormField] { document.formFields() }
     func formFieldsTruncated() -> Bool { document.formFieldsTruncated() }
     func capabilities() -> EditCapabilities { document.capabilities() }

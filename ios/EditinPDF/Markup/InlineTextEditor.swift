@@ -34,7 +34,8 @@ final class InlineTextEditor: UITextView {
     /// own over one on the page; the format bar changes it.
     var format: TextBoxFormat {
         didSet {
-            guard format != oldValue else { return }
+            // Exactly: a slow drag in the colour picker moves less than `TextBoxFormat ==` tells apart.
+            guard !format.isIdentical(to: oldValue) else { return }
             applyFormat()
         }
     }
