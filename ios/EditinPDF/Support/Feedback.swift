@@ -117,6 +117,8 @@ private struct FeedbackSender: ViewModifier {
                 if let composing {
                     MailComposer(mail: composing) { self.composing = nil }
                         .ignoresSafeArea()
+                        // A swipe would throw the draft away: Mail's own Cancel asks first.
+                        .interactiveDismissDisabled()
                 }
             }
             .alert(Strings.feedbackNoMailTitle, isPresented: $showsAddress) {
