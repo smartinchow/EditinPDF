@@ -48,7 +48,8 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
   blank document can be started from the file browser.
 - **Mark up**: a Markup mode with a tool palette (a bar at the bottom on iPhone, a side palette on iPad). Each
   tool remembers its colour and line width.
-  - **Text markup**: highlight, underline and strikethrough over text you drag across.
+  - **Text markup**: highlight, underline and strikethrough over text you drag across. With text selected,
+    picking Highlight, Underline or Strikethrough in the palette marks it.
   - **Draw** with a finger or an Apple Pencil.
   - **Shapes and arrows**: rectangle, oval, line and arrow, with an optional fill for rectangles and ovals.
   - **Text boxes** and **notes**: type on the page, or leave a sticky note. While you type in a text box, a bar
@@ -93,7 +94,8 @@ tracking and no data collected.
   have none (replies other apps wrote are kept in the file, not shown). Both are the next step for comments.
 - Text boxes have no bold, italic, alignment or choice of font: the engine sets them in one standard font
   (Helvetica). A new text size or background is made by adding the text box again with the same text and author,
-  so it loses what other PDF apps may have set on it (its replies, its alignment) and is drawn over other marks.
+  so it loses what other PDF apps may have set on it (its alignment, its opacity) and is drawn over other marks. A
+  text box with replies, or whose text is all rich text, or a callout, can only change its colour and border.
 - Text outside the Latin alphabet (Greek, Cyrillic, Chinese, Japanese, Korean, emoji and the like) typed in a text
   box shows on the page as "?": the engine draws text boxes in a standard font that has only Western European
   letters. The text itself is kept as typed (the Comments list shows it). A form field is drawn the same way,
@@ -181,12 +183,13 @@ Design notes live in [docs/superpowers/specs](docs/superpowers/specs/). The buil
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push to `main` and every pull request, on GitHub's `xcode-27` macOS
-image (Xcode 27 is in public preview there and not on `macos-latest` yet). It checks Rust formatting, clippy and
+`.github/workflows/ci.yml` runs on pull requests and by hand (`gh workflow run CI`, or Run workflow on the
+Actions tab), not on every push to `main`, on GitHub's `xcode-27` macOS image (Xcode 27 is in public preview there and not on `macos-latest` yet). It checks Rust formatting, clippy and
 the Rust tests; builds the XCFramework; runs the Swift package tests; checks that the committed Xcode project is
 what `project.yml` generates; runs the app's unit and UI tests on a simulator chosen from what the runner has; and
-builds Release to check that no PDF ships in the app. `make lint test release-check` runs the same checks on
-your Mac; after `make project`, `git status` shows whether the committed Xcode project was out of date.
+builds Release to check that no PDF ships in the app. Day to day, the checks are `make lint test release-check`
+on a Mac, which run the same ones; after `make project`, `git status` shows whether the committed Xcode project
+was out of date.
 
 ## Contributing, and updating the engine
 
