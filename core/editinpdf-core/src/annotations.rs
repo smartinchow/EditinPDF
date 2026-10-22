@@ -37,6 +37,15 @@ pub enum AnnotationKind {
 }
 
 impl AnnotationKind {
+    /// Whether it marks text: a highlight, underline, strikethrough or squiggly underline, which
+    /// cover the text of their quadrilaterals (`/QuadPoints`).
+    pub(crate) fn is_text_markup(&self) -> bool {
+        matches!(
+            self,
+            Self::Highlight | Self::Underline | Self::StrikeOut | Self::Squiggly
+        )
+    }
+
     fn from_subtype(subtype: &str) -> Self {
         match subtype {
             "Text" => Self::Note,
@@ -97,21 +106,37 @@ pub struct AnnotationInfo {
     /// text), or it is a callout or typed text, which a plain box would replace. False for every other
     /// kind. (On a page shown turned, every text box keeps its size and background too.)
     pub restyle_in_place_only: bool,
+    /// For a highlight, underline, strikethrough or squiggly underline, the boxes of the text it
+    /// marks, one for each of its quadrilaterals (`/QuadPoints`), in the file's order: each the
+    /// view-space box that holds its four corners, finite and within the same reach as `rect`. At
+    /// most `MAX_LISTED_QUADS` for one mark, and `MAX_LISTED_QUADS_IN_ALL` for the whole list (the
+    /// marks listed after that many have none). Empty for every other kind, and for a mark whose
+    /// file gives none.
+    #[uniffi(default = [])]
+    pub quads: Vec<Rect>,
 }
 
 /// The comments of the document the engine read, page by page and top to bottom within a page.
 /// Replies to other comments are left out: they belong to the comment they answer.
 pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
+    // How many more quads the list may carry, over all its marks.
+    let mut quads_left = MAX_LISTED_QUADS_IN_ALL;
     let mut list: Vec<AnnotationInfo> = info
         .annotations
         .iter()
         .filter(|a| a.in_reply_to.is_none())
         .filter_map(|a| {
             let page = info.pages.get(a.page)?;
+            let kind = AnnotationKind::from_subtype(&a.subtype);
+            let quads = if kind.is_text_markup() {
+                listed_quads(page, &a.quads, &mut quads_left)
+            } else {
+                Vec::new()
+            };
             Some(AnnotationInfo {
                 page: u32::try_from(a.page).ok()?,
                 index: u32::try_from(a.index).ok()?,
-                kind: AnnotationKind::from_subtype(&a.subtype),
+                kind,
                 rect: finite_rect(geometry::rect_to_view(page, a.rect)),
                 contents: a.contents.clone(),
                 author: a.author.clone(),
@@ -127,6 +152,7 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
                 fill: None,
                 border_width: None,
                 restyle_in_place_only: false,
+                quads,
             })
         })
         .collect();
@@ -145,16 +171,67 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
 /// it, so the apps are never handed an infinite or undefined box.
 const MAX_LISTED_COORD: f64 = 1.0e6;
 
+/// The most quads listed for one mark: as many boxes as one mark the apps add may cover
+/// (`edit::MAX_MARKUP_RECTS`), which is far more lines than a page has.
+pub(crate) const MAX_LISTED_QUADS: usize = crate::edit::MAX_MARKUP_RECTS;
+
+/// The most quads listed for all the marks of a document together: what a hostile file can make the
+/// list carry across the bridge is bounded, whatever number of marks it has.
+pub(crate) const MAX_LISTED_QUADS_IN_ALL: usize = 100_000;
+
+/// The view-space boxes of a mark's `quads` (each 8 numbers of user space, as the engine read them)
+/// on `page`: at most `MAX_LISTED_QUADS`, and no more than `left`, which goes down by as many.
+fn listed_quads(
+    page: &pdfcraft_render::PageInfo,
+    quads: &[[f32; 8]],
+    left: &mut usize,
+) -> Vec<Rect> {
+    let take = quads.len().min(MAX_LISTED_QUADS).min(*left);
+    *left = left.saturating_sub(take);
+    quads
+        .iter()
+        .take(take)
+        .map(|quad| quad_box(page, quad))
+        .collect()
+}
+
+/// The view-space box that holds the four corners of `quad` (user space: x, y of each), with every
+/// number finite and within `MAX_LISTED_COORD` (`finite_rect`). Its corners are held to the reach
+/// before they are compared, so a corner that is not a number, or is infinite, cannot make the box so.
+fn quad_box(page: &pdfcraft_render::PageInfo, quad: &[f32; 8]) -> Rect {
+    let [x1, y1, x2, y2, x3, y3, x4, y4] = *quad;
+    let corners = [(x1, y1), (x2, y2), (x3, y3), (x4, y4)].map(|(x, y)| {
+        let p = geometry::to_view(page, [f64::from(x), f64::from(y)]);
+        (held(p.x), held(p.y))
+    });
+    let (mut left, mut top) = corners[0];
+    let (mut right, mut bottom) = corners[0];
+    for (x, y) in corners {
+        left = left.min(x);
+        right = right.max(x);
+        top = top.min(y);
+        bottom = bottom.max(y);
+    }
+    finite_rect(Rect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
+/// `n` if it is finite, held to within `MAX_LISTED_COORD`; 0 if it is not a number or infinite.
+fn held(n: f64) -> f64 {
+    if n.is_finite() {
+        n.clamp(-MAX_LISTED_COORD, MAX_LISTED_COORD)
+    } else {
+        0.0
+    }
+}
+
 /// `rect` with every number finite and within `MAX_LISTED_COORD`: one that is not a number is 0, and
 /// one past the reach is held to it.
 fn finite_rect(rect: Rect) -> Rect {
-    let held = |n: f64| {
-        if n.is_finite() {
-            n.clamp(-MAX_LISTED_COORD, MAX_LISTED_COORD)
-        } else {
-            0.0
-        }
-    };
     Rect {
         x: held(rect.x),
         y: held(rect.y),
@@ -246,6 +323,33 @@ pub(crate) fn deletes(
         label: label.to_owned(),
         edits,
     })
+}
+
+/// The opacity (`/CA`) of the comment at place `index` of the 0-based `page`'s `/Annots` in the
+/// document as it is (`doc`), as the engine draws it: from 0 to 1 (a file's number outside that is
+/// held to it), and 1 when the file gives none or one that is not a finite number. `Invalid` when the
+/// page has no comment at that place; `Failed` when the file cannot be read again.
+pub(crate) fn opacity_at(
+    doc: &pdfcraft_engine::Document,
+    page: usize,
+    index: u32,
+) -> Result<f64, EditError> {
+    let cos = working_file(doc)?;
+    let list = page_annots(&cos, page_object(&cos, page)?);
+    let entry = usize::try_from(index)
+        .ok()
+        .and_then(|place| list.get(place))
+        .ok_or_else(|| EditError::Invalid {
+            message: format!("comment {index} does not exist"),
+        })?;
+    let object = cos.resolve(entry);
+    let opacity = object
+        .as_dict()
+        .and_then(|d| d.get(b"CA"))
+        .and_then(|ca| cos.resolve(ca).as_f64())
+        .filter(|opacity| opacity.is_finite())
+        .unwrap_or(1.0);
+    Ok(opacity.clamp(0.0, 1.0))
 }
 
 /// `Ok` when the document's comments may be changed; otherwise the engine's own refusal: the document
@@ -839,6 +943,62 @@ impl Graph<'_> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    fn letter() -> pdfcraft_render::PageInfo {
+        pdfcraft_render::PageInfo {
+            width: 612.0,
+            height: 792.0,
+            label: String::new(),
+            crop: [0.0, 0.0, 612.0, 792.0],
+            rotation: 0,
+        }
+    }
+
+    #[test]
+    fn quads_stop_at_the_cap_for_all_the_marks() {
+        let quad = [10.0, 700.0, 20.0, 700.0, 10.0, 690.0, 20.0, 690.0];
+        let mut left = 3;
+        assert_eq!(listed_quads(&letter(), &[quad; 2], &mut left).len(), 2);
+        assert_eq!(left, 1);
+        assert_eq!(listed_quads(&letter(), &[quad; 2], &mut left).len(), 1);
+        assert_eq!(left, 0);
+        assert!(listed_quads(&letter(), &[quad; 2], &mut left).is_empty());
+        let mut plenty = usize::MAX;
+        let many = vec![quad; MAX_LISTED_QUADS + 1];
+        assert_eq!(
+            listed_quads(&letter(), &many, &mut plenty).len(),
+            MAX_LISTED_QUADS
+        );
+    }
+
+    #[test]
+    fn a_quads_box_holds_its_corners_and_stays_finite() {
+        let quad = [10.0, 700.0, 20.0, 700.0, 10.0, 690.0, 20.0, 690.0];
+        let b = quad_box(&letter(), &quad);
+        for (n, expected) in [(b.x, 10.0), (b.y, 92.0), (b.width, 10.0), (b.height, 10.0)] {
+            assert!((n - expected).abs() < 0.01, "{b:?}");
+        }
+        for hostile in [
+            [
+                f32::INFINITY,
+                0.0,
+                f32::NEG_INFINITY,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+            [f32::NAN; 8],
+            [f32::MAX, -f32::MAX, -f32::MAX, f32::MAX, 0.0, 0.0, 0.0, 0.0],
+        ] {
+            let b = quad_box(&letter(), &hostile);
+            for n in [b.x, b.y, b.width, b.height] {
+                assert!(n.is_finite() && n.abs() <= MAX_LISTED_COORD, "{b:?}");
+            }
+            assert!(b.width >= 0.0 && b.height >= 0.0, "{b:?}");
+        }
+    }
 
     #[test]
     fn subtypes_become_kinds() {

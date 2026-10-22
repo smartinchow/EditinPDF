@@ -676,7 +676,10 @@ impl PdfDocument {
     /// is before the step (turning pages keeps their numbers, so that mix is allowed). A step that
     /// deletes a comment of a page (`DeleteAnnotation` or `DeleteAnnotations`) or restyles a text box
     /// there (`RestyleTextBox`, which may delete it and add it again) cannot also address another
-    /// comment of that page by its place: deleting moves the places after it. Filling in a
+    /// comment of that page by its place: deleting moves the places after it. A text markup added in
+    /// such a step may still take its opacity from a comment of that page (`opacity_of`), one the step
+    /// deletes included: that place is read before any change of the step is made, so the step that
+    /// cuts a mark short deletes it and adds back what stays of it. Filling in a
     /// form field addresses it by its name, so it goes with any page change. Otherwise the errors
     /// are those of `apply`, and a step of no change, or of more than 10,000, is refused as
     /// `Invalid`.

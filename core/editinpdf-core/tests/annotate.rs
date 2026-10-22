@@ -37,6 +37,7 @@ fn highlight_on_rotated_page_comes_back_where_drawn() {
                     blue: 0.0,
                 },
                 contents: String::new(),
+                opacity_of: None,
             },
             0,
         )
@@ -135,6 +136,7 @@ fn note_markup_kinds_contents_and_delete() {
                 rects: sel.rects,
                 color: RED,
                 contents: String::new(),
+                opacity_of: None,
             },
             2 + i as u64,
         )
@@ -212,6 +214,7 @@ fn bad_annotation_edits_are_invalid() {
         rects: vec![],
         color: YELLOW,
         contents: String::new(),
+        opacity_of: None,
     });
     invalid(Edit::AddTextMarkup {
         page: 0,
@@ -224,6 +227,7 @@ fn bad_annotation_edits_are_invalid() {
         }],
         color: YELLOW,
         contents: String::new(),
+        opacity_of: None,
     });
     invalid(Edit::AddNote {
         page: 0,
@@ -974,6 +978,7 @@ fn huge_coordinates_and_moves_are_invalid() {
             rects: vec![Rect { height: huge, ..r }],
             color: YELLOW,
             contents: String::new(),
+            opacity_of: None,
         },
         Edit::MoveAnnotation {
             page: 0,
@@ -1100,6 +1105,7 @@ fn over_long_texts_and_too_many_marked_boxes_are_invalid() {
         rects,
         color: YELLOW,
         contents,
+        opacity_of: None,
     };
     let long = "a".repeat(cap + 1);
     let too_long = [

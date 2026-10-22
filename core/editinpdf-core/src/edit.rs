@@ -32,7 +32,7 @@ pub(crate) const MAX_STEP_EDITS: usize = 10_000;
 pub(crate) const MAX_TEXT_CHARS: usize = 100_000;
 
 /// The most boxes one text markup may cover: one for each line marked, so far more than a page has.
-const MAX_MARKUP_RECTS: usize = 10_000;
+pub(crate) const MAX_MARKUP_RECTS: usize = 10_000;
 
 /// The most strokes one drawing may have.
 const MAX_STROKES: usize = 500;
@@ -173,12 +173,20 @@ pub enum Edit {
     /// Marks text: `rects` are the boxes of the marked text, one for each line, as
     /// `TextSelection.rects` gives them: at least one and at most 10,000. `contents`, the comment's
     /// text, has at most `max_text_chars` characters.
+    ///
+    /// It is drawn opaque, unless `opacity_of` names a comment of the page by its place in the list
+    /// (`AnnotationInfo.index`), read as the list is before the step: the mark then takes that
+    /// comment's opacity (`/CA`). That is how a mark cut short is added back in the step that deletes
+    /// it (`DeleteAnnotations` with it): the place is read before any change of the step is made, so
+    /// it may name a comment the step deletes. A place the page's list does not have is `Invalid`.
     AddTextMarkup {
         page: u32,
         kind: MarkupKind,
         rects: Vec<Rect>,
         color: RgbColor,
         contents: String,
+        #[uniffi(default = None)]
+        opacity_of: Option<u32>,
     },
     /// Adds a sticky note whose icon's top-left corner, as shown, is at `at`. `contents` has at most
     /// `max_text_chars` characters.
@@ -380,6 +388,7 @@ impl Edit {
                 rects,
                 color,
                 contents,
+                opacity_of,
             } => {
                 let info = page_of(pages, *page)?;
                 if rects.is_empty() {
@@ -400,15 +409,22 @@ impl Edit {
                     MarkupKind::Underline => pdfcraft_engine::Markup::Underline,
                     MarkupKind::StrikeOut => pdfcraft_engine::Markup::StrikeOut,
                 };
-                comment(
-                    *page,
-                    pdfcraft_engine::Shape::TextMarkup {
-                        kind: markup,
-                        quads,
-                    },
-                    *color,
-                    capped(contents, "a comment's text")?,
-                )?
+                let shape = pdfcraft_engine::Shape::TextMarkup {
+                    kind: markup,
+                    quads,
+                };
+                // Read from the document as it is before the step: every edit of a step is turned
+                // into the engine's before any is made.
+                let opacity = match opacity_of {
+                    Some(index) => annotations::opacity_at(doc, index_of(pages, *page)?, *index)?,
+                    None => 1.0,
+                };
+                let style = pdfcraft_engine::Style {
+                    color: rgb(*color)?,
+                    opacity,
+                    ..pdfcraft_engine::Style::default_for(&shape)
+                };
+                added(*page, shape, style, capped(contents, "a comment's text")?)?
             }
             Self::AddNote {
                 page,
