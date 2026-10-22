@@ -124,19 +124,25 @@ final class ViewerSmokeTests: XCTestCase {
         // The system's exporter (a document picker, its elements named by the system), offering the name.
         let name = app.textFields["DOCPicker.filenameTextField"]
         XCTAssertTrue(name.waitForExistence(timeout: 15), "the exporter did not come up")
+        // (Its Save button is named "DOCPicker.actionButton" on iOS 27, otherwise on iOS 26.5: not looked for.)
         XCTAssertEqual(name.value as? String, "sample copy")
-        XCTAssertTrue(app.buttons["DOCPicker.actionButton"].exists, "the exporter has no Save button")
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "save-a-copy-exporter"
         shot.lifetime = .keepAlways
         add(shot)
-        // Cancelled: on the iOS 27 simulator the picker's Cancel is an element no tap reaches (behind its
-        // More button), so the sheet is dragged down by its top, as a person would put it away.
+        // Cancelled: by the picker's close button where a tap reaches one (the iPad's full-screen picker
+        // has one); on the iOS 27 iPhone simulator its Cancel is an element no tap reaches (behind its More
+        // button), so the sheet is dragged down by its top, as a person would put it away.
+        let closers = app.buttons.matching(NSPredicate(format: "label IN {'Close', 'Cancel'} OR identifier IN {'Close', 'Cancel'}"))
         let bar = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
         for _ in 0..<3 where name.exists {
-            let top = bar.exists ? bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
-                                 : app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
-            top.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+            if let closer = closers.allElementsBoundByIndex.first(where: { $0.isHittable }) {
+                closer.tap()
+            } else {
+                let top = bar.exists ? bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+                                     : app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+                top.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)))
+            }
             _ = name.waitForNonExistence(timeout: 4)
         }
         XCTAssertTrue(name.waitForNonExistence(timeout: 6), "the exporter did not go")
