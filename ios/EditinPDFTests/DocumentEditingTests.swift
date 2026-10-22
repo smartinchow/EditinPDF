@@ -271,6 +271,21 @@ final class DocumentEditingTests: XCTestCase {
         XCTAssertTrue(DocumentModel.canRebase([.setFieldValue(name: "a", value: .text(text: "b"))], workedOutAt: 0, shifts: shifts))
     }
 
+    /// Restyling a text box may delete it and add it again at the end of its page's list: it moves the
+    /// places after it, as a delete does (its undo too), and it names its text box by its place.
+    func testARestyleShiftsAndDependsOnThePlacesOfTheAnnotations() {
+        let restyle = Edit.restyleTextBox(page: 0, index: 1, fontSize: 20, color: RgbColor(red: 0, green: 0, blue: 0),
+                                          fill: nil, borderWidth: 0)
+        XCTAssertEqual(DocumentModel.shift(of: [restyle]), [.annotations])
+        XCTAssertEqual(DocumentModel.undoShift(of: [restyle]), [.annotations])
+        XCTAssertEqual(DocumentModel.dependence(of: [restyle]), [.pages, .annotations])
+        var shifts = DocumentModel.Shifts()
+        shifts.record(DocumentModel.shift(of: [restyle]), at: 3)
+        XCTAssertFalse(DocumentModel.canRebase([.deleteAnnotation(page: 0, index: 2)], workedOutAt: 2, shifts: shifts))
+        XCTAssertFalse(DocumentModel.canRebase([restyle], workedOutAt: 2, shifts: shifts))
+        XCTAssertTrue(DocumentModel.canRebase([restyle], workedOutAt: 3, shifts: shifts))
+    }
+
     /// Strokes drawn after a mark was added, and added after that mark is undone from somewhere other
     /// than the toolbar (the undo manager itself), are added: the undo moved no page and no point.
     func testStrokesAddedAfterAnUndoOfAMarkAreAdded() async throws {

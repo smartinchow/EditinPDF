@@ -44,6 +44,8 @@ const MAX_DRAWING_POINTS: usize = 100_000;
 const LINE_WIDTHS: std::ops::RangeInclusive<f64> = 0.1..=50.0;
 /// The smallest and largest a text box's text may be, in points.
 const FONT_SIZES: std::ops::RangeInclusive<f64> = 4.0..=144.0;
+/// The thinnest and thickest a text box's border may be, in points, when it has one (0 is none).
+const BORDER_WIDTHS: std::ops::RangeInclusive<f64> = 0.5..=12.0;
 /// The least a drawn box or line measures, in points.
 const MIN_SIDE_PT: f64 = 1.0;
 
@@ -230,8 +232,9 @@ pub enum Edit {
         width: f64,
     },
     /// Adds a box showing `text` (at most `max_text_chars` characters) in `color`, `font_size`
-    /// points (4 through 144), with no border and no background. `rect` is at least 1 point wide and
-    /// tall.
+    /// points (4 through 144), on the background `fill` (none when `None`), with a border in the text's
+    /// colour `border_width` points wide: 0 for none, or 0.5 through 12. `rect` is at least 1 point
+    /// wide and tall.
     ///
     /// The engine sets the text upright in the file's own space, so on a page turned by a quarter
     /// or three quarters (`PageInfo.rotation_degrees` 90 or 270) the box is where it was drawn but
@@ -243,6 +246,33 @@ pub enum Edit {
         text: String,
         font_size: f64,
         color: RgbColor,
+        fill: Option<RgbColor>,
+        border_width: f64,
+    },
+    /// Gives the text box at `index` in the page's list (`AnnotationInfo.index`) its text in
+    /// `font_size` points (4 through 144) and `color`, the background `fill` (none when `None`) and a
+    /// border `border_width` points wide (0 for none, or 0.5 through 12): one change, which one undo
+    /// takes back. Its text and its place on the page stay.
+    ///
+    /// When only the colour or the border changes, the text box is changed in place. A new size or
+    /// background is more than the engine can change in place, so the text box is deleted and added
+    /// again: its top-left corner stays, it grows or shrinks across with the text so that its lines
+    /// break where they did (no further than the page's right edge), and down to hold the text. It
+    /// keeps its text and its author, and loses what the engine does not set on a new one: its name
+    /// (`/NM`), creation date, opacity, alignment and replies. It goes at the end of the page's list,
+    /// over the others, and the comments after its old place move down one: so in `apply_all` no other
+    /// change of the step may address a comment of that page by its place, as with
+    /// `DeleteAnnotation`. Adding it again is refused on a page shown turned (`PageInfo.rotation_degrees`
+    /// not 0), where its text would be set upright in the file, and for a callout or typed text.
+    ///
+    /// `Invalid` for a comment that is not a text box, one the file locks, or a value out of range.
+    RestyleTextBox {
+        page: u32,
+        index: u32,
+        font_size: f64,
+        color: RgbColor,
+        fill: Option<RgbColor>,
+        border_width: f64,
     },
     /// Adds a rectangle or an oval in `rect` (at least 1 point wide and tall), outlined in `color`
     /// `width` points wide (0.1 through 50) and filled with `fill`, if any.
@@ -464,21 +494,40 @@ impl Edit {
                 text,
                 font_size,
                 color,
+                fill,
+                border_width,
             } => {
                 let info = page_of(pages, *page)?;
-                if !(font_size.is_finite() && FONT_SIZES.contains(font_size)) {
-                    return Err(invalid(format!(
-                        "text is {} through {} points, not {font_size}",
-                        FONT_SIZES.start(),
-                        FONT_SIZES.end()
-                    )));
-                }
                 let shape = pdfcraft_engine::Shape::TextBox {
                     rect: geometry::rect_to_user(info, drawn_box(rect)?),
-                    font_size: *font_size,
+                    font_size: text_size(*font_size)?,
                 };
-                // The text's colour; no border and no background.
-                comment(*page, shape, *color, capped(text, "a text box's text")?)?
+                // The text's colour, the background and the border's width (drawn in the text's
+                // colour).
+                let style = pdfcraft_engine::Style {
+                    color: rgb(*color)?,
+                    opacity: 1.0,
+                    width: border(*border_width)?,
+                    fill: fill.map(rgb).transpose()?,
+                };
+                added(*page, shape, style, capped(text, "a text box's text")?)?
+            }
+            Self::RestyleTextBox {
+                page,
+                index,
+                font_size,
+                color,
+                fill,
+                border_width,
+            } => {
+                let info = page_of(pages, *page)?;
+                let look = annotations::TextBoxLook {
+                    font_size: text_size(*font_size)?,
+                    color: rgb(*color)?,
+                    fill: fill.map(rgb).transpose()?,
+                    border_width: border(*border_width)?,
+                };
+                annotations::restyle_text_box(doc, info, index_of(pages, *page)?, *index, look)?
             }
             Self::AddShape {
                 page,
@@ -570,6 +619,7 @@ impl Edit {
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
             | Self::AddTextBox { .. }
+            | Self::RestyleTextBox { .. }
             | Self::AddShape { .. }
             | Self::AddLine { .. }
             | Self::MoveAnnotation { .. }
@@ -595,6 +645,7 @@ impl Edit {
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
             | Self::AddTextBox { .. }
+            | Self::RestyleTextBox { .. }
             | Self::AddShape { .. }
             | Self::AddLine { .. }
             | Self::MoveAnnotation { .. }
@@ -610,6 +661,7 @@ impl Edit {
             Self::DeleteAnnotation { .. }
             | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
+            | Self::RestyleTextBox { .. }
             | Self::MoveAnnotation { .. } => true,
             Self::RotatePages { .. }
             | Self::DeletePages { .. }
@@ -635,6 +687,7 @@ impl Edit {
             Self::DeleteAnnotation { page, .. }
             | Self::DeleteAnnotations { page, .. }
             | Self::SetAnnotationContents { page, .. }
+            | Self::RestyleTextBox { page, .. }
             | Self::MoveAnnotation { page, .. } => Some(*page),
             Self::RotatePages { .. }
             | Self::DeletePages { .. }
@@ -671,6 +724,7 @@ impl Edit {
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
             | Self::AddTextBox { .. }
+            | Self::RestyleTextBox { .. }
             | Self::AddShape { .. }
             | Self::AddLine { .. }
             | Self::MoveAnnotation { .. } => None,
@@ -695,6 +749,7 @@ impl Edit {
             | Self::AddInk { .. }
             | Self::AddSignature { .. }
             | Self::AddTextBox { .. }
+            | Self::RestyleTextBox { .. }
             | Self::AddShape { .. }
             | Self::AddLine { .. }
             | Self::MoveAnnotation { .. }
@@ -715,6 +770,8 @@ impl Edit {
             | Self::DeleteAnnotation { .. }
             | Self::DeleteAnnotations { .. }
             | Self::SetAnnotationContents { .. }
+            // Its box is read from the file, in the file's space, not given in view space.
+            | Self::RestyleTextBox { .. }
             | Self::SetFieldValue { .. } => false,
             // A move's distance as shown is turned with the page into the file's space.
             Self::AddTextMarkup { .. }
@@ -832,6 +889,33 @@ fn line_width(width: f64) -> Result<f64, EditError> {
             "a line is {} through {} points wide, not {width}",
             LINE_WIDTHS.start(),
             LINE_WIDTHS.end()
+        )))
+    }
+}
+
+/// A text box's text size, once it is known to be one a text box can have.
+fn text_size(size: f64) -> Result<f64, EditError> {
+    if size.is_finite() && FONT_SIZES.contains(&size) {
+        Ok(size)
+    } else {
+        Err(invalid(format!(
+            "text is {} through {} points, not {size}",
+            FONT_SIZES.start(),
+            FONT_SIZES.end()
+        )))
+    }
+}
+
+/// A text box's border width, once it is known to be one a border can have: 0 (none), or within
+/// `BORDER_WIDTHS`.
+fn border(width: f64) -> Result<f64, EditError> {
+    if width == 0.0 || (width.is_finite() && BORDER_WIDTHS.contains(&width)) {
+        Ok(width)
+    } else {
+        Err(invalid(format!(
+            "a text box's border is 0 (none) or {} through {} points wide, not {width}",
+            BORDER_WIDTHS.start(),
+            BORDER_WIDTHS.end()
         )))
     }
 }

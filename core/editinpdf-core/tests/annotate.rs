@@ -460,6 +460,8 @@ fn drawings_come_back_where_drawn_at_every_rotation() {
                 text: "Hi".into(),
                 font_size: 12.0,
                 color: BLUE,
+                fill: None,
+                border_width: 0.0,
             },
             Edit::AddLine {
                 page: 0,
@@ -519,6 +521,8 @@ fn text_box_shapes_line_and_arrow_persist() {
             text: "Hi there".into(),
             font_size: 14.0,
             color: BLUE,
+            fill: None,
+            border_width: 0.0,
         },
         Edit::AddShape {
             page: 0,
@@ -637,7 +641,9 @@ fn degenerate_drawings_are_invalid() {
                 },
                 text: "a".into(),
                 font_size: 12.0,
-                color: RED
+                color: RED,
+                fill: None,
+                border_width: 0.0,
             },
             0
         ),
@@ -714,6 +720,8 @@ fn drawings_out_of_bounds_are_invalid() {
         text: "a".into(),
         font_size,
         color: RED,
+        fill: None,
+        border_width: 0.0,
     };
     invalid(text_box(r, 3.9));
     invalid(text_box(r, 144.1));
@@ -825,6 +833,8 @@ fn a_step_cannot_both_change_pages_and_draw_or_move() {
             text: "a".into(),
             font_size: 12.0,
             color: RED,
+            fill: None,
+            border_width: 0.0,
         },
         Edit::AddShape {
             page: 0,
@@ -955,6 +965,8 @@ fn huge_coordinates_and_moves_are_invalid() {
             text: "a".into(),
             font_size: 12.0,
             color: RED,
+            fill: None,
+            border_width: 0.0,
         },
         Edit::AddTextMarkup {
             page: 0,
@@ -1103,6 +1115,8 @@ fn over_long_texts_and_too_many_marked_boxes_are_invalid() {
             text: long.clone(),
             font_size: 12.0,
             color: RED,
+            fill: None,
+            border_width: 0.0,
         },
         Edit::SetInfo {
             key: "Title".into(),

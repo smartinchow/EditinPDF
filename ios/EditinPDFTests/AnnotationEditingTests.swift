@@ -635,7 +635,8 @@ final class AnnotationEditingTests: XCTestCase {
                     rect: CGRect = CGRect(x: 0, y: 0, width: 10, height: 10), locked: Bool = false) -> AnnotationInfo {
         AnnotationInfo(page: UInt32(page), index: index, kind: kind,
                        rect: Rect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
-                       contents: contents, author: author, modified: nil, color: nil, locked: locked)
+                       contents: contents, author: author, modified: nil, color: nil, locked: locked,
+                       fontSize: nil, fill: nil, borderWidth: nil)
     }
 
     /// Types `text` into the text box being edited, as the keyboard does.

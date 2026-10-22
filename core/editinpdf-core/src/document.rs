@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use pdfcraft_engine::{DocId, Session};
 
-use crate::annotations::{self, AnnotationInfo};
+use crate::annotations::{self, AnnotationInfo, AnnotationKind};
 use crate::edit::{Edit, EditCapabilities, EditOutcome, MAX_STEP_EDITS, SaveMode};
 use crate::forms::{self, FormField};
 use crate::render::{self, RendererPool};
@@ -350,15 +350,19 @@ fn open_doc(session: &Session, id: DocId) -> Result<&pdfcraft_engine::Document, 
 /// list as it is before the step, and deleting a comment (`DeleteAnnotation`, `DeleteAnnotations`)
 /// moves the places of those after it, and of more when its pop-up and replies go with it. So no
 /// other edit of the step may address a comment of a page one of its deletes deletes from: another
-/// delete, a change of text or a move. Adding a comment puts it at the end of the list, which moves
-/// no place, so that goes with a delete, and so do changes to other pages.
+/// delete, a change of text, a move or a restyle. `RestyleTextBox` counts as a delete: a new size
+/// or background deletes the text box and adds it again at the end of the list. Adding a comment
+/// puts it at the end of the list, which moves no place, so that goes with a delete (a delete and
+/// a new text box, say), and so do changes to other pages.
 fn annotation_places_check(edits: &[Edit]) -> Result<(), EditError> {
     let mut addressing: HashMap<u32, usize> = HashMap::new();
     for page in edits.iter().filter_map(Edit::annotation_page) {
         *addressing.entry(page).or_default() += 1;
     }
     let clash = edits.iter().find_map(|edit| {
-        let (Edit::DeleteAnnotation { page, .. } | Edit::DeleteAnnotations { page, .. }) = edit
+        let (Edit::DeleteAnnotation { page, .. }
+        | Edit::DeleteAnnotations { page, .. }
+        | Edit::RestyleTextBox { page, .. }) = edit
         else {
             return None;
         };
@@ -670,8 +674,9 @@ impl PdfDocument {
     /// position: that is refused as `Invalid`. Likewise a step that deletes, moves or inserts pages
     /// cannot also delete a comment or change its text, which address the comment by its page as it
     /// is before the step (turning pages keeps their numbers, so that mix is allowed). A step that
-    /// deletes a comment of a page (`DeleteAnnotation` or `DeleteAnnotations`) cannot also address
-    /// another comment of that page by its place: deleting moves the places after it. Filling in a
+    /// deletes a comment of a page (`DeleteAnnotation` or `DeleteAnnotations`) or restyles a text box
+    /// there (`RestyleTextBox`, which may delete it and add it again) cannot also address another
+    /// comment of that page by its place: deleting moves the places after it. Filling in a
     /// form field addresses it by its name, so it goes with any page change. Otherwise the errors
     /// are those of `apply`, and a step of no change, or of more than 10,000, is refused as
     /// `Invalid`.
@@ -904,10 +909,28 @@ impl PdfDocument {
     /// The document's comments: page by page, and top to bottom within a page, in view space.
     /// Replies to other comments are left out. Read the list again after every change, undo and
     /// redo: a comment's `index` is its position on its page, which those can move.
+    ///
+    /// A text box's text size, background and border are read from the file as it is now
+    /// (`AnnotationInfo::font_size`, `fill`, `border_width`).
     pub fn annotations(&self) -> Vec<AnnotationInfo> {
-        // Only reads what the engine read when it opened or last changed the document, and turns
-        // the boxes with the page's plain arithmetic: nothing here can panic.
-        self.read(Vec::new(), |doc| annotations::list(&doc.info))
+        // The list only reads what the engine read when it opened or last changed the document, and
+        // turns the boxes with the page's plain arithmetic: nothing there can panic. The text boxes'
+        // looks are read from the working file again; were that to panic, they are left out (the
+        // rest of the list is as it was), and the lock is not poisoned.
+        self.read(Vec::new(), |doc| {
+            let mut list = annotations::list(&doc.info);
+            if !list.iter().any(|a| a.kind == AnnotationKind::TextBox) {
+                return list;
+            }
+            let plain = list.clone();
+            match panic::catch_unwind(AssertUnwindSafe(|| {
+                annotations::with_text_box_looks(doc, &mut list);
+                list
+            })) {
+                Ok(list) => list,
+                Err(_) => plain,
+            }
+        })
     }
 
     /// The document's form fields, in the document's order, with their widgets in view space.

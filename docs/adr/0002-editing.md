@@ -165,7 +165,10 @@ says why in one sentence of its own (`Strings.signedDocumentDamaged`), in place 
   a turn with a move is already refused by the previous rule, because a move has a distance in view space;
 - **a delete of a comment (`DeleteAnnotation` or `DeleteAnnotations`) with any other edit that addresses a
   comment of the same page by its place** (`annotation_places_check`), another delete included, for the reason in
-  section 7. Adding a comment (it goes at the end of the list), changes to other pages and form fills are fine.
+  section 7. `RestyleTextBox` counts as a delete here: a new text size or background deletes the text box and
+  adds it again (section 7). Adding a comment (it goes at the end of the list), changes to other pages and form
+  fills are fine; so a delete and a new text box of the same page (`[DeleteAnnotation, AddTextBox]`, the new box
+  placed by its box, not by a place) make one step.
 
 Filling a form field is addressed by the field's name (`FormField.name`), which no change to pages or comments
 alters, so `SetFieldValue` mixes with anything. Names are checked against the fields as they are before the step
@@ -195,7 +198,8 @@ revision instead of the one it was worked out at. `canRebase` says yes when noth
 mean something else:
 
 - A change can shift three things an edit worked out before it depends on (`EditShift`): **page numbers**
-  (deleting, moving or inserting pages), the **places of a page's comments** (deleting or moving a comment), and
+  (deleting, moving or inserting pages), the **places of a page's comments** (deleting or moving a comment, and
+  restyling a text box, which may delete it and add it again at the end of the list), and
   **points in view space** (turning pages). `shift(of:)` says which for a change. Adding a comment appends it to
   its page's list, so it shifts nothing.
 - An undo or a redo shifts what its own change did, the other way (`undoShift(of:)`, kept on the change's token,
@@ -204,7 +208,8 @@ mean something else:
   no point, so strokes drawn meanwhile, or a shape being dragged, are still good.
 - The model keeps the revision of the last shift of each kind (`Shifts`).
 - An edit depends on (`dependence(of:)`) the page numbers when it names a page (every edit but a form fill and
-  the document's information), the places when it names a comment (delete, move, change its text), and the
+  the document's information), the places when it names a comment (delete, move, change its text, restyle a
+  text box), and the
   points when it carries a point or a box in view space (every added comment, and a move).
 - An edit worked out at revision `base` is rebased when no shift it depends on was made after `base`. A form
   fill is always rebased, being addressed by name.
@@ -265,6 +270,20 @@ that page by its place; the same holds for a step with a `DeleteAnnotation` (sec
 (`DocumentModel.eraseEdit`) sends a single `deleteAnnotations`; the Comments list and the delete button send a
 single `deleteAnnotation`, which is fine on its own.
 
+**Restyling a text box.** The engine changes a text box's colour and border in place (`StyleAnnotation`), but
+has no change for its text size or its background. `Edit::RestyleTextBox` (`annotations::restyle_text_box`)
+therefore makes, as one engine `Batch` (one revision, one undo step), either the in-place change, when the size
+and background stay, or the engine's `DeleteAnnotation` of the text box followed by `AddAnnotation` of a new one
+with the same text and author, its top-left corner where it was, as wide as keeps its lines (the room across
+scaled with the size, no further than the page's right edge) and as tall as its text then needs. The new one goes
+at the end of the page's list: the places after the old one move down, as after a delete, which is why the
+mixing rule and the rebase rule treat a restyle as a delete. It loses what the engine does not set on a new
+comment: its name (`/NM`), creation date, opacity, alignment, rich text, its pop-up and replies (the delete takes
+those out), and it is drawn over the others. The bridge refuses a locked text box, a re-add on a page shown
+turned (its text would be set upright in the file) and one of a callout or typed text, which a plain box would
+replace. The text size, background and border the app starts from are read from the file
+(`AnnotationInfo.font_size`, `fill`, `border_width`, `annotations::with_text_box_looks`), as the engine draws them.
+
 ## Consequences
 
 - Undo, redo and autosave stay consistent however fast the reader taps, and a refused change is never on the undo
@@ -286,7 +305,7 @@ single `deleteAnnotation`, which is fine on its own.
   `shift(of:)`, `addsAnAnnotation`, `dependence(of:)`, `PageEffect(of:)`, `OrganizeMath.readerPage`
   (`ios/EditinPDF/Organize/OrganizeMath.swift`, where the reader's page follows page changes) and the bridge's
   predicates** (those Swift `switch`es and the predicates in `edit.rs` are exhaustive, so the compiler says
-  where).
+  where), and to `annotation_places_check` when it deletes a comment (`RestyleTextBox` does).
 - Because the engine has no stable comment identity, `DeleteAnnotations` re-derives the engine's delete in the
   bridge. It depends on how the pinned PdfCraft release treats pop-ups and replies
   (`pdfcraft_annot::delete_annotation`); `core/editinpdf-core/tests/delete_annotations.rs` pins the cases (pop-ups

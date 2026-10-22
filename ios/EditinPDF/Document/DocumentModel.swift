@@ -508,7 +508,7 @@ final class DocumentModel {
             return refuseInvalid("a text box is a box at least \(ShapeGeometry.bridgeMinimumSide) point each way, within reach")
         }
         let edit = Edit.addTextBox(page: pageNumber, rect: Rect(x: box.minX, y: box.minY, width: box.width, height: box.height),
-                                   text: text, fontSize: fontSize, color: style.color.rgbColor)
+                                   text: text, fontSize: fontSize, color: style.color.rgbColor, fill: nil, borderWidth: 0)
         // Refused as stale, the text is not lost: on its page as it was, it is handed over again, for
         // the page as it is now (the same); otherwise it is kept on the pasteboard.
         let typedAt = revision ?? self.revision
@@ -1035,7 +1035,9 @@ final class DocumentModel {
             switch edit {
             case .deletePages, .movePages, .insertBlankPage, .insertPagesFrom:
                 shift.insert(.pages)
-            case .deleteAnnotation, .deleteAnnotations, .moveAnnotation:
+            // A text box given a new size or background is deleted and added again at the end of its
+            // page's list (`restyleTextBox`): the places after its old one move down.
+            case .deleteAnnotation, .deleteAnnotations, .moveAnnotation, .restyleTextBox:
                 shift.insert(.annotations)
             case .rotatePages:
                 shift.insert(.geometry)
@@ -1063,7 +1065,7 @@ final class DocumentModel {
         case .addTextMarkup, .addNote, .addInk, .addSignature, .addTextBox, .addShape, .addLine:
             true
         case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom, .setInfo, .deleteAnnotation,
-             .deleteAnnotations, .setAnnotationContents, .moveAnnotation, .setFieldValue:
+             .deleteAnnotations, .setAnnotationContents, .restyleTextBox, .moveAnnotation, .setFieldValue:
             false
         }
     }
@@ -1078,7 +1080,7 @@ final class DocumentModel {
                 break
             case .rotatePages, .deletePages, .movePages, .insertBlankPage, .insertPagesFrom:
                 needs.insert(.pages)
-            case .deleteAnnotation, .deleteAnnotations, .setAnnotationContents:
+            case .deleteAnnotation, .deleteAnnotations, .setAnnotationContents, .restyleTextBox:
                 needs.formUnion([.pages, .annotations])
             case .moveAnnotation:
                 needs.formUnion([.pages, .annotations, .geometry])
@@ -1293,7 +1295,7 @@ struct PageEffect: Equatable, Sendable {
             case .rotatePages(let pages, _):
                 turns.formUnion(pages.map(Int.init))
             case .setInfo, .addTextMarkup, .addNote, .setAnnotationContents, .addInk, .addSignature, .addTextBox,
-                 .addShape, .addLine, .setFieldValue, .deleteAnnotation, .deleteAnnotations, .moveAnnotation:
+                 .addShape, .addLine, .setFieldValue, .deleteAnnotation, .deleteAnnotations, .restyleTextBox, .moveAnnotation:
                 break
             }
         }
