@@ -150,6 +150,28 @@ final class SavingSmokeTests: XCTestCase {
         XCTAssertFalse(app.alerts.firstMatch.waitForExistence(timeout: 2), "offered again after it was declined")
     }
 
+    /// Put away unanswered (the system's Cancel), the offer leaves the document as its file is and keeps
+    /// the changes for the next time it opens.
+    func testPuttingTheOfferAwayKeepsItForNextTime() {
+        let app = launchAndOpen("sample.pdf", as: "save-later.pdf")
+        deleteTheLastPage(in: app)
+        sleep(4)
+        relaunchAndOpen("save-later.pdf", in: app)
+        let offer = app.alerts["Restore unsaved changes?"]
+        XCTAssertTrue(offer.waitForExistence(timeout: 10), "the unsaved change was not offered")
+        let cancel = offer.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.exists, "no way to put the offer away")
+        cancel.tap()
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        tapBack(in: app)
+        XCTAssertFalse(saveQuestion(in: app).waitForExistence(timeout: 2))
+        expectClosed(app)
+        openFromBrowser("save-later.pdf", in: app)
+        XCTAssertTrue(offer.waitForExistence(timeout: 10), "not offered again")
+        offer.buttons["Discard"].firstMatch.tap()
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+    }
+
     // MARK: Helpers
 
     /// "Edited", under the document's name (iOS 26 and later: it may be read as part of the name's menu

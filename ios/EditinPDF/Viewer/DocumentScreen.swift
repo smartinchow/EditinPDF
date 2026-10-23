@@ -100,6 +100,12 @@ struct DocumentScreen: View {
     @State private var showsRecoveryOffer = false
     /// Whether the recovery copy has been looked for since the document opened: once.
     @State private var recoveryLookedFor = false
+    /// Whether the offer was answered with Restore or Discard. Put away otherwise (its Cancel, which the
+    /// system adds) and no change made since, the copy is kept as the document closes, offered again the
+    /// next time it opens.
+    @State private var recoveryAnswered = false
+    /// Whether the offer was put up.
+    @State private var recoveryOffered = false
 
     private static let log = Logger(subsystem: Diagnostics.subsystem, category: "copy")
 
@@ -165,10 +171,16 @@ struct DocumentScreen: View {
                 Text(failure.message)
             }
             .alert(Strings.restoreTitle, isPresented: $showsRecoveryOffer) {
-                Button(Strings.restore) { Task { await model.restoreRecoveredChanges() } }
-                    .accessibilityIdentifier("restoreRecoveredButton")
-                Button(Strings.discardRecovered, role: .destructive) { model.discardRecoveredChanges() }
-                    .accessibilityIdentifier("discardRecoveredButton")
+                Button(Strings.restore) {
+                    recoveryAnswered = true
+                    Task { await model.restoreRecoveredChanges() }
+                }
+                .accessibilityIdentifier("restoreRecoveredButton")
+                Button(Strings.discardRecovered, role: .destructive) {
+                    recoveryAnswered = true
+                    model.discardRecoveredChanges()
+                }
+                .accessibilityIdentifier("discardRecoveredButton")
             } message: {
                 Text(Strings.restoreMessage(documentName))
             }
@@ -273,10 +285,12 @@ struct DocumentScreen: View {
     }
 
     /// Back to the documents, with nothing written: the scene's document has no change to save of its
-    /// own (ADR 0002, section 3). A recovery copy left (changes undone back to the file) goes. Through the
-    /// system's back action (`DocumentHost.close`), or, where there is none, `dismiss`.
+    /// own (ADR 0002, section 3). A recovery copy left (changes undone back to the file) goes, but for one
+    /// offered and put away unanswered. Through the system's back action (`DocumentHost.close`), or, where
+    /// there is none, `dismiss`.
     private func close() {
-        if !model.needsSave { model.deleteRecovery() }
+        let offerPutAway = recoveryOffered && !recoveryAnswered && model.changesHandedOver == 0
+        if !model.needsSave, !offerPutAway { model.deleteRecovery() }
         model.isClosing = true
         if !host.close() { closeDocument() }
     }
@@ -289,6 +303,7 @@ struct DocumentScreen: View {
         recoveryLookedFor = true
         let modified = fileURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
         if model.hasRecoveredChanges(newerThan: modified) {
+            recoveryOffered = true
             showsRecoveryOffer = true
         } else {
             model.discardRecoveredChanges()
