@@ -99,11 +99,18 @@ wait for them (section 3).
 ### 3. Saving is the reader's choice: Save, Save As or Discard
 
 Nothing is written to the user's file but by **Save** (the More menu, ⌘S). Back with unsaved changes asks
-"Save changes to “name”?" with **Save** (write, then close), **Save As…** (Save a Copy's exporter; once the copy
-is saved the document closes and its file is as it was; cancelled, the document stays open), **Discard Changes**
-(close; the file is as it was at the last Save) and **Cancel**. Back with nothing to save closes at once. "Edited"
-under the document's name (`UINavigationItem.subtitle`, iOS 26; beside the page indicator before) says a Save is
-needed.
+"Save changes to “name”?" with **Save** (the default, Return: write, then close), **Save As…** (the exporter the
+More menu's Save As… puts up; once the copy is saved the document closes and its file is as it was; cancelled, the
+document stays open), **Discard Changes** (close; the file is as it was at the last Save) and **Cancel**. Back with
+nothing to save closes at once. The File menu's Close (⌘W, `AppDelegate.buildMenu` replaces the system's
+`performClose:`, which would close at once) and VoiceOver's escape on the pages
+(`PageScrollViewController.accessibilityPerformEscape`) go through the same question; elsewhere VoiceOver's
+escape reaches the navigation controller, whose back action is ours. "Edited" under the document's name says a
+Save is needed: SwiftUI's `navigationSubtitle` (iOS 26), set again by `DocumentHost` whenever the document's view
+controller resets its navigation item; beside the page indicator before iOS 26. The File menu's Save is added
+after the system's items (`CommandGroup(after: .saveItem)`): replacing them took Close away. Duplicate, Rename
+and Move (the document's title menu) are the system's: **Duplicate copies the file as last saved**, without the
+unsaved changes.
 
 **What counts as unsaved.** `DocumentModel.historyPosition` moves +1 for each change and redo the engine makes
 and -1 for each undo; `savedPosition` is where it was at the last Save (0 when opened). Unsaved means the two
@@ -111,7 +118,7 @@ differ, so undoing back to the saved state counts as no change. A new change mad
 state when it was among them (`savedPosition = nil`: it cannot come back), and so does a step that failed half
 way and moved the revision on (`refreshIfMoved`) or a recovery copy restored. `needsSave` adds what waits to be
 added (strokes, typed text): Back and Save add it first (`commitPendingInk(closing: true)`, then
-`addEverythingWaiting`, shared with Save a Copy), so Save, Save As and the recovery copy include it.
+`addEverythingWaiting`, shared with Save As), so Save, Save As and the recovery copy include it.
 
 **The mechanism, and why.** `DocumentGroup`'s `UIDocument` (`FileWrapperPlatformDocument`, observed on the iOS
 26.5 and 27.0 simulators) saves whenever its change count says it is edited, and that count is fed by its undo
@@ -128,6 +135,12 @@ manager, which is the scene's `@Environment(\.undoManager)`. Three ways were wei
   menu's (⌘Z, ⇧⌘Z, `UndoRedoCommands`) already went through the model; the screen now reads the model's undo
   manager for their state. Lost: the system's own undo gestures (shake, three-finger swipe), which act on the
   responder chain's undo manager; they never went through the model's rule for what waits anyway.
+- Where that cannot work, saving is the system's, as before (`SavingMode.automatic`, decided once by
+  `DocumentHost.decide` as the screen first appears): when no `UIDocumentViewController`, document or back action
+  is found (a system that shows documents otherwise; only iOS 26.5 and 27.0 were available to test), the model
+  registers with the scene's undo manager (`DocumentModel.adopt`), every write writes the changes
+  (`EngineHandle.writesAutomatically`), Back is the system's and 05aaefc's `countChangeNow` tells the document of
+  what Back hands over; no "Edited", no Save item, no recovery copy. A reader is never left unable to save.
 - (a) is kept as a second line of defence: the snapshot carries whether Save asked for the write
   (`EngineHandle.beginExplicitSave`, read in `snapshot(contentType:)`), and `fileWrapper` hands any other write
   the existing file as it is (`PDFFileDocument.bytesToWrite`, `leavesTheFile`). Only a file not written yet (a
@@ -138,11 +151,11 @@ VoiceOver and keyboards are unchanged). Its action is taken over: `DocumentHost`
 `UIDocumentViewController` up the responder chain, keeps its `navigationItem.backAction` and puts one of its own
 in its place (taken over again whenever SwiftUI sets a new one); once the reader has chosen, the system's action is
 run with `UIControl.sendAction(_:)` and closes the document the system's way. The document's controller is the
-only one in its navigation stack, so no edge swipe pops it past the question. Where no such action is found (a
-system that presents documents otherwise), Back stays the system's and closes without asking; the recovery copy
-keeps the changes then. This replaces 05aaefc's `countChangeNow`, which told the `UIDocument` of a change as Back
-went down so that its close-time autosave would include it: there is no such save any more, and Back adds what
-waits before it asks.
+only one in its navigation stack, so no edge swipe pops it past the question. The back action is looked at again
+whenever the toolbar changes (`DocumentHostAnchor.toolbarState`) and whenever the item's back action is set (KVO).
+Where no such action is found, the document is saved the system's way (above). For an explicitly saved document
+05aaefc's `countChangeNow` is not needed (there is no close-time autosave, and Back adds what waits before it
+asks); it is kept for the automatic case.
 
 **The write.** The snapshot is the engine document (`PDFFileDocument.Snapshot.document`), so taking it costs
 nothing; the write, `save(mode: .incremental)`, runs in `fileWrapper`, which SwiftUI calls on a background queue
@@ -156,19 +169,28 @@ engine document in the handle, and its snapshot is refused with our own message,
 **Recovery.** iOS can end the app in the background, and a scene can be closed from the app switcher or a
 window's close button with no prompt, so unsaved changes are also kept in a recovery copy (`RecoveryStore`):
 `Application Support/Recovery/<SHA-256 of the file's path>.pdf`, the engine's incremental save (a protected
-file's copy keeps its password), with complete file protection, excluded from backup. It is written two seconds
-after the last change, undo or redo, and as the scene leaves the active state or the screen (what waits added
-first, in a background task); never with nothing unsaved. When the same file opens again and a copy newer than
-the file is there, the app asks "Restore unsaved changes?": **Restore** opens the copy (with the password the
-file was opened with) in place of the document, every change unsaved, the file still unwritten; **Discard**
-deletes it; put away with the system's Cancel, it is kept (unless a change is made meanwhile) and offered again
-on the next open. Save, Discard Changes and a saved Save As delete it (`recoveryEpoch` drops one being written
-meanwhile); a copy older than the file goes; copies older than 30 days are swept at launch. Nothing of a document
-is logged. The copy is found by the file's path, so a file renamed or moved while the app was stopped is not
-matched (its copy is swept after 30 days).
+file's copy keeps its password), with file protection complete unless open (a write begun before the device locks
+can finish), excluded from backup. It is written after five seconds without a change, undo or redo (the write
+holds the engine's lock, a while on a big file), as the scene goes inactive, and as it goes to the background or
+off the screen (what waits added first, the note being written too, in a background task); never with nothing
+unsaved. When the same file opens again and a copy is there (`findRecoveredChanges`), it is never dropped without
+the reader's word: if it was written after the file last changed **and starts with the file's bytes** (every save
+appends to them), the app asks "Restore unsaved changes?": **Restore** opens the copy (with the password the file
+was opened with) in place of the document, every change unsaved, the file still unwritten (a copy that cannot be
+opened says so); **Discard** deletes it. Otherwise (the file changed on disk since, or was rewritten in full) the
+app says "Unsaved changes from an earlier version of this file were kept" and offers **Save As…** (the copy as it
+is, through the exporter) or **Discard**. Put away with the system's Cancel, either offer keeps the copy
+(`recoveryHeld`): this session neither overwrites nor deletes it, and it is offered again on the next open (after
+a Save it is from an earlier version). A session deletes only a copy it wrote or restored (`recoveryOwned`): on
+Save, Discard Changes, a saved Save As, or closing with nothing unsaved (`recoveryEpoch` drops one being written
+meanwhile). Copies older than 30 days are swept at launch. Nothing of a document is logged. The copy is found by
+the file's path, so a file renamed or moved while the app was stopped is not matched (its copy is swept after 30
+days). While the document closes (`isClosing`, set only as the close starts) no copy is written; a close that
+leaves the screen up after all clears it again.
 
 `EngineHandle` (`ios/EditinPDF/Document/EngineHandle.swift`) is what the file document and the model share: a
-lock-guarded slot for the document, the counter of jobs on their way, and whether Save is writing. The model
+lock-guarded slot for the document, the counter of jobs on their way, whether Save is writing, and whether every
+write writes the changes (the automatic case). The model
 fills the slot when the file opens, on `unlock`, and when a recovery copy is restored.
 
 ### 4. There is no `markSaved`
@@ -187,7 +209,7 @@ other consequence is the safety property: nothing ever tells the engine that a w
 failed, or that the system could not finish, can never leave the engine believing the file holds changes it does
 not. The next save simply writes all of them again. The cost is that an update holds the whole session's changes
 rather than only the newest, which is small next to rewriting the file (`SaveMode.full` exists in the bridge for a
-later "optimized copy", and refuses a signed document; the app does not use it yet). Save a Copy (`DocumentModel.copyBytes`) writes this same incremental save, once what waits is
+later "optimized copy", and refuses a signed document; the app does not use it yet). Save As (`DocumentModel.copyBytes`) writes this same incremental save, once what waits is
 added through the closing path and the changes on their way are made, to a file the reader picks with the system's
 exporter: the copy of a password-protected file keeps its password, and the document stays open, its changes
 still unsaved in its own file (or, from Back's Save As…, closes with its file as it was).

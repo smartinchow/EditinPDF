@@ -47,12 +47,13 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **You choose when to save.** Nothing is written to the original file until you choose **Save** (in the More
   menu, or ⌘S with a keyboard); "Edited" under the document's name says there is something to save. Save writes
   an incremental update that keeps the original bytes (a damaged file is the exception: see Known issues). Going
-  **Back** with unsaved changes asks whether to **Save**, **Save As…** (a copy where you choose, leaving the
-  original as it was), **Discard Changes** (the original stays as it was at the last Save) or Cancel. If the app
-  is stopped before you choose (iOS ends it in the background, or you close it from the app switcher), your
-  unsaved changes are kept on your device, in the app's own folder with file protection and excluded from
-  backups, and offered when you open the same document again (**Restore** or **Discard**); kept changes not
-  reopened within 30 days are deleted.
+  **Back** (or ⌘W) with unsaved changes asks whether to **Save**, **Save As…** (a copy where you choose, leaving
+  the original as it was), **Discard Changes** (the original stays as it was at the last Save) or Cancel.
+  Duplicate, in the document's title menu, copies the file as last saved. If the app is stopped before you choose
+  (iOS ends it in the background, or you close it from the app switcher), your unsaved changes are kept on your
+  device, in the app's own folder with file protection and excluded from backups, and offered when you open the
+  same document again (**Restore** or **Discard**; if the file has changed since, **Save As…** or **Discard**);
+  kept changes not reopened within 30 days are deleted.
 - **Mark up**: a Markup mode with a tool palette (a bar at the bottom on iPhone, a side palette on iPad). Each
   tool remembers its colour and line width.
   - **Text markup**: highlight, underline and strikethrough over text you drag across. With text selected,
@@ -73,9 +74,9 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **Sign**: draw your signature once, then place it on any page, as often as you need. It is a drawn mark on the
   page, not a digital signature. The saved signature is stored only on your device, in the app's own folder with
   file protection, and is excluded from backups.
-- **Save a Copy** from the More menu: the document with all its changes, saved in the folder and under the name you
-  choose (the name offered is the document's, with " copy"). The document you are working on stays open. A copy of
-  a password-protected document keeps its password.
+- **Save As…** from the More menu: the document with all its changes, saved in the folder and under the name you
+  choose (the name offered is the document's, with " copy"). The original file stays as it was, and the document
+  stays open with its changes unsaved. A copy of a password-protected document keeps its password.
 - **Send Feedback** from the More menu: an email to info@consultin.ai, ready to write, that names the app's
   version, the system and the device model, and nothing of your documents. Your own mail app sends it (where none is
   set up, the app shows the address to copy); EditinPDF itself sends nothing.
