@@ -2,9 +2,11 @@ import SwiftUI
 
 @main
 struct EditinPDFApp: App {
+    /// The File menu's Close (⌘W) goes to Back's question (`AppDelegate`).
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     init() {
         sweepShareFolders(olderThan: 0)
-        // Copies Save a Copy left for an exporter the app did not see finish (`CopyFiles`).
+        // Copies Save As left for an exporter the app did not see finish (`CopyFiles`).
         CopyFiles.sweep()
         // Recovery copies of documents not opened again for a month (`RecoveryStore`).
         RecoveryStore.shared.sweep(olderThan: RecoveryStore.maximumAge)

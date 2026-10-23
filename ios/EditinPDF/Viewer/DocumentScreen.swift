@@ -56,6 +56,9 @@ struct DocumentScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     /// Whether the scene is on screen and active: strokes drawn with Draw are added as it leaves.
     @Environment(\.scenePhase) private var scenePhase
+    /// The scene's undo manager: the model registers its changes with it only for a document saved the
+    /// system's way (`SavingMode.automatic`); otherwise the model keeps its own.
+    @Environment(\.undoManager) private var sceneUndoManager
     /// Whether Undo and Redo may be tapped now, here and in the Edit menu (`DocumentModel.undoAvailability`).
     private var undoAvailability: UndoAvailability { model.undoAvailability }
     /// Whether a change has been in the making long enough to show a spinner by the page indicator.
@@ -77,12 +80,12 @@ struct DocumentScreen: View {
     @State private var formHintShown = false
     /// Whether the hint about the form is up.
     @State private var showsFormHint = false
-    /// Whether Save a Copy is making its copy, until the exporter is up or it failed: a second tap
+    /// Whether Save As is making its copy, until the exporter is up or it failed: a second tap
     /// meanwhile does nothing.
     @State private var makingCopy = false
-    /// The view whose window Save a Copy's exporter is presented from.
+    /// The view whose window Save As's exporter is presented from.
     @State private var anchor = PresentationAnchor.Holder()
-    /// Why Save a Copy made or wrote no copy, while the alert that says so is up.
+    /// Why Save As made or wrote no copy, while the alert that says so is up.
     @State private var copyFailure: CopyFailure?
     /// Set by Send Feedback; the feedback sender acts on it and clears it (`feedbackSender`).
     @State private var feedbackRequested = false
@@ -96,16 +99,16 @@ struct DocumentScreen: View {
     @State private var showsSaveQuestion = false
     /// Why Save wrote nothing, while the alert that says so is up.
     @State private var saveFailure: SaveFailure?
-    /// Whether the offer of the changes kept from before (the recovery copy) is up.
-    @State private var showsRecoveryOffer = false
+    /// What the changes kept from before (the recovery copy) are, while the offer of them is up. Put away
+    /// unanswered (the Cancel the system adds), the copy is kept (`DocumentModel.recoveryHeld`), offered
+    /// again the next time the document opens.
+    @State private var recoveryOffer: RecoveredCopyKind?
     /// Whether the recovery copy has been looked for since the document opened: once.
     @State private var recoveryLookedFor = false
-    /// Whether the offer was answered with Restore or Discard. Put away otherwise (its Cancel, which the
-    /// system adds) and no change made since, the copy is kept as the document closes, offered again the
-    /// next time it opens.
-    @State private var recoveryAnswered = false
-    /// Whether the offer was put up.
-    @State private var recoveryOffered = false
+    /// Whether the alert saying the kept changes could not be restored is up.
+    @State private var showsRestoreFailure = false
+    /// Set once the screen has gone: a close that left it on screen is undone (`close`).
+    @State private var hasGone = false
 
     private static let log = Logger(subsystem: Diagnostics.subsystem, category: "copy")
 
@@ -125,34 +128,43 @@ struct DocumentScreen: View {
             // asks: `goBack`.) Unsaved changes the reader made no choice about (the system's own back
             // action, where it could not be taken over) are kept in the recovery copy.
             .onDisappear {
+                hasGone = true
                 model.commitPendingInk(closing: true)
                 FrontDocument.shared.leave(model)
-                if model.needsSave, !model.isClosing { Task { await model.writeRecovery(addingWhatWaits: true) } }
+                if model.needsSave, !model.isClosing {
+                    BackgroundWork.run { await model.writeRecovery(addingWhatWaits: true) }
+                }
             }
             // Strokes left waiting on the page are added before the scene leaves the screen, and the
             // recovery copy is written with them: the app may be stopped in the background, or its
             // scene closed from the app switcher, with no word to the app.
             .onChange(of: scenePhase) {
                 if scenePhase != .active { model.commitPendingInk(closing: true) }
-                // A note being written is saved as the scene goes to the background: the app may not
-                // come back to it.
-                if scenePhase == .background { model.saveNoteDraftOnLeaving() }
-                if scenePhase != .active, model.needsSave {
-                    BackgroundWork.run { await model.writeRecovery(addingWhatWaits: true) }
+                // A note being written is saved, and the recovery copy written with it, as the scene goes
+                // to the background: the app may not come back to it. Only inactive (the app switcher, a
+                // notification pulled down), the note sheet stays as it is.
+                if scenePhase == .background {
+                    model.saveNoteDraftOnLeaving()
+                    if model.needsSave { BackgroundWork.run { await model.writeRecovery(addingWhatWaits: true) } }
+                } else if scenePhase == .inactive, model.needsSave {
+                    BackgroundWork.run { await model.writeRecovery() }
                 }
             }
-            // A moment after the last change, undo or redo, the recovery copy is written with it.
+            // After a few seconds without a change, undo or redo, the recovery copy is written with them
+            // (not after each: the write holds the document while it runs, a while on a big one).
             .task(id: model.historyPosition) {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .seconds(5))
                 if !Task.isCancelled { await model.writeRecovery() }
             }
             // Once the document is open (a locked one, once unlocked): changes kept from before are offered.
-            .task(id: isOpen) { offerRecoveredChanges() }
-            .background(DocumentHostAnchor(host: host, needsSave: model.needsSave))
+            .task(id: isOpen) { await offerRecoveredChanges() }
+            .modifier(EditedSubtitle(edited: model.needsSave))
+            .background(DocumentHostAnchor(host: host, needsSave: model.needsSave, toolbarState: toolbarState))
             .alert(Strings.saveChangesTitle(documentName), isPresented: $showsSaveQuestion) {
                 // The system alert does not pass identifiers on to its buttons (see the alert below): the
-                // UI tests find them by their titles.
+                // UI tests find them by their titles. Save is the default (Return).
                 Button(Strings.saveDocument) { saveThenClose() }
+                    .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("saveQuestionSave")
                 Button(Strings.saveAs) { saveCopy(closingOnceSaved: true) }
                     .accessibilityIdentifier("saveQuestionSaveAs")
@@ -170,19 +182,27 @@ struct DocumentScreen: View {
             } message: { failure in
                 Text(failure.message)
             }
-            .alert(Strings.restoreTitle, isPresented: $showsRecoveryOffer) {
+            .alert(Strings.restoreTitle, isPresented: showsRecoveryOffer(.restorable)) {
                 Button(Strings.restore) {
-                    recoveryAnswered = true
-                    Task { await model.restoreRecoveredChanges() }
+                    Task { if await !model.restoreRecoveredChanges() { showsRestoreFailure = true } }
                 }
                 .accessibilityIdentifier("restoreRecoveredButton")
-                Button(Strings.discardRecovered, role: .destructive) {
-                    recoveryAnswered = true
-                    model.discardRecoveredChanges()
-                }
-                .accessibilityIdentifier("discardRecoveredButton")
+                Button(Strings.discardRecovered, role: .destructive) { model.discardRecoveredChanges() }
+                    .accessibilityIdentifier("discardRecoveredButton")
             } message: {
                 Text(Strings.restoreMessage(documentName))
+            }
+            .alert(Strings.earlierVersionTitle, isPresented: showsRecoveryOffer(.earlierVersion)) {
+                Button(Strings.saveAs) { exportRecoveredCopy() }
+                    .accessibilityIdentifier("exportRecoveredButton")
+                Button(Strings.discardRecovered, role: .destructive) { model.discardRecoveredChanges() }
+                    .accessibilityIdentifier("discardRecoveredButton")
+            } message: {
+                Text(Strings.earlierVersionMessage(documentName))
+            }
+            .alert(Strings.restoreFailedTitle, isPresented: $showsRestoreFailure) {
+            } message: {
+                Text(Strings.restoreFailedMessage)
             }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidCloseUndoGroup)) { readUndoState($0) }
             .onReceive(NotificationCenter.default.publisher(for: .NSUndoManagerDidUndoChange)) { readUndoState($0) }
@@ -222,7 +242,24 @@ struct DocumentScreen: View {
         readUndoState(nil)
         model.recoveryKey = fileURL.map(RecoveryStore.key(for:))
         model.saveRequested = { save() }
+        model.closeRequested = { goBack() }
         host.goBack = { goBack() }
+        let undoManager = sceneUndoManager
+        host.onDecided = { mode in
+            model.adopt(mode, sceneUndoManager: undoManager)
+            readUndoState(nil)
+        }
+    }
+
+    /// What the toolbar shows, for the host to look at the navigation item again as it changes
+    /// (`DocumentHostAnchor.toolbarState`).
+    private var toolbarState: String {
+        "\(model.selection?.selection != nil)|\(String(describing: model.tool))|\(String(describing: horizontalSizeClass))"
+    }
+
+    /// Whether the offer of changes kept from before, of `kind`, is up.
+    private func showsRecoveryOffer(_ kind: RecoveredCopyKind) -> Binding<Bool> {
+        Binding(get: { recoveryOffer == kind }, set: { isShown in if !isShown { recoveryOffer = nil } })
     }
 
     /// Reads whether there is something to undo and redo, and its name, after `notification` from an
@@ -251,7 +288,17 @@ struct DocumentScreen: View {
     private func save() {
         model.fileWriter = host.writer
         Task {
-            if let failure = await model.save() { saveFailure = failure }
+            if let failure = await model.save() {
+                saveFailure = failure
+                return
+            }
+            #if DEBUG
+            // For a UI test: the scene's document made to look edited after Save, so that it saves as it
+            // closes, as the system would on its own (`FixtureStaging.dirtyAfterSaveArgument`).
+            if ProcessInfo.processInfo.arguments.contains(FixtureStaging.dirtyAfterSaveArgument) {
+                host.controller?.document?.updateChangeCount(.done)
+            }
+            #endif
         }
     }
 
@@ -289,24 +336,48 @@ struct DocumentScreen: View {
     /// offered and put away unanswered. Through the system's back action (`DocumentHost.close`), or, where
     /// there is none, `dismiss`.
     private func close() {
-        let offerPutAway = recoveryOffered && !recoveryAnswered && model.changesHandedOver == 0
-        if !model.needsSave, !offerPutAway { model.deleteRecovery() }
+        if !model.needsSave { model.deleteRecovery() }
         model.isClosing = true
         if !host.close() { closeDocument() }
+        // Still on screen a moment later (no way to close was found): the document is not closing after
+        // all, and its changes are kept in the recovery copy again.
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !hasGone else { return }
+            model.isClosing = false
+            await model.writeRecovery()
+        }
     }
 
     /// Looks, once the document is open, for changes kept from a time the app was stopped before they
-    /// were saved: offered when there is a copy newer than the file; one older than the file (the file
-    /// changed since) goes.
-    private func offerRecoveredChanges() {
+    /// were saved, and offers them: to restore, when they were made on top of the file as it is; to save
+    /// as a copy or discard, when the file has changed since (`RecoveredCopyKind`). Never dropped without
+    /// the reader's word.
+    private func offerRecoveredChanges() async {
         guard isOpen, !recoveryLookedFor else { return }
         recoveryLookedFor = true
-        let modified = fileURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
-        if model.hasRecoveredChanges(newerThan: modified) {
-            recoveryOffered = true
-            showsRecoveryOffer = true
-        } else {
-            model.discardRecoveredChanges()
+        recoveryOffer = await model.findRecoveredChanges(fileURL: fileURL)
+    }
+
+    /// Save As for changes kept from an earlier version of the file: the kept copy, as it is, through the
+    /// system's exporter, under the document's name and " copy". Once it is saved, the kept copy goes;
+    /// cancelled, it stays, offered again the next time.
+    private func exportRecoveredCopy() {
+        let name = Strings.copyName(of: documentName)
+        Task {
+            guard let bytes = await model.recoveredCopyBytes() else {
+                copyFailure = .failed
+                return
+            }
+            let written = await EditQueue.offMain { try CopyFiles.write(bytes, named: name) }
+            guard case .success(let file) = written, let presenter = anchor.topViewController else {
+                if case .success(let file) = written { CopyFiles.remove(file) }
+                copyFailure = .failed
+                return
+            }
+            CopyExporter.present(file, over: presenter) { saved in
+                if saved { model.discardRecoveredChanges() }
+            }
         }
     }
 
@@ -453,7 +524,7 @@ struct DocumentScreen: View {
                 } message: { failure in
                     if !failure.message.isEmpty { Text(failure.message) }
                 }
-                // Save a Copy's exporter is presented from this view's window (`saveCopy`). Success needs no
+                // Save As's exporter is presented from this view's window (`saveCopy`). Success needs no
                 // word of ours (the exporter going is enough); a failure says so, after the alert about a
                 // change refused, when there is one.
                 .background(PresentationAnchor(holder: anchor))
@@ -648,7 +719,7 @@ struct DocumentScreen: View {
     /// iPhone simulator). iOS can also move trailing items into its More menu, and not leading ones.
     /// On a compact width the bar is short of room: Comments, Thumbnails and Organize Pages are in the
     /// bar's own menu of further actions there, listed with their titles. On a regular one all are shown.
-    /// Save, Save a Copy and Send Feedback are in that menu at every width.
+    /// Save, Save As and Send Feedback are in that menu at every width.
     @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
         if horizontalSizeClass == .compact {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -659,7 +730,7 @@ struct DocumentScreen: View {
                 searchButton
             }
             ToolbarItemGroup(placement: .secondaryAction) {
-                saveButton
+                if model.savingMode != .automatic { saveButton }
                 commentsButton
                 thumbnailsButton
                 organizeButton
@@ -679,7 +750,7 @@ struct DocumentScreen: View {
             }
             // The bar's More menu, as on a compact width.
             ToolbarItemGroup(placement: .secondaryAction) {
-                saveButton
+                if model.savingMode != .automatic { saveButton }
                 saveCopyButton
                 feedbackButton
             }
@@ -817,7 +888,7 @@ struct DocumentScreen: View {
     /// Saves a copy of the document, with its changes, where the reader chooses (`saveCopy`).
     private var saveCopyButton: some View {
         Button { saveCopy() } label: {
-            Label(Strings.saveCopy, systemImage: "square.and.arrow.down.on.square")
+            Label(Strings.saveAs, systemImage: "square.and.arrow.down.on.square")
         }
         .disabled(model.pageCount == 0 || makingCopy)
         .accessibilityIdentifier("saveCopyButton")
@@ -1006,6 +1077,16 @@ final class FrontDocument: NSObject {
         model?.saveRequested?()
     }
 
+    /// ⌘W (the File menu's Close): Back, for the document in front (`DocumentModel.closeRequested`), which
+    /// asks first when there is something to save. Says whether there was a document to close.
+    @discardableResult
+    func close() -> Bool {
+        refresh()
+        guard let close = model?.closeRequested else { return false }
+        close()
+        return true
+    }
+
     /// The Edit menu's Redo, as `undo`.
     func redo() {
         if let field = Self.fieldBeingTyped() {
@@ -1124,17 +1205,34 @@ extension UIResponder {
     }
 }
 
-/// The File menu's Save (⌘S on a hardware keyboard), in place of the system's: Save for the document in
-/// front (`FrontDocument.save`), while it has something to save.
+/// The File menu's Save (⌘S on a hardware keyboard): Save for the document in front
+/// (`FrontDocument.save`), while it has something to save. After the system's own items there (its Close,
+/// ⌘W, which the app delegate routes to Back's question: `AppDelegate`), not in their place.
 struct SaveCommands: Commands {
     private var front: FrontDocument { FrontDocument.shared }
 
     var body: some Commands {
         let canSave = front.model.map { $0.needsSave && !$0.isSaving } ?? false
-        CommandGroup(replacing: .saveItem) {
+        CommandGroup(after: .saveItem) {
             Button(Strings.saveDocument) { front.save() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!canSave)
+        }
+    }
+}
+
+/// "Edited" under the document's name, through SwiftUI's own line under the title (iOS 26 and later):
+/// SwiftUI sets the navigation item again as the toolbar changes, and keeps its own line there. Before iOS
+/// 26 the page indicator says it. (`DocumentHost.showEdited` sets the same line on the document's view
+/// controller, for when that sets its navigation item again.)
+struct EditedSubtitle: ViewModifier {
+    let edited: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.navigationSubtitle(edited ? Strings.edited : "")
+        } else {
+            content
         }
     }
 }

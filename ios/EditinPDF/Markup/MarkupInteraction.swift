@@ -528,7 +528,7 @@ final class MarkupInteraction: NSObject {
         if let view, view.isDescendant(of: host.scrollView) { return }
         // The colour picker the box being typed in waits for (More Colors…), over the pages.
         if textBoxes.isPickingColor, let picker = host.presentedViewController, let view, view.isDescendant(of: picker.view) { return }
-        model.commitPendingInk(closing: true)
+        if model.commitPendingInk(closing: true), model.savingMode == .automatic { host.countChangeNow() }
     }
 
     /// Listens for focus moving: VoiceOver's and Switch Control's (an element focused), and the focus

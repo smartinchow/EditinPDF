@@ -23,6 +23,10 @@ enum FixtureStaging {
     /// Launched with this, the app forgets the tools' styles an earlier run kept (`ToolStyleStore`), so
     /// a test starts with each tool's first style (a text box's size, say, which the format bar keeps).
     static let resetToolStylesArgument = "-resetToolStyles"
+    /// Makes the scene's document look edited after each Save (`DocumentScreen.save`), so that it saves
+    /// as it closes, as the system would on its own: a UI test checks that such a write leaves the file as
+    /// last saved.
+    static let dirtyAfterSaveArgument = "-dirtySceneDocumentAfterSave"
 
     enum StagingError: Error {
         /// The name is empty or has a path in it: only the name of a bundled file is accepted.

@@ -81,6 +81,7 @@
 		917611EAFAC84489EF3D2F16 /* restricted-form.pdf in Resources */ = {isa = PBXBuildFile; fileRef = 5BFFAF72EA07501ED96716E1 /* restricted-form.pdf */; };
 		91A6F7D718450CBAB28C87D4 /* AnnotationIndexTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F5652E0774A95EA21FB389E /* AnnotationIndexTests.swift */; };
 		95A59EC057CC8191CCA56E0C /* InkInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69E4EDC928C579F0B9D5FAB5 /* InkInteraction.swift */; };
+		97E13593D0168C1CDCDCC8BA /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97C917530E18382D7C4380F5 /* AppDelegate.swift */; };
 		991F199DE1FAAC91B076D798 /* Strings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A09A727CE94FC70B23ED5AAE /* Strings.swift */; };
 		99765C1955906B01E39D1329 /* DocumentSaving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42064C693160D6FAF99DCFCC /* DocumentSaving.swift */; };
 		9ABEECF405575D3B8B834ABA /* PencilKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2943D75B9FCE584A3897479A /* PencilKit.framework */; };
@@ -244,6 +245,7 @@
 		8B6658CE4C759BBD49389820 /* PageTiledLayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageTiledLayerTests.swift; sourceTree = "<group>"; };
 		929024FCCAF89F35EEF482F6 /* CommentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentsTests.swift; sourceTree = "<group>"; };
 		933CE8DF35DC968673A1FFCD /* GlyphLinesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlyphLinesTests.swift; sourceTree = "<group>"; };
+		97C917530E18382D7C4380F5 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		984C365033689202DB4131F4 /* EditinPDFApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditinPDFApp.swift; sourceTree = "<group>"; };
 		99DB16EDA82D406E4E0BC98F /* SearchControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchControllerTests.swift; sourceTree = "<group>"; };
 		9A452061FDE50418C6CCF138 /* InkDrawingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InkDrawingTests.swift; sourceTree = "<group>"; };
@@ -424,6 +426,7 @@
 		3500467DC03F43FB29B6909E /* App */ = {
 			isa = PBXGroup;
 			children = (
+				97C917530E18382D7C4380F5 /* AppDelegate.swift */,
 				984C365033689202DB4131F4 /* EditinPDFApp.swift */,
 				4596F96C58D2514B2D8F2FE7 /* FixtureStaging.swift */,
 				038B53D508CA4C8CFF671EB9 /* PrivacyInfo.xcprivacy */,
@@ -845,6 +848,7 @@
 				0116A5DE83F679ACC3D8140E /* AnnotationEditing.swift in Sources */,
 				E5B1586E6CC77166BCA5AA08 /* AnnotationIndex.swift in Sources */,
 				5ECE09DE3CACE1A48A5F2CC5 /* AnnotationSelectInteraction.swift in Sources */,
+				97E13593D0168C1CDCDCC8BA /* AppDelegate.swift in Sources */,
 				07252C2B7839DC88CE87589A /* ChoiceSheet.swift in Sources */,
 				E63CC6D984F7929E2C2316CE /* CommentsSheet.swift in Sources */,
 				FCA38D3107881E65B6D090C8 /* Diagnostics.swift in Sources */,

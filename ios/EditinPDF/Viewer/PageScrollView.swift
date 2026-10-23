@@ -272,6 +272,25 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         window.addGestureRecognizer(observer)
     }
 
+    /// VoiceOver's escape (a two-finger Z) on the pages: Back, which asks first when there is something to
+    /// save (`DocumentModel.closeRequested`).
+    override func accessibilityPerformEscape() -> Bool {
+        guard let close = model.closeRequested else { return false }
+        close()
+        return true
+    }
+
+    /// For a document saved the system's way (`SavingMode.automatic`): tells the document, as UIKit keeps
+    /// it, that it has a change, now, so that it saves it as it closes. The undo manager tells it only as it
+    /// closes the run loop turn's undo group, and the finger lifting from Back can be handled in the same
+    /// turn as the finger going down on it (05aaefc, ADR 0002).
+    func countChangeNow() {
+        var responder: UIResponder? = self
+        while let current = responder, !(current is UIDocumentViewController) { responder = current.next }
+        guard let document = (responder as? UIDocumentViewController)?.document, !document.hasUnsavedChanges else { return }
+        document.updateChangeCount(.done)
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         let observer = markupInteraction.fingersDown

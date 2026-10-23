@@ -115,12 +115,12 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertTrue(app.textFields["searchField"].waitForExistence(timeout: 5), "Search in the More menu did not open the search")
     }
 
-    /// Save a Copy is in the More menu, and puts up the system's exporter, offered as the document's name
+    /// Save As is in the More menu, and puts up the system's exporter, offered as the document's name
     /// and " copy"; Cancel puts it away and leaves the document open.
     func testSaveACopyOpensTheExporter() {
         let app = launchAndOpen("sample.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
-        XCTAssertTrue(tapToolbarButton("saveCopyButton", titled: "Save a Copy…", in: app), "no Save a Copy")
+        XCTAssertTrue(tapToolbarButton("saveCopyButton", titled: "Save As…", in: app), "no Save As")
         // The system's exporter (a document picker, its elements named by the system), offering the name.
         let name = app.textFields["DOCPicker.filenameTextField"]
         XCTAssertTrue(name.waitForExistence(timeout: 15), "the exporter did not come up")

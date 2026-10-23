@@ -122,7 +122,7 @@ final class SavingSmokeTests: XCTestCase {
     func testUnsavedChangesAreOfferedAfterTheAppStopped() {
         let app = launchAndOpen("sample.pdf", as: "save-recover.pdf")
         deleteTheLastPage(in: app)
-        sleep(4)   // the recovery copy is written a moment after the change
+        sleep(7)   // the recovery copy is written a few seconds after the change
         relaunchAndOpen("save-recover.pdf", in: app)
         let offer = app.alerts["Restore unsaved changes?"]
         XCTAssertTrue(offer.waitForExistence(timeout: 10), "the unsaved change was not offered")
@@ -141,7 +141,7 @@ final class SavingSmokeTests: XCTestCase {
     func testDiscardingTheOfferedChanges() {
         let app = launchAndOpen("sample.pdf", as: "save-decline.pdf")
         deleteTheLastPage(in: app)
-        sleep(4)
+        sleep(7)
         relaunchAndOpen("save-decline.pdf", in: app)
         let offer = app.alerts["Restore unsaved changes?"]
         XCTAssertTrue(offer.waitForExistence(timeout: 10), "the unsaved change was not offered")
@@ -158,7 +158,7 @@ final class SavingSmokeTests: XCTestCase {
     func testPuttingTheOfferAwayKeepsItForNextTime() {
         let app = launchAndOpen("sample.pdf", as: "save-later.pdf")
         deleteTheLastPage(in: app)
-        sleep(4)
+        sleep(7)
         relaunchAndOpen("save-later.pdf", in: app)
         let offer = app.alerts["Restore unsaved changes?"]
         XCTAssertTrue(offer.waitForExistence(timeout: 10), "the unsaved change was not offered")
@@ -171,6 +171,66 @@ final class SavingSmokeTests: XCTestCase {
         expectClosed(app)
         openFromBrowser("save-later.pdf", in: app)
         XCTAssertTrue(offer.waitForExistence(timeout: 10), "not offered again")
+        offer.buttons["Discard"].firstMatch.tap()
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+    }
+
+    /// Text selected (the toolbar gains Copy, and SwiftUI sets the navigation bar again), then a change:
+    /// "Edited" still shows, and Back still asks.
+    func testWithTextSelectedBackStillAsks() {
+        let app = launchAndOpen("sample.pdf", as: "save-selected.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        deleteTheLastPage(in: app)
+        pagePoint(CGPoint(x: 82, y: 79), pageWidth: 612, in: app).press(forDuration: 1)
+        XCTAssertTrue(app.menuItems["Copy"].waitForExistence(timeout: 5), "no text selected")
+        XCTAssertTrue(editedIndicator(in: app).waitForExistence(timeout: 5), "\"Edited\" went with the selection")
+        attach(app, "edited-with-selection")
+        goBack(in: app, choosing: "Cancel")
+        XCTAssertTrue(editedIndicator(in: app).waitForExistence(timeout: 5))
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 2", within: 5)
+    }
+
+    /// ⌘W (the File menu's Close) asks as Back does when there are unsaved changes, and closes at once when
+    /// there are none.
+    func testCommandWAsksAsBackDoes() {
+        let app = launchAndOpen("sample.pdf", as: "save-command-w.pdf")
+        deleteTheLastPage(in: app)
+        XCTAssertTrue(press("w", modifiers: .command, in: app, until: NSPredicate(format: "exists == true"), holdsFor: saveQuestion(in: app)),
+                      "⌘W asked nothing")
+        saveQuestion(in: app).buttons["Cancel"].firstMatch.tap()
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 2", within: 5)
+        XCTAssertTrue(tapToolbarButton("saveButton", titled: "Save", in: app), "no Save")
+        XCTAssertTrue(editedIndicator(in: app).waitForNonExistence(timeout: 10))
+        XCTAssertTrue(press("w", modifiers: .command, in: app, until: NSPredicate(format: "exists == false"), holdsFor: app.staticTexts["pageIndicator"]),
+                      "⌘W did not close a saved document")
+        XCTAssertFalse(saveQuestion(in: app).exists)
+    }
+
+    /// A write the system makes on its own (the scene's document made to look edited after Save, so that it
+    /// saves as it closes) leaves the file as last saved: the change after Save, discarded, is not in it.
+    func testTheSystemsOwnWriteLeavesTheFileAsLastSaved() {
+        let app = launchAndOpen("sample.pdf", as: "save-system-write.pdf", arguments: ["-dirtySceneDocumentAfterSave"])
+        deleteTheLastPage(in: app)
+        XCTAssertTrue(tapToolbarButton("saveButton", titled: "Save", in: app), "no Save")
+        XCTAssertTrue(editedIndicator(in: app).waitForNonExistence(timeout: 10), "Save left the change unsaved")
+        deleteTheLastPage(in: app, leaving: 1)
+        goBack(in: app, choosing: "Discard Changes")
+        expectClosed(app)
+        sleep(2)
+        relaunchAndOpen("save-system-write.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 2", within: 10)
+    }
+
+    /// Sent to the background, then stopped at once (no time for the few seconds' wait after a change): the
+    /// change is offered when the document opens again, written as the app went to the background.
+    func testUnsavedChangesAreKeptWhenStoppedInTheBackground() {
+        let app = launchAndOpen("sample.pdf", as: "save-background.pdf")
+        deleteTheLastPage(in: app)
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+        relaunchAndOpen("save-background.pdf", in: app)
+        let offer = app.alerts["Restore unsaved changes?"]
+        XCTAssertTrue(offer.waitForExistence(timeout: 10), "the change was not kept as the app went to the background")
         offer.buttons["Discard"].firstMatch.tap()
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
     }
@@ -248,6 +308,15 @@ final class SavingSmokeTests: XCTestCase {
             usleep(500_000)
         }
         app.swipeDown(velocity: .fast)
+    }
+
+    /// Where `point` (PDF points on the first page, `pageWidth` wide, at the top of the document) is on
+    /// screen: the page is fitted to the scroll view's width and starts under the navigation bar.
+    private func pagePoint(_ point: CGPoint, pageWidth: CGFloat, in app: XCUIApplication) -> XCUICoordinate {
+        let scrollView = app.scrollViews["pageScrollView"].firstMatch
+        let scale = scrollView.frame.width / pageWidth
+        let top = app.navigationBars.firstMatch.frame.maxY - scrollView.frame.minY
+        return scrollView.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x * scale, dy: top + point.y * scale))
     }
 
     private func attach(_ app: XCUIApplication, _ name: String) {

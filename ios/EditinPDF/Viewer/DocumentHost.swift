@@ -17,9 +17,10 @@ import UIKit
 ///
 /// Found from the screen's view controllers (`DocumentHostAnchor`) once they are in the window, and
 /// looked at again on every update of the screen: SwiftUI may give the navigation item a new back
-/// action of its own, which is taken over again. Where there is no such controller or action (a system
-/// that shows the document otherwise), Back is the system's, and closes without asking; the recovery
-/// copy then keeps the changes, offered when the document opens again (`DocumentScreen`).
+/// action of its own, which is taken over again. Where there is no such controller, document or action (a
+/// system that shows the document otherwise), the document is saved the system's way instead
+/// (`SavingMode.automatic`, `decide`): Back is the system's and the changes are saved as it closes, as
+/// before the reader could choose, so that a reader is never left unable to save.
 @MainActor
 final class DocumentHost {
     /// The view controller the scene shows the document in, held weakly: the scene owns it.
@@ -30,6 +31,13 @@ final class DocumentHost {
     private(set) var writer: SceneDocumentWriter?
     /// What the back button does: set by the screen.
     var goBack: (() -> Void)?
+    /// Hears how the document is to be saved, once it is decided (`decide`); a decision made before it is
+    /// set is handed over as it is set.
+    var onDecided: ((SavingMode) -> Void)? {
+        didSet { if let decided, let onDecided { onDecided(decided) } }
+    }
+    /// The decision, once made.
+    private(set) var decided: SavingMode?
     /// Whether "Edited" is to be shown (`showEdited`).
     private var edited = false
     /// Watches the navigation item: the document's view controller sets its own line under the name and
@@ -59,10 +67,7 @@ final class DocumentHost {
     /// Puts the back action and the line under the name back whenever the navigation item's change.
     private func watch(_ item: UINavigationItem) {
         let reapply: @Sendable () -> Void = { [weak self] in
-            Task { @MainActor in
-                self?.interceptBack()
-                self?.applyEdited()
-            }
+            Task { @MainActor in self?.reapply() }
         }
         var watches = [item.observe(\.backAction) { _, _ in reapply() }]
         if #available(iOS 26, *) {
@@ -82,8 +87,20 @@ final class DocumentHost {
         }
     }
 
+    /// Decides, once, how the document is saved (`SavingMode.decide`): from what `attach` found by the time
+    /// the screen first appeared.
+    func decide() {
+        guard decided == nil else { return }
+        let mode = SavingMode.decide(controllerFound: controller != nil, documentFound: writer != nil,
+                                     backActionFound: systemBack != nil)
+        decided = mode
+        onDecided?(mode)
+    }
+
     /// Says "Edited" under the document's name in the navigation bar while it has something to save
-    /// (iOS 26 and later, where the bar has a line for it; the page indicator says it before).
+    /// (iOS 26 and later, where the bar has a line for it; the page indicator says it before). The screen
+    /// says it through SwiftUI too (`navigationSubtitle`); this puts it back whenever the document's view
+    /// controller sets its navigation item again.
     func showEdited(_ edited: Bool) {
         self.edited = edited
         applyEdited()
@@ -91,8 +108,17 @@ final class DocumentHost {
 
     private func applyEdited() {
         guard #available(iOS 26, *), let item = controller?.navigationItem else { return }
-        let subtitle = edited ? Strings.edited : nil
-        if item.subtitle != subtitle { item.subtitle = subtitle }
+        if edited {
+            if item.subtitle != Strings.edited { item.subtitle = Strings.edited }
+        } else if item.subtitle == Strings.edited {
+            item.subtitle = nil
+        }
+    }
+
+    /// Takes the back action over and says "Edited" again, should the navigation item have been set anew.
+    func reapply() {
+        interceptBack()
+        applyEdited()
     }
 
     /// Whether the back button runs `goBack`.
@@ -118,6 +144,9 @@ struct DocumentHostAnchor: UIViewControllerRepresentable {
     /// Whether the document has something to save: "Edited" is shown under its name meanwhile. Read so
     /// that the anchor is updated (and the back action looked at again) as it changes.
     let needsSave: Bool
+    /// What the toolbar shows (text selected, the tool picked, the width): SwiftUI sets the navigation item
+    /// again as the toolbar changes, and the back action and "Edited" are looked at again then.
+    let toolbarState: String
 
     func makeUIViewController(context: Context) -> AnchorController {
         AnchorController(host: host)
@@ -126,9 +155,13 @@ struct DocumentHostAnchor: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: AnchorController, context: Context) {
         controller.host = host
         controller.needsSave = needsSave
+        controller.toolbarState = toolbarState
         if controller.view.window != nil {
             host.attach(from: controller)
             host.showEdited(needsSave)
+            // And once SwiftUI has applied this update's toolbar to the navigation item.
+            let host = host
+            DispatchQueue.main.async { host.reapply() }
         }
     }
 
@@ -136,6 +169,7 @@ struct DocumentHostAnchor: UIViewControllerRepresentable {
     final class AnchorController: UIViewController {
         var host: DocumentHost
         var needsSave = false
+        var toolbarState = ""
 
         init(host: DocumentHost) {
             self.host = host
@@ -156,6 +190,7 @@ struct DocumentHostAnchor: UIViewControllerRepresentable {
             super.viewDidAppear(animated)
             host.attach(from: self)
             host.showEdited(needsSave)
+            host.decide()
         }
     }
 }
