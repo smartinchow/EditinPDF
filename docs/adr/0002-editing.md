@@ -161,7 +161,8 @@ after the last change, undo or redo, and as the scene leaves the active state or
 first, in a background task); never with nothing unsaved. When the same file opens again and a copy newer than
 the file is there, the app asks "Restore unsaved changes?": **Restore** opens the copy (with the password the
 file was opened with) in place of the document, every change unsaved, the file still unwritten; **Discard**
-deletes it. Save, Discard Changes and a saved Save As delete it (`recoveryEpoch` drops one being written
+deletes it; put away with the system's Cancel, it is kept (unless a change is made meanwhile) and offered again
+on the next open. Save, Discard Changes and a saved Save As delete it (`recoveryEpoch` drops one being written
 meanwhile); a copy older than the file goes; copies older than 30 days are swept at launch. Nothing of a document
 is logged. The copy is found by the file's path, so a file renamed or moved while the app was stopped is not
 matched (its copy is swept after 30 days).
