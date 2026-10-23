@@ -8,12 +8,14 @@ import os
 ///
 /// One file per document, `Application Support/Recovery/<key>.pdf`, the key a hash of the file's path
 /// (`key(for:)`): the document as the engine holds it, unsaved changes and all (its incremental save,
-/// so a password-protected file's copy keeps its password). Written with complete file protection and
-/// kept out of backups; never written to the document's own file. Nothing of the document is logged.
+/// so a password-protected file's copy keeps its password). Written with file protection complete
+/// unless open (so a write that starts before the device locks can finish), and kept out of backups;
+/// never written to the document's own file. Nothing of the document is logged.
 ///
-/// The copy is offered when the same file opens again, if it is newer than the file (`copy(key:newerThan:)`);
-/// it goes on Save, on Discard, once Save As has saved a copy, and when the offer is declined; copies left
-/// longer than `maximumAge` are swept at launch.
+/// The copy is offered when the same file opens again (`DocumentModel.findRecoveredChanges`): to restore
+/// when it was written on top of the file as it is, otherwise to save as a copy or discard. It goes on
+/// Save, on Discard, once Save As has saved a copy, and when the offer is declined; copies left longer
+/// than `maximumAge` are swept at launch.
 struct RecoveryStore: Sendable {
     /// The folder the copies are kept in.
     let directory: URL
@@ -43,20 +45,20 @@ struct RecoveryStore: Sendable {
         directory.appendingPathComponent(key, isDirectory: false).appendingPathExtension("pdf")
     }
 
-    /// Writes `data` as the copy for `key`, replacing the one there: whole or not at all, with complete
-    /// file protection, kept out of backups (the folder and the file).
+    /// Writes `data` as the copy for `key`, replacing the one there: whole or not at all, with file
+    /// protection complete unless open, kept out of backups (the folder and the file).
     func write(_ data: Data, key: String) throws {
         let fm = FileManager.default
         if !fm.fileExists(atPath: directory.path) {
             try fm.createDirectory(at: directory, withIntermediateDirectories: true,
-                                   attributes: [.protectionKey: FileProtectionType.complete])
+                                   attributes: [.protectionKey: FileProtectionType.completeUnlessOpen])
             var folder = directory
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try? folder.setResourceValues(values)
         }
         var file = url(key: key)
-        try data.write(to: file, options: [.atomic, .completeFileProtection])
+        try data.write(to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         try file.setResourceValues(values)

@@ -4,7 +4,7 @@ import SwiftUI
 import UIKit
 import os
 
-/// Why Save a Copy made no copy.
+/// Why Save As made no copy.
 enum CopyFailure: Error, Equatable {
     /// The bridge refused the save (`SaveError.Signed`): a signed document whose file is damaged, saving
     /// changes would rewrite it and break its signatures.
@@ -48,7 +48,7 @@ extension DocumentModel {
         return !(hasPendingEdit || failure.map({ $0.id != failureBefore }) == true)
     }
 
-    /// The bytes of a copy of the document as the reader sees it, for Save a Copy and Save As: what Save
+    /// The bytes of a copy of the document as the reader sees it, for Save As and Save As: what Save
     /// writes (`PDFFileDocument.savedBytes`: the file as opened with one appended update holding
     /// every change, a password-protected file still protected by its password).
     ///
@@ -76,7 +76,7 @@ extension DocumentModel {
     }
 }
 
-/// Where Save a Copy puts the copy it hands to the system's exporter: a folder of its own for each copy
+/// Where Save As puts the copy it hands to the system's exporter: a folder of its own for each copy
 /// (`write`), in a folder of the app's own under the temporary folder (`root`). The exporter copies the
 /// file where the reader chooses; the folder is removed once it is done, saved, cancelled or failed
 /// (`remove`), and whatever is left (the app stopped meanwhile) at the next launch (`sweep`). Nothing else

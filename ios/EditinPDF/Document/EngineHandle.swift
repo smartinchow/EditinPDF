@@ -21,6 +21,7 @@ final class EngineHandle: Sendable {
     private let state: OSAllocatedUnfairLock<PdfDocument?>
     private let edits = EditsOnTheirWay()
     private let explicitSaves = OSAllocatedUnfairLock(initialState: 0)
+    private let automatic = OSAllocatedUnfairLock(initialState: false)
 
     init(_ document: PdfDocument? = nil) {
         state = OSAllocatedUnfairLock(initialState: document)
@@ -49,6 +50,13 @@ final class EngineHandle: Sendable {
     /// Whether Save is writing the file now.
     var isSavingExplicitly: Bool {
         explicitSaves.withLock { $0 > 0 }
+    }
+
+    /// Whether every write writes the engine's changes: the document is saved the system's way, on its
+    /// own (`SavingMode.automatic`, where Back cannot ask).
+    var writesAutomatically: Bool {
+        get { automatic.withLock { $0 } }
+        set { automatic.withLock { $0 = newValue } }
     }
 
     /// A change, undo or redo has been handed over: it is on its way to the engine.

@@ -401,10 +401,23 @@ final class DocumentModel {
     /// Moves on with every Save, Discard and Save As, so a recovery copy written meanwhile is not left
     /// behind (`writeRecovery`).
     @ObservationIgnored var recoveryEpoch = 0
+    /// Whether the recovery copy at `recoveryKey` is this session's: written by it, or restored into it.
+    /// Only such a copy is deleted (`deleteRecovery`).
+    @ObservationIgnored var recoveryOwned = false
+    /// Whether a copy kept from before is at `recoveryKey`, offered and not answered yet (Restore,
+    /// Discard, or Save As for one from an earlier version of the file): it is neither overwritten nor
+    /// deleted until the reader answers.
+    @ObservationIgnored var recoveryHeld = false
+    /// How the document is saved: chosen once its screen has found the scene's document controller
+    /// (`SavingMode.decide`); nil until then.
+    private(set) var savingMode: SavingMode?
+    /// What Back, ⌘W and VoiceOver's escape do for this document (`FrontDocument.close`): set by its
+    /// screen, which asks first when there is something to save.
+    @ObservationIgnored var closeRequested: (() -> Void)?
     /// Moves on when the document is replaced by its recovery copy: the screen shows its pages again.
     private(set) var documentGeneration = 0
-    /// Set once the reader chose how the document closes (Discard, Save As): no recovery copy is written
-    /// after that (`writeRecovery`).
+    /// Set while the document is closing (the reader's choice made, the close under way): no recovery copy
+    /// is written then (`writeRecovery`). Cleared again if the screen is still there after all.
     @ObservationIgnored var isClosing = false
     /// What ⌘S does for this document (`FrontDocument.save`): set by its screen, which shows how Save went.
     @ObservationIgnored var saveRequested: (() -> Void)?
@@ -431,6 +444,19 @@ final class DocumentModel {
     /// Save is over.
     func endSaving() {
         isSaving = false
+    }
+
+    /// Takes `mode` (once): `.automatic` registers changes with the scene's undo manager from now on, so the
+    /// system saves them as it always did, and every write writes them (`EngineHandle.writesAutomatically`).
+    func adopt(_ mode: SavingMode, sceneUndoManager: UndoManager?) {
+        guard savingMode == nil else { return }
+        savingMode = mode
+        guard mode == .automatic else { return }
+        engine.writesAutomatically = true
+        if let sceneUndoManager, sceneUndoManager !== undoManager {
+            undoManager?.removeAllActions()
+            undoManager = sceneUndoManager
+        }
     }
 
     /// The document was replaced by its recovery copy (`restoreRecoveredChanges`): a history of its own,

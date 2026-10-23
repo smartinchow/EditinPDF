@@ -197,9 +197,10 @@ enum Strings {
         String(localized: "saveDocument", defaultValue: "Save", comment: "More menu item and keyboard command, and a button of the question asked when going back with unsaved changes: writes the changes to the PDF's own file")
     }
 
-    /// The choice of the question Back asks that saves the changes in a copy and leaves the file as it is.
+    /// Save As: the More menu's item, and a choice of the question Back asks, that saves the document with
+    /// its changes as a copy, in a folder and under a name the reader chooses, and leaves the file as it is.
     static var saveAs: String {
-        String(localized: "Save As…", comment: "Button of the question asked when going back to the documents with unsaved changes: saves them in a copy, in a folder and under a name the reader chooses, and leaves the original file as it was")
+        String(localized: "Save As…", comment: "More menu item, and a button of the question asked when going back to the documents with unsaved changes: saves the document with its changes as a copy, in a folder and under a name the reader chooses, and leaves the original file as it was")
     }
 
     /// The choice of the question Back asks that lets the changes go.
@@ -258,12 +259,35 @@ enum Strings {
         String(localized: "discardRecovered", defaultValue: "Discard", comment: "Button that deletes the unsaved changes kept when the app stopped; the document opens as its file is")
     }
 
-    // MARK: Save a Copy
-
-    /// The More menu's item that saves a copy of the document where the reader chooses.
-    static var saveCopy: String {
-        String(localized: "Save a Copy…", comment: "More menu item: saves a copy of the document, with its changes, in a folder and under a name the reader chooses")
+    /// The File menu's Close (⌘W) for a document: Back's, which asks first when there are unsaved changes.
+    /// Its own key: the button of the message about a file that could not be opened may be translated
+    /// otherwise.
+    static var closeDocument: String {
+        String(localized: "closeDocument", defaultValue: "Close", comment: "File menu command (Command-W) that closes the document, asking first whether to save its changes")
     }
+
+    /// The question asked when a document opens with unsaved changes kept from an earlier version of its
+    /// file (the file changed since): they can only be saved as a copy, or discarded.
+    static var earlierVersionTitle: String {
+        String(localized: "Unsaved changes from an earlier version of this file were kept", comment: "Title of the question asked when a document opens and changes made to an earlier version of its file, never saved, were kept when the app stopped")
+    }
+
+    /// What that question says; `name` is the document's.
+    static func earlierVersionMessage(_ name: String) -> String {
+        String(localized: "“\(name)” has changed since they were made. Save them as a copy, or discard them.", comment: "Message of the question asked when a document opens with unsaved changes kept from an earlier version of its file: the document's name")
+    }
+
+    /// The title of the alert when the changes kept from before could not be restored.
+    static var restoreFailedTitle: String {
+        String(localized: "The unsaved changes could not be restored.", comment: "Title of the alert shown when the unsaved changes kept when the app stopped could not be opened")
+    }
+
+    /// What that alert says.
+    static var restoreFailedMessage: String {
+        String(localized: "They could not be opened, and were discarded. The document is as it was last saved.", comment: "Message of the alert shown when the unsaved changes kept when the app stopped could not be opened")
+    }
+
+    // MARK: Save As
 
     /// The name the copy is offered under, without its extension: the document's name and " copy".
     static func copyName(of name: String) -> String {
@@ -272,22 +296,22 @@ enum Strings {
 
     /// The title of the alert when a copy could not be made or written.
     static var copyFailedTitle: String {
-        String(localized: "The copy could not be saved.", comment: "Title of the alert shown when Save a Copy made no copy")
+        String(localized: "The copy could not be saved.", comment: "Title of the alert shown when Save As made no copy")
     }
 
     /// Why a copy of a signed, damaged document with changes is refused.
     static var copySignedMessage: String {
-        String(localized: "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.", comment: "Message of the alert when Save a Copy is refused for a digitally signed PDF whose file is damaged: writing its changes would break the signatures")
+        String(localized: "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.", comment: "Message of the alert when Save As is refused for a digitally signed PDF whose file is damaged: writing its changes would break the signatures")
     }
 
     /// Why no copy was made when something waiting to be added (strokes, typed text) was refused.
     static var copyWaitingNotAddedMessage: String {
-        String(localized: "Some of your latest changes could not be added, so no copy was made. Check the page, then try again.", comment: "Message of the alert when Save a Copy made no copy because strokes or typed text waiting to be added to the document were refused")
+        String(localized: "Some of your latest changes could not be added, so no copy was made. Check the page, then try again.", comment: "Message of the alert when Save As made no copy because strokes or typed text waiting to be added to the document were refused")
     }
 
     /// What the alert says when a copy could not be made or written for any other reason.
     static var copyFailedMessage: String {
-        String(localized: "Try again, or choose another place to save it.", comment: "Message of the alert when Save a Copy could not make or write the copy")
+        String(localized: "Try again, or choose another place to save it.", comment: "Message of the alert when Save As could not make or write the copy")
     }
 
     // MARK: Send Feedback

@@ -233,9 +233,12 @@ final class SavingTests: XCTestCase {
         reopened.recovery = store
         reopened.recoveryKey = key
         let file = try FileStandIn(model: reopened, bytes: original)
+        try file.dateBack(by: 120)
         reopened.fileWriter = file
         await reopened.settle()
-        XCTAssertTrue(reopened.hasRecoveredChanges(newerThan: before))
+        let found = await reopened.findRecoveredChanges(fileURL: file.url)
+        XCTAssertEqual(found, .restorable, "written on top of the file as it is")
+        XCTAssertTrue(reopened.recoveryHeld)
         let generation = reopened.documentGeneration
         let done10 = await reopened.restoreRecoveredChanges()
         XCTAssertTrue(done10)
@@ -259,7 +262,8 @@ final class SavingTests: XCTestCase {
         let (model, _) = try makeModel()
         model.recovery = store
         model.recoveryKey = "declined"
-        XCTAssertTrue(model.hasRecoveredChanges(newerThan: nil))
+        let found = await model.findRecoveredChanges(fileURL: nil)
+        XCTAssertEqual(found, .earlierVersion, "no file to compare with: only a copy can be saved")
         model.discardRecoveredChanges()
         XCTAssertNil(store.copy(key: "declined", newerThan: nil))
         XCTAssertFalse(model.hasUnsavedChanges)
@@ -288,6 +292,136 @@ final class SavingTests: XCTestCase {
         XCTAssertNil(store.copy(key: "old", newerThan: nil))
         XCTAssertNotNil(store.copy(key: "new", newerThan: nil))
         XCTAssertEqual(RecoveryStore.maximumAge, 30 * 24 * 3600)
+    }
+
+    // MARK: What a copy kept from before is
+
+    /// A copy is restorable only when it starts with the file's bytes (every save appends to them) and was
+    /// written after the file last changed; otherwise it is from an earlier version of the file.
+    func testWhatACopyKeptFromBeforeIs() {
+        let file = Data("%PDF-1.7 original".utf8)
+        let copy = file + Data(" appended update".utf8)
+        let earlier = Date(timeIntervalSinceNow: -100), later = Date()
+        XCTAssertEqual(RecoveredCopyKind.of(copy: copy, copyDate: later, file: file, fileDate: earlier), .restorable)
+        XCTAssertEqual(RecoveredCopyKind.of(copy: copy, copyDate: earlier, file: file, fileDate: later), .earlierVersion,
+                       "the file changed after the copy was written")
+        XCTAssertEqual(RecoveredCopyKind.of(copy: Data("%PDF-1.7 rebuilt".utf8), copyDate: later, file: file, fileDate: earlier),
+                       .earlierVersion, "the copy does not start with the file (changed on disk, or rewritten in full)")
+        XCTAssertEqual(RecoveredCopyKind.of(copy: copy, copyDate: later, file: nil, fileDate: earlier), .earlierVersion,
+                       "the file cannot be read")
+        XCTAssertEqual(RecoveredCopyKind.of(copy: copy, copyDate: nil, file: file, fileDate: nil), .restorable)
+    }
+
+    /// A copy kept from before and not answered yet is neither overwritten by this session's changes nor
+    /// deleted by its Save, Discard or close: only the reader's answer lets it go. A copy this session did
+    /// not write and did not find is not deleted either.
+    func testACopyKeptFromBeforeIsHeldUntilAnswered() async throws {
+        let store = isolatedRecovery()
+        let kept = try fixtureData("hello")
+        try store.write(kept, key: "held")
+        let (model, _) = try makeModel()
+        model.recovery = store
+        model.recoveryKey = "held"
+        model.discardChanges()
+        XCTAssertNotNil(store.copy(key: "held", newerThan: nil), "not this session's: not deleted")
+        let found = await model.findRecoveredChanges(fileURL: nil)
+        XCTAssertNotNil(found)
+        XCTAssertTrue(model.recoveryHeld)
+        await model.settle()
+        let turned = await rotate(model)
+        XCTAssertTrue(turned)
+        await model.writeRecovery()
+        let url = try XCTUnwrap(store.copy(key: "held", newerThan: nil))
+        XCTAssertEqual(try Data(contentsOf: url), kept, "not overwritten while unanswered")
+        let file = try FileStandIn(model: model, bytes: try fixtureData("sample"))
+        model.fileWriter = file
+        let failure = await model.save()
+        XCTAssertNil(failure)
+        XCTAssertNotNil(store.copy(key: "held", newerThan: nil), "Save leaves it: it is offered next time")
+        model.discardChanges()
+        XCTAssertNotNil(store.copy(key: "held", newerThan: nil))
+        model.discardRecoveredChanges()
+        XCTAssertNil(store.copy(key: "held", newerThan: nil), "answered: it goes")
+        XCTAssertFalse(model.recoveryHeld)
+    }
+
+    /// A password-protected document's recovery copy keeps its password, and is restored with the password
+    /// the document was opened with.
+    func testAnEncryptedDocumentsChangesAreRestored() async throws {
+        let locked = try fixtureData("locked")
+        let store = isolatedRecovery()
+        let model = isolatedModel(bytes: locked)
+        model.recovery = store
+        model.recoveryKey = "encrypted"
+        let unlocked = await model.unlock(password: "hunter2")
+        XCTAssertTrue(unlocked)
+        await model.settle()
+        let turned = await rotate(model)
+        XCTAssertTrue(turned)
+        await model.writeRecovery()
+        let copy = try Data(contentsOf: try XCTUnwrap(store.copy(key: "encrypted", newerThan: nil)))
+        XCTAssertThrowsError(try PdfDocument.open(bytes: copy, password: nil), "the copy keeps the file's password")
+
+        let reopened = isolatedModel(bytes: locked)
+        reopened.recovery = store
+        reopened.recoveryKey = "encrypted"
+        let unlockedAgain = await reopened.unlock(password: "hunter2")
+        XCTAssertTrue(unlockedAgain)
+        let file = try FileStandIn(model: reopened, bytes: locked)
+        try file.dateBack(by: 120)
+        let found = await reopened.findRecoveredChanges(fileURL: file.url)
+        XCTAssertEqual(found, .restorable)
+        let restored = await reopened.restoreRecoveredChanges()
+        XCTAssertTrue(restored)
+        XCTAssertEqual(reopened.document()?.pageInfo(page: 0)?.rotationDegrees, 90)
+        XCTAssertTrue(reopened.hasUnsavedChanges)
+    }
+
+    // MARK: Saved the system's way
+
+    /// Only with the scene's document controller, its document and its back action is saving the reader's
+    /// choice; without any of them, the document is saved the system's way.
+    func testTheWayOfSavingIsDecidedFromWhatTheSceneHas() {
+        XCTAssertEqual(SavingMode.decide(controllerFound: true, documentFound: true, backActionFound: true), .explicit)
+        XCTAssertEqual(SavingMode.decide(controllerFound: false, documentFound: false, backActionFound: false), .automatic)
+        XCTAssertEqual(SavingMode.decide(controllerFound: true, documentFound: false, backActionFound: true), .automatic)
+        XCTAssertEqual(SavingMode.decide(controllerFound: true, documentFound: true, backActionFound: false), .automatic)
+    }
+
+    /// Saved the system's way, changes are registered with the scene's undo manager, so its document
+    /// counts them and saves them on its own, every write writes them, nothing asks for Save and no
+    /// recovery copy is kept.
+    func testSavedTheSystemsWayTheSceneSavesTheChanges() async throws {
+        let original = try fixtureData("sample")
+        let url = try temporaryFile(original)
+        let file = PDFFileDocument(bytes: original)
+        let model = file.model
+        let store = isolatedRecovery()
+        model.recovery = store
+        model.recoveryKey = "automatic"
+        let host = DocumentStandIn(fileURL: url, file: file)
+        let opened = await withCheckedContinuation { done in host.open { done.resume(returning: $0) } }
+        XCTAssertTrue(opened)
+        let sceneUndo = try XCTUnwrap(host.undoManager)
+        model.adopt(.automatic, sceneUndoManager: sceneUndo)
+        model.adopt(.explicit, sceneUndoManager: nil)
+        XCTAssertEqual(model.savingMode, .automatic, "decided once")
+        XCTAssertTrue(model.undoManager === sceneUndo)
+        await model.settle()
+        let turned = await rotate(model)
+        XCTAssertTrue(turned)
+        // The undo manager closes its group as the run loop turns.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(host.hasUnsavedChanges, "the scene's document counts the change")
+        XCTAssertFalse(model.needsSave, "nothing asks for Save")
+        await model.writeRecovery()
+        XCTAssertNil(store.copy(key: "automatic", newerThan: nil), "no recovery copy")
+        XCTAssertTrue(try file.snapshot(contentType: .pdf).isExplicitSave)
+        let autosaved = await withCheckedContinuation { done in host.autosave { done.resume(returning: $0) } }
+        XCTAssertTrue(autosaved)
+        XCTAssertEqual(try PdfDocument.open(bytes: try Data(contentsOf: url), password: nil).pageInfo(page: 0)?.rotationDegrees, 90,
+                       "the system's save wrote the change")
+        _ = await withCheckedContinuation { done in host.close { done.resume(returning: $0) } }
     }
 
     // MARK: Helpers
@@ -354,6 +488,15 @@ final class FileStandIn: DocumentFileWriter {
     }
 
     func bytesOnDisk() throws -> Data { try Data(contentsOf: url) }
+
+    /// Makes the file look last changed `seconds` ago.
+    func dateBack(by seconds: TimeInterval) throws {
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -seconds)], ofItemAtPath: url.path)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: url)
+    }
 
     func writeToFile() async -> Bool { await write() }
 

@@ -228,7 +228,6 @@ final class StringsTests: XCTestCase {
     }
 
     func testSaveACopyWording() {
-        XCTAssertEqual(Strings.saveCopy, "Save a Copy…")
         XCTAssertEqual(Strings.copyName(of: "Report"), "Report copy")
         XCTAssertEqual(Strings.copyFailedTitle, "The copy could not be saved.")
         XCTAssertEqual(Strings.copySignedMessage, "This signed document is damaged. Saving its changes, even in a copy, would break its signatures.")
@@ -250,6 +249,11 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.restoreMessage("Report"), "EditinPDF closed before the changes to “Report” were saved.")
         XCTAssertEqual(Strings.restore, "Restore")
         XCTAssertEqual(Strings.discardRecovered, "Discard")
+        XCTAssertEqual(Strings.closeDocument, "Close")
+        XCTAssertEqual(Strings.earlierVersionTitle, "Unsaved changes from an earlier version of this file were kept")
+        XCTAssertEqual(Strings.earlierVersionMessage("Report"), "“Report” has changed since they were made. Save them as a copy, or discard them.")
+        XCTAssertEqual(Strings.restoreFailedTitle, "The unsaved changes could not be restored.")
+        XCTAssertEqual(Strings.restoreFailedMessage, "They could not be opened, and were discarded. The document is as it was last saved.")
     }
 
     func testSendFeedbackWording() {

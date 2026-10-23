@@ -93,11 +93,12 @@ final class PDFFileDocument: ReferenceFileDocument {
         self.init(bytes: bytes)
     }
 
-    /// The engine document, to be written by `fileWrapper`, and whether Save is writing it now. Refused
-    /// unless the file is open.
+    /// The engine document, to be written by `fileWrapper`, and whether Save is writing it now (or the
+    /// document is saved the system's way, `EngineHandle.writesAutomatically`). Refused unless the file is
+    /// open.
     func snapshot(contentType: UTType) throws -> Snapshot {
         guard let document = engine.document else { throw Self.writeRefused }
-        return Snapshot(document: document, isExplicitSave: engine.isSavingExplicitly)
+        return Snapshot(document: document, isExplicitSave: engine.isSavingExplicitly || engine.writesAutomatically)
     }
 
     /// How long a save waits for the changes on their way to reach the engine (`savedBytes`). It
