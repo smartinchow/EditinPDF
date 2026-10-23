@@ -108,12 +108,17 @@ pub struct AnnotationInfo {
     pub restyle_in_place_only: bool,
     /// For a highlight, underline, strikethrough or squiggly underline, the boxes of the text it
     /// marks, one for each of its quadrilaterals (`/QuadPoints`), in the file's order: each the
-    /// view-space box that holds its four corners, finite and within the same reach as `rect`. At
-    /// most `MAX_LISTED_QUADS` for one mark, and `MAX_LISTED_QUADS_IN_ALL` for the whole list (the
-    /// marks listed after that many have none). Empty for every other kind, and for a mark whose
-    /// file gives none.
+    /// view-space box that holds its four corners, finite and within the same reach as `rect`. All of
+    /// a mark's quads or none: none for a mark with more than `MAX_LISTED_QUADS`, or one that would
+    /// take the list past `MAX_LISTED_QUADS_IN_ALL` for the whole document. Empty for every other
+    /// kind, and for a mark whose file gives none.
     #[uniffi(default = [])]
     pub quads: Vec<Rect>,
+    /// Another comment of the document replies to it (its `/IRT` names this one's `/NM`): deleting it
+    /// deletes the replies with it. Told from the engine's list, without reading the file again; a
+    /// comment without a name (`/NM`) is never counted as replied to.
+    #[uniffi(default = false)]
+    pub has_replies: bool,
 }
 
 /// The comments of the document the engine read, page by page and top to bottom within a page.
@@ -121,6 +126,12 @@ pub struct AnnotationInfo {
 pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
     // How many more quads the list may carry, over all its marks.
     let mut quads_left = MAX_LISTED_QUADS_IN_ALL;
+    // The names (`/NM`) of the comments that others reply to.
+    let replied: HashSet<&str> = info
+        .annotations
+        .iter()
+        .filter_map(|a| a.in_reply_to.as_deref())
+        .collect();
     let mut list: Vec<AnnotationInfo> = info
         .annotations
         .iter()
@@ -153,6 +164,7 @@ pub(crate) fn list(info: &pdfcraft_render::DocInfo) -> Vec<AnnotationInfo> {
                 border_width: None,
                 restyle_in_place_only: false,
                 quads,
+                has_replies: a.name.as_deref().is_some_and(|name| replied.contains(name)),
             })
         })
         .collect();
@@ -180,19 +192,20 @@ pub(crate) const MAX_LISTED_QUADS: usize = crate::edit::MAX_MARKUP_RECTS;
 pub(crate) const MAX_LISTED_QUADS_IN_ALL: usize = 100_000;
 
 /// The view-space boxes of a mark's `quads` (each 8 numbers of user space, as the engine read them)
-/// on `page`: at most `MAX_LISTED_QUADS`, and no more than `left`, which goes down by as many.
+/// on `page`, all of them or none: none when it has more than `MAX_LISTED_QUADS`, or more than `left`,
+/// which goes down by as many as are listed. A mark is never listed with only some of its quads, so the
+/// apps never take part of it for all of it (and cut it short, losing the rest): one listed with none
+/// covers no text for them.
 fn listed_quads(
     page: &pdfcraft_render::PageInfo,
     quads: &[[f32; 8]],
     left: &mut usize,
 ) -> Vec<Rect> {
-    let take = quads.len().min(MAX_LISTED_QUADS).min(*left);
-    *left = left.saturating_sub(take);
-    quads
-        .iter()
-        .take(take)
-        .map(|quad| quad_box(page, quad))
-        .collect()
+    if quads.len() > MAX_LISTED_QUADS || quads.len() > *left {
+        return Vec::new();
+    }
+    *left -= quads.len();
+    quads.iter().map(|quad| quad_box(page, quad)).collect()
 }
 
 /// The view-space box that holds the four corners of `quad` (user space: x, y of each), with every
@@ -325,31 +338,50 @@ pub(crate) fn deletes(
     })
 }
 
-/// The opacity (`/CA`) of the comment at place `index` of the 0-based `page`'s `/Annots` in the
-/// document as it is (`doc`), as the engine draws it: from 0 to 1 (a file's number outside that is
-/// held to it), and 1 when the file gives none or one that is not a finite number. `Invalid` when the
-/// page has no comment at that place; `Failed` when the file cannot be read again.
-pub(crate) fn opacity_at(
+/// The opacity (`/CA`) of each comment at `places` (page, place in that 0-based page's `/Annots`) in
+/// the document as it is (`doc`), as the engine draws it: from 0 to 1 (a file's number outside that is
+/// held to it), and 1 when the file gives none or one that is not a finite number. The file is read
+/// again once, and each page's `/Annots` once, however many places there are; nothing is read for
+/// none. `Invalid` when a page or a place does not exist; `Failed` when the file cannot be read again.
+pub(crate) fn opacities(
     doc: &pdfcraft_engine::Document,
-    page: usize,
-    index: u32,
-) -> Result<f64, EditError> {
+    places: &[(u32, u32)],
+) -> Result<HashMap<(u32, u32), f64>, EditError> {
+    let mut found = HashMap::new();
+    if places.is_empty() {
+        return Ok(found);
+    }
     let cos = working_file(doc)?;
-    let list = page_annots(&cos, page_object(&cos, page)?);
-    let entry = usize::try_from(index)
-        .ok()
-        .and_then(|place| list.get(place))
-        .ok_or_else(|| EditError::Invalid {
-            message: format!("comment {index} does not exist"),
-        })?;
-    let object = cos.resolve(entry);
-    let opacity = object
-        .as_dict()
-        .and_then(|d| d.get(b"CA"))
-        .and_then(|ca| cos.resolve(ca).as_f64())
-        .filter(|opacity| opacity.is_finite())
-        .unwrap_or(1.0);
-    Ok(opacity.clamp(0.0, 1.0))
+    let mut lists: HashMap<u32, Vec<Object>> = HashMap::new();
+    for &(page, index) in places {
+        if found.contains_key(&(page, index)) {
+            continue;
+        }
+        let list = match lists.entry(page) {
+            std::collections::hash_map::Entry::Occupied(known) => known.into_mut(),
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let number = usize::try_from(page).map_err(|_| EditError::Invalid {
+                    message: format!("page {page} does not exist"),
+                })?;
+                slot.insert(page_annots(&cos, page_object(&cos, number)?))
+            }
+        };
+        let entry = usize::try_from(index)
+            .ok()
+            .and_then(|place| list.get(place))
+            .ok_or_else(|| EditError::Invalid {
+                message: format!("comment {index} does not exist"),
+            })?;
+        let object = cos.resolve(entry);
+        let opacity = object
+            .as_dict()
+            .and_then(|d| d.get(b"CA"))
+            .and_then(|ca| cos.resolve(ca).as_f64())
+            .filter(|opacity| opacity.is_finite())
+            .unwrap_or(1.0);
+        found.insert((page, index), opacity.clamp(0.0, 1.0));
+    }
+    Ok(found)
 }
 
 /// `Ok` when the document's comments may be changed; otherwise the engine's own refusal: the document
@@ -955,18 +987,23 @@ mod tests {
     }
 
     #[test]
-    fn quads_stop_at_the_cap_for_all_the_marks() {
+    fn a_marks_quads_are_listed_all_or_none() {
         let quad = [10.0, 700.0, 20.0, 700.0, 10.0, 690.0, 20.0, 690.0];
         let mut left = 3;
         assert_eq!(listed_quads(&letter(), &[quad; 2], &mut left).len(), 2);
         assert_eq!(left, 1);
-        assert_eq!(listed_quads(&letter(), &[quad; 2], &mut left).len(), 1);
-        assert_eq!(left, 0);
+        // All or nothing: a mark of two quads with room for one gets none, and takes no room.
         assert!(listed_quads(&letter(), &[quad; 2], &mut left).is_empty());
+        assert_eq!(left, 1);
+        assert_eq!(listed_quads(&letter(), &[quad; 1], &mut left).len(), 1);
+        assert_eq!(left, 0);
         let mut plenty = usize::MAX;
         let many = vec![quad; MAX_LISTED_QUADS + 1];
+        assert!(listed_quads(&letter(), &many, &mut plenty).is_empty());
+        assert_eq!(plenty, usize::MAX);
+        let most = vec![quad; MAX_LISTED_QUADS];
         assert_eq!(
-            listed_quads(&letter(), &many, &mut plenty).len(),
+            listed_quads(&letter(), &most, &mut plenty).len(),
             MAX_LISTED_QUADS
         );
     }

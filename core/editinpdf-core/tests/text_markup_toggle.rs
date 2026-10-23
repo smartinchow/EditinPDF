@@ -65,7 +65,7 @@ fn a_marks_quads_are_listed_where_its_lines_are() {
 }
 
 #[test]
-fn hostile_quads_are_finite_held_and_capped() {
+fn hostile_quads_are_finite_held_and_listed_all_or_none() {
     let many = "10 700 20 700 10 690 20 690 ".repeat(10_001);
     let doc = PdfDocument::open(
         fixtures::hand_annotated_doc(
@@ -100,10 +100,9 @@ fn hostile_quads_are_finite_held_and_capped() {
         .iter()
         .find(|a| a.kind == AnnotationKind::Highlight)
         .unwrap();
-    assert_eq!(
-        long.quads.len(),
-        10_000,
-        "at most 10,000 quads for one mark"
+    assert!(
+        long.quads.is_empty(),
+        "a mark of more than 10,000 quads is listed with none, never with some"
     );
     let none = list
         .iter()
@@ -213,4 +212,40 @@ fn opacity_of_a_comment_that_is_not_there_is_invalid() {
     let added = doc.apply(underline(rects, Some(3), ""), 0);
     assert!(matches!(added, Err(EditError::Invalid { .. })), "{added:?}");
     assert_eq!(doc.revision(), 0);
+}
+
+/// A mark another comment replies to says so (`has_replies`): deleting it deletes the reply. A comment
+/// no one replies to does not.
+#[test]
+fn a_mark_with_replies_says_so() {
+    let doc = PdfDocument::open(
+        fixtures::hand_annotated_doc(
+            &[
+                "<< /Type /Annot /Subtype /Highlight /Rect [70 700 200 715] /NM (h) \
+                 /QuadPoints [72 715 200 715 72 700 200 700] >>",
+                "<< /Type /Annot /Subtype /Text /Rect [100 600 120 620] /Contents (re) /IRT 4 0 R >>",
+                "<< /Type /Annot /Subtype /Underline /Rect [70 500 200 515] /NM (u) \
+                 /QuadPoints [72 515 200 515 72 500 200 500] >>",
+            ],
+            &[],
+        ),
+        None,
+    )
+    .unwrap();
+    let list = doc.annotations();
+    assert_eq!(
+        list.len(),
+        2,
+        "the reply is not listed on its own: {list:?}"
+    );
+    let highlight = list
+        .iter()
+        .find(|a| a.kind == AnnotationKind::Highlight)
+        .unwrap();
+    let underline = list
+        .iter()
+        .find(|a| a.kind == AnnotationKind::Underline)
+        .unwrap();
+    assert!(highlight.has_replies);
+    assert!(!underline.has_replies);
 }

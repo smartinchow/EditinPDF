@@ -724,9 +724,11 @@ impl PdfDocument {
                 }
                 field_check(session, id, &edits)?;
                 let doc = open_doc(session, id)?;
+                // Every opacity a markup of the step takes, read with one read of the file.
+                let opacities = annotations::opacities(doc, &crate::edit::opacity_places(&edits))?;
                 let edits = edits
                     .iter()
-                    .map(|edit| edit.to_engine(doc))
+                    .map(|edit| edit.to_engine_in_step(doc, &opacities))
                     .collect::<Result<Vec<_>, _>>()?;
                 session.apply(id, pdfcraft_engine::Edit::Batch { label, edits })?;
                 Ok(undo_label(session, id))

@@ -4,6 +4,7 @@
 //! as shown, after its rotation, `y` growing down). Only this module turns them into the engine's
 //! edits.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{EditError, Rect, annotations, forms, geometry};
@@ -332,6 +333,18 @@ impl Edit {
         &self,
         doc: &pdfcraft_engine::Document,
     ) -> Result<pdfcraft_engine::Edit, EditError> {
+        let opacities = annotations::opacities(doc, &opacity_places(std::slice::from_ref(self)))?;
+        self.to_engine_in_step(doc, &opacities)
+    }
+
+    /// `to_engine` for an edit of a step whose `AddTextMarkup` opacities (`opacity_of`) were read
+    /// once for the whole step, before any of its changes (`annotations::opacities`, by page and
+    /// place). A place `opacities` does not have is `Invalid`.
+    pub(crate) fn to_engine_in_step(
+        &self,
+        doc: &pdfcraft_engine::Document,
+        opacities: &HashMap<(u32, u32), f64>,
+    ) -> Result<pdfcraft_engine::Edit, EditError> {
         use pdfcraft_engine::Edit as Engine;
         let pages = &doc.info.pages;
         Ok(match self {
@@ -416,7 +429,9 @@ impl Edit {
                 // Read from the document as it is before the step: every edit of a step is turned
                 // into the engine's before any is made.
                 let opacity = match opacity_of {
-                    Some(index) => annotations::opacity_at(doc, index_of(pages, *page)?, *index)?,
+                    Some(index) => *opacities.get(&(*page, *index)).ok_or_else(|| {
+                        invalid(format!("comment {index} of page {page} does not exist"))
+                    })?,
                     None => 1.0,
                 };
                 let style = pdfcraft_engine::Style {
@@ -803,6 +818,22 @@ impl Edit {
             | Self::MoveAnnotation { .. } => true,
         }
     }
+}
+
+/// The comments, by page and place, whose opacity the `AddTextMarkup`s of `edits` take
+/// (`opacity_of`): what `annotations::opacities` reads, once for a step.
+pub(crate) fn opacity_places(edits: &[Edit]) -> Vec<(u32, u32)> {
+    edits
+        .iter()
+        .filter_map(|edit| match edit {
+            Edit::AddTextMarkup {
+                page,
+                opacity_of: Some(index),
+                ..
+            } => Some((*page, *index)),
+            _ => None,
+        })
+        .collect()
 }
 
 fn invalid(message: String) -> EditError {
