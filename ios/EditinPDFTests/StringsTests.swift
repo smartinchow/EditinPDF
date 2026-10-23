@@ -152,6 +152,7 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.removeMarkup(.highlight), "Remove Highlight")
         XCTAssertEqual(Strings.removeMarkup(.underline), "Remove Underline")
         XCTAssertEqual(Strings.removeMarkup(.strikeOut), "Remove Strikethrough")
+        XCTAssertEqual(Strings.markHasReplies, "This mark has replies, so only the whole mark can be removed.")
         XCTAssertEqual(Strings.toolInk, "Draw")
         XCTAssertEqual(Strings.doneDrawing, "Done")
         XCTAssertEqual(Strings.toolTextBox, "Text Box")

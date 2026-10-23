@@ -176,6 +176,8 @@ final class FailingDocument: PdfDocument, @unchecked Sendable {
     }
 
     let failing: Failing
+    /// While set, reading a page's text fails (`EditError.Failed`), whatever `failing` says.
+    nonisolated(unsafe) var pageTextFails = false
 
     init(wrapping real: PdfDocument, failing: Failing) {
         self.failing = failing
@@ -191,6 +193,11 @@ final class FailingDocument: PdfDocument, @unchecked Sendable {
         let outcome = try super.apply(edit: edit, baseRevision: baseRevision)
         if failing == .setInfo, case .setInfo = edit { throw EditError.Failed(message: "failed after the change was made") }
         return outcome
+    }
+
+    override func pageText(page: UInt32) throws -> PageText {
+        if pageTextFails { throw EditError.Failed(message: "the page's text could not be read") }
+        return try super.pageText(page: page)
     }
 
     override func undo() throws -> EditOutcome {

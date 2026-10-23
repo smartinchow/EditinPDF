@@ -295,6 +295,50 @@ writes it, with its time zone, is a separate call (`PdfDocument::annotation_date
 while the list of comments is up, off the main thread: reading every comment's dictionary again at every
 revision cost tens of milliseconds on a large file.
 
+### 8. Taking a highlight, underline or strikethrough off part of its text (0.2.3)
+
+Highlight, Underline and Strikethrough work like a word processor's (`ios/EditinPDF/Markup/MarkupToggle.swift`,
+`DocumentModel.markSelection`):
+
+- **What is marked.** A glyph has a mark when the middle of its box is in one of the mark's quads. Spaces and
+  glyphs with no box do not count. The bridge lists each mark's quads in view space (`AnnotationInfo.quads`).
+  Every number is held finite and within 1e6, as `rect` is. A mark gets **all of its quads or none**: none past
+  10,000 quads, or past 100,000 for the whole list. So the app never takes part of a mark for all of it and cuts
+  it short. A mark listed with none covers nothing, so it can only be added to.
+- **What each gesture asks** (`MarkIntent`):
+  - The palette, and the current tool picked again, *toggle*. All of the selection has the mark: it comes off
+    the selected glyphs. Otherwise the glyphs without the mark are marked.
+  - A drag with the tool, and the menu's Highlight, Underline and Strikethrough, only *add*. They mark the
+    glyphs without the mark, never over one of the same kind, and never take one off.
+  - The menu's Remove items only *remove*. The menu offers "Remove …" only when every counted glyph is covered
+    and an unlocked mark is among those that cover it. Until the app knows that, it offers Copy alone, so a
+    title never says other than what its item does.
+- **How a mark comes off.** In one `apply_all`, named "Remove Highlight", "Remove Underline" or "Remove
+  Strikethrough":
+  - `DeleteAnnotations` deletes every unlocked mark of that kind that covers a selected glyph.
+  - `AddTextMarkup` adds back what each mark covers outside the selection: one piece before it and one after,
+    each with the line boxes the engine gives a selection of those glyphs. A piece keeps the mark's kind and
+    colour, and its opacity through `opacity_of`. `opacity_of` names the mark by its place before the step.
+    The bridge reads every opacity of the step with one read of the file, before any change, so a piece may
+    name the mark the same step deletes. The mark's comment goes on the first piece only.
+  - One undo puts the whole mark back. The step depends on the page's annotation places. The app also refuses
+    a plan worked out from the page's marks when a change queued before it deleted or moved one
+    (`ChangeAtItsTurn.stale`, through `stillNamesTheSame`), even when the plan only adds.
+- **What a cut-short mark loses.** The pieces are new comments. They lose the mark's author, name (`/NM`),
+  creation and modification dates, subject, pop-up and any other entry the engine does not write for a new
+  markup, and the second piece loses the comment's text. A comment longer than the bridge's 100,000-character
+  cap is cut to it.
+- **Refusals.**
+  - A mark the file locks is never deleted or cut. Text covered only by locked marks gets
+    `Strings.editNotAllowed`.
+  - A mark with replies (`AnnotationInfo.has_replies`, an `/IRT` naming its `/NM`, read from the engine's list)
+    is never cut short, since deleting it deletes the replies (`Strings.markHasReplies`). One wholly inside the
+    selection comes off, replies and all, as Delete takes it off.
+  - When the page's text cannot be read, a toggle or a remove changes nothing; only an add marks the selection
+    as it is.
+  - A selection too large to work out (4,000,000 glyph-to-quad looks, 1,000 runs) is marked as it is by an add
+    or a toggle, and refused by a remove.
+
 ## Consequences
 
 - Undo, redo and autosave stay consistent however fast the reader taps, and a refused change is never on the undo

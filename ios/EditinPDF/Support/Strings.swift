@@ -607,6 +607,12 @@ enum Strings {
         String(localized: "Remove Strikethrough", comment: "Menu item over selected struck-through text that takes the strikethrough off it; also the name of that change in Undo and Redo")
     }
 
+    /// Why a highlight, underline or strikethrough was not taken off part of the text it covers: other
+    /// comments reply to it, and cutting it short would delete them. The whole mark can be removed.
+    static var markHasReplies: String {
+        String(localized: "This mark has replies, so only the whole mark can be removed.", comment: "Shown when the reader takes a highlight, underline or strikethrough off part of its text, and the mark has replies: only selecting all of it, or deleting it, removes it")
+    }
+
     /// `removeHighlight`, `removeUnderline` or `removeStrikethrough`, for a mark of `kind`.
     static func removeMarkup(_ kind: MarkupKind) -> String {
         switch kind {

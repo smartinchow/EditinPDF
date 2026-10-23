@@ -142,56 +142,74 @@ final class DocumentModel {
         return tool.refusal(canAnnotate: capabilities.canAnnotate, pageRotation: rotation)
     }
 
+    /// What a change over selected text is asked to do (`markSelection`).
+    enum MarkIntent: Sendable {
+        /// Take the mark off when all of the selection has it, otherwise mark it: the palette, and the
+        /// current tool picked again.
+        case toggle
+        /// Only ever mark (the glyphs without the mark), and take nothing off: a drag with a text tool,
+        /// and the selection menu's Highlight, Underline and Strikethrough.
+        case add
+        /// Only ever take the mark off: the selection menu's Remove Highlight, Remove Underline and Remove
+        /// Strikethrough.
+        case remove
+    }
+
     /// Marks the selected text with a highlight, an underline or a strikethrough (`kind`), in the colour
     /// of the tool that makes it (`Tool(markupKind:)`, whatever tool is picked: the selection's menu
     /// does it in reading mode too), over the selection's boxes, which are in view space like every
-    /// edit's; or, when every selected glyph already has a mark of that kind, takes that mark off the
-    /// selected glyphs (`MarkupToggle`), as one change named `Strings.removeMarkup(kind)`. Marks of that
-    /// kind already on some of the selection are not marked over again: only the rest is marked. Says
-    /// whether the change was made.
+    /// edit's; or takes that mark off the selected glyphs (`MarkupToggle`), as one change named
+    /// `Strings.removeMarkup(kind)`, as `intent` says:
     ///
-    /// `addingOnly` (a drag with a text tool, which ends here) never takes a mark off: a reader dragging
-    /// the highlighter over highlighted text means more highlight. It marks the selected glyphs without
-    /// the mark, and nothing when all of them have it (no change, nothing told, false).
+    /// - `toggle`: takes the mark off when every selected glyph already has it, otherwise marks the
+    ///   glyphs without it (marks already on some of the selection are not marked over again).
+    /// - `add`: marks the glyphs without it, and nothing when all of them have it (no change, nothing
+    ///   told). A reader dragging the highlighter over highlighted text means more highlight.
+    /// - `remove`: takes the mark off when every selected glyph has it, and nothing otherwise.
     ///
-    /// The selection goes either way: once the change is made, with every other change (`refresh`);
-    /// when it is not (and the reader has not selected something else meanwhile), here, so that nothing
-    /// is left on the page that looks marked when it is not. A refusal is told as every change's is
-    /// (`failure`): the tool's own (`refusal(of:onPage:)`) at once, `Strings.editNotAllowed` for text
-    /// whose marks the file locks, or the engine's, such as a mark queued behind a turn of its page,
-    /// which is stale since its boxes were worked out for the page as it was (`enqueue`). With nothing
-    /// selected, nothing happens.
+    /// A change that might take a mark off is never made from less than its plan: when the page's text
+    /// cannot be read, `toggle` and `remove` change nothing (only `add` marks the selection as it is),
+    /// and a selection too large to work out (`MarkupToggle.Plan.tooMuch`) is marked as it is by `add`
+    /// and `toggle` and refused by `remove`. Says whether the change was made.
+    ///
+    /// The selection goes at once, as when a tool is picked (`pick`): a menu item tapped twice finds
+    /// nothing left. A refusal is told as every change's is (`failure`): the tool's own
+    /// (`refusal(of:onPage:)`), `Strings.editNotAllowed` for text whose marks the file locks,
+    /// `Strings.markHasReplies` for a mark with replies that would be cut short, or the engine's, such as a
+    /// change queued behind a turn of its page or a delete of a mark on it, which is stale since it was
+    /// worked out for the page as it was (`enqueue`). With nothing selected, nothing happens.
     ///
     /// One change of this kind waits for the one before it to be made: each works out what is marked from
     /// the document as the one before left it.
     @discardableResult
-    func markSelection(_ kind: MarkupKind, addingOnly: Bool = false) async -> Bool {
+    func markSelection(_ kind: MarkupKind, intent: MarkIntent = .toggle) async -> Bool {
         guard let controller = selection, let selected = controller.selection else { return false }
-        return await toggle(selected, as: kind, in: controller, addingOnly: addingOnly).value
+        controller.clear()
+        return await toggle(selected, as: kind, in: controller, intent: intent).value
     }
 
     /// The last change asked of `toggle`, which the next one waits for.
     @ObservationIgnored private var lastToggle: Task<Bool, Never>?
 
-    /// Marks `selected`, or takes the mark off it unless `addingOnly` (see `markSelection`), once the change
+    /// Marks `selected`, or takes the mark off it, as `intent` says (see `markSelection`), once the change
     /// asked before it is made.
     private func toggle(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController,
-                        addingOnly: Bool = false) -> Task<Bool, Never> {
+                        intent: MarkIntent = .toggle) -> Task<Bool, Never> {
         let before = lastToggle
         let selectedAt = revision
         let task = Task { [weak self] in
             _ = await before?.value
             guard let self else { return false }
-            return await self.mark(selected, as: kind, in: controller, selectedAt: selectedAt, addingOnly: addingOnly)
+            return await self.mark(selected, as: kind, in: controller, selectedAt: selectedAt, intent: intent)
         }
         lastToggle = task
         return task
     }
 
     /// Marks `selected`, text selected with `controller` at revision `selectedAt`, as `kind`, or takes
-    /// the mark off it unless `addingOnly` (see `markSelection`).
+    /// the mark off it, as `intent` says (see `markSelection`).
     private func mark(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController, selectedAt: UInt64,
-                      addingOnly: Bool) async -> Bool {
+                      intent: MarkIntent) async -> Bool {
         let page = Int(selected.page)
         let rects = SelectionController.rects(of: selected).map { Rect(x: $0.minX, y: $0.minY, width: $0.width, height: $0.height) }
         let tool = Tool(markupKind: kind)
@@ -203,7 +221,6 @@ final class DocumentModel {
         }
         if let refusal = refusal(of: tool, onPage: page) { return refuse(refusal) }
         guard !rects.isEmpty else { return refuse(nil) }
-        if let tooMany = Self.markupRefusal(boxes: rects.count) { return refuse(tooMany) }
         // A change before this one (the one it waited for) moved or turned the page: the glyphs may be
         // others now.
         guard pageIsUnchanged(page, since: selectedAt) else { return refuse(Strings.documentChangedTryAgain) }
@@ -212,47 +229,82 @@ final class DocumentModel {
         let annotations = annotationIndex.annotations(onPage: page)
         var edits = [Edit.addTextMarkup(page: selected.page, kind: kind, rects: rects, color: color, contents: "")]
         var name = Strings.actionAddAnnotation
-        if MarkupToggle.hasMarks(of: kind, in: annotations), let document = document() {
+        // Whether the edits were worked out from the page's marks as they are now: if a change queued
+        // before them deletes one, they are stale.
+        var readTheMarks = false
+        if !MarkupToggle.hasMarks(of: kind, in: annotations) {
+            // Nothing of that kind on the page: nothing to take off.
+            if intent == .remove { return refuse(nil) }
+        } else {
+            guard let document = document() else { return refuse(nil) }
             let range = Int(selected.start)..<Int(max(selected.start, selected.end))
             let worked = await EditQueue.offMain { () throws -> MarkupToggle.Step in
                 let glyphs = try document.pageText(page: selected.page).glyphs
                 return try MarkupToggle.Step(MarkupToggle.plan(kind, selection: range, glyphs: glyphs, annotations: annotations),
                                       page: selected.page, document: document)
             }
-            // A page whose text cannot be read again is marked as it was selected.
-            if case .success(let step) = worked {
-                switch step {
-                case .markSelection:
-                    break
-                case .mark(let boxes):
-                    guard !boxes.isEmpty else { return refuse(nil) }
-                    if let tooMany = Self.markupRefusal(boxes: boxes.count) { return refuse(tooMany) }
-                    edits = [.addTextMarkup(page: selected.page, kind: kind, rects: boxes, color: color, contents: "")]
-                case .remove where addingOnly, .locked where addingOnly:
-                    // All of it has the mark already: a drag adds none over it.
-                    return refuse(nil)
-                case .tooMuch where addingOnly:
-                    // Too much to tell what is marked: the drag marks what it went over, as it always did.
-                    break
-                case .remove(let deleting, let pieces):
-                    if let tooMany = pieces.lazy.compactMap({ Self.markupRefusal(boxes: $0.boxes.count) }).first { return refuse(tooMany) }
-                    edits = [.deleteAnnotations(page: selected.page, indices: deleting)] + pieces.map { piece in
-                        .addTextMarkup(page: selected.page, kind: kind, rects: piece.boxes, color: piece.source.color ?? color,
-                                       contents: piece.keepsContents ? ShapeGeometry.limitedText(piece.source.contents ?? "") : "",
-                                       opacityOf: piece.source.index)
-                    }
-                    name = Strings.removeMarkup(kind)
-                case .locked:
-                    return refuse(Strings.editNotAllowed)
-                case .tooMuch:
-                    return refuse(Strings.selectLessText)
+            readTheMarks = true
+            switch (worked, intent) {
+            case (.failure, .add):
+                // The page's text could not be read again: a mark that only adds is made over the selection.
+                break
+            case (.failure, _):
+                // It might have been a removal: nothing is added in its place.
+                return refuse(nil)
+            case (.success(.markSelection), .remove), (.success(.mark), .remove):
+                // Not all of it has the mark: nothing to take off.
+                return refuse(nil)
+            case (.success(.markSelection), _):
+                break
+            case (.success(.mark(let boxes)), _):
+                guard !boxes.isEmpty else { return refuse(nil) }
+                edits = [.addTextMarkup(page: selected.page, kind: kind, rects: boxes, color: color, contents: "")]
+            case (.success(.remove), .add), (.success(.locked), .add), (.success(.replies), .add):
+                // All of it has the mark already: none is added over it.
+                return refuse(nil)
+            case (.success(.remove(let deleting, let pieces)), _):
+                if let tooMany = pieces.lazy.compactMap({ Self.markupRefusal(boxes: $0.boxes.count) }).first { return refuse(tooMany) }
+                edits = [.deleteAnnotations(page: selected.page, indices: deleting)] + pieces.map { piece in
+                    .addTextMarkup(page: selected.page, kind: kind, rects: piece.boxes, color: piece.source.color ?? color,
+                                   contents: piece.keepsContents ? ShapeGeometry.limitedText(piece.source.contents ?? "") : "",
+                                   opacityOf: piece.source.index)
                 }
+                name = Strings.removeMarkup(kind)
+            case (.success(.locked), _):
+                return refuse(Strings.editNotAllowed)
+            case (.success(.replies), _):
+                return refuse(Strings.markHasReplies)
+            case (.success(.tooMuch), .remove):
+                return refuse(Strings.selectLessText)
+            case (.success(.tooMuch), _):
+                // Too much to tell what is marked: the selection is marked as it is, as before.
+                break
             }
         }
-        let made = await enqueue(edits, named: name, touching: [page], workedOutAt: base).value
+        for edit in edits {
+            if case .addTextMarkup(_, _, let boxes, _, _, _) = edit, let tooMany = Self.markupRefusal(boxes: boxes.count) {
+                return refuse(tooMany)
+            }
+        }
+        var atItsTurn: (@MainActor (DocumentModel) -> ChangeAtItsTurn)?
+        if readTheMarks {
+            atItsTurn = { model -> ChangeAtItsTurn in
+                model.stillNamesTheSame(workedOutAt: base) ? ChangeAtItsTurn.touching([page]) : ChangeAtItsTurn.stale
+            }
+        }
+        let made = await enqueue(edits, named: name, touching: [page], workedOutAt: base, atItsTurn: atItsTurn).value
         // A selection the reader made while the change was on its way is theirs: it stays.
         if !made, controller.selection == selected { controller.clear() }
         return made
+    }
+
+    /// The kinds of mark the selection's menu offers to take off `selected` (`MarkupToggle.covers`), when
+    /// that is known without reading the page's text: none when its page has no highlight, underline or
+    /// strikethrough. Nil when the text has to be read (`markedKinds`).
+    func knownMarkedKinds(of selected: TextSelection) -> Set<MarkupKind>? {
+        let annotations = annotationIndex.annotations(onPage: Int(selected.page))
+        let any = [MarkupKind.highlight, .underline, .strikeOut].contains { MarkupToggle.hasMarks(of: $0, in: annotations) }
+        return any ? nil : []
     }
 
     /// The kinds of mark every glyph of `selected` that counts already has (`MarkupToggle.covers`): those
@@ -1040,6 +1092,14 @@ final class DocumentModel {
                 return false
             case .touching(let pages):
                 token.pages = pages
+            case .stale:
+                if let whenStale {
+                    if let told = whenStale() { failure = told }
+                } else {
+                    failure = EditFailure(message: Strings.documentChangedTryAgain)
+                }
+                undoManager?.removeAllActions(withTarget: token)
+                return false
             }
         }
         let base = Self.canRebase(edits, workedOutAt: base, shifts: lastShifts) ? revision : base
@@ -1298,6 +1358,9 @@ enum ChangeAtItsTurn {
     case alreadyMade
     /// The change is made, and touches these pages (nil: any page may have moved).
     case touching(Set<Int>?)
+    /// What the change was worked out from has changed since (an annotation it read was deleted or moved
+    /// before its turn): it is refused as the engine refuses a stale change, and nothing is done.
+    case stale
 }
 
 /// What holds the text being typed in a form field, not filled in yet: the scroll view's forms

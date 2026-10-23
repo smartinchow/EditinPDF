@@ -47,6 +47,23 @@ final class MarkupToggleTests: XCTestCase {
         XCTAssertEqual(Int(selected.start)..<Int(selected.end), range, "selected other glyphs")
     }
 
+    /// Selects exactly the glyphs `range` of page 0, which may start and end inside words and run across
+    /// lines: a long press on its first glyph's word, then each handle dragged to an end.
+    private func selectExactly(_ range: Range<Int>, in m: DocumentModel) async throws {
+        let all = try glyphs(m)
+        m.selection?.beginWord(page: 0, at: middle(of: all[range.lowerBound]))
+        await m.selection?.waitUntilSettled()
+        let first = all[range.lowerBound].rect, last = all[range.upperBound - 1].rect
+        m.selection?.beginExtending(.start)
+        m.selection?.extend(to: CGPoint(x: first.x + first.width * 0.25, y: first.y + first.height / 2))
+        await m.selection?.waitUntilSettled()
+        m.selection?.beginExtending(.end)
+        m.selection?.extend(to: CGPoint(x: last.x + last.width * 0.75, y: last.y + last.height / 2))
+        await m.selection?.waitUntilSettled()
+        let selected = try XCTUnwrap(m.selection?.selection, "nothing selected")
+        XCTAssertEqual(Int(selected.start)..<Int(selected.end), range, "selected other glyphs")
+    }
+
     private func select(_ word: String, in m: DocumentModel) async throws {
         try await select(try range(of: word, in: m), in: m)
     }
@@ -237,10 +254,17 @@ final class MarkupToggleTests: XCTestCase {
         // The same word selected again, at the next revision: what was found for it before is not used.
         model.selection?.beginWord(page: 0, at: point); await model.selection?.waitUntilSettled()
         controller.selectionInteraction.lookUpMarks()
+        // Until the look-up is done the menu offers Copy alone: no title that might not match its action.
+        XCTAssertEqual(try menu(of: controller).children.map(\.title), [Strings.copy])
         await controller.selectionInteraction.waitForMarkedLookUp()
         let titles = try menu(of: controller).children.map(\.title)
         XCTAssertEqual(Set(titles), [Strings.copy, Strings.highlight, Strings.removeUnderline, Strings.strikeout], "\(titles)")
-        let removed = await controller.selectionInteraction.mark(.underline)
+        // The menu's Highlight only adds: the underline stays.
+        let added = await controller.selectionInteraction.mark(.underline)
+        XCTAssertFalse(added, "the add item took the underline off or underlined it twice")
+        XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).count, 1)
+        model.selection?.beginWord(page: 0, at: point); await model.selection?.waitUntilSettled()
+        let removed = await controller.selectionInteraction.mark(.underline, removing: true)
         XCTAssertTrue(removed)
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
     }
@@ -288,6 +312,195 @@ final class MarkupToggleTests: XCTestCase {
         let new = try XCTUnwrap(list.first { $0.index != first.index })
         for glyph in 0..<4 { XCTAssertFalse(covers(new, all[glyph]), "glyph \(glyph) is highlighted twice") }
         XCTAssertTrue(covers(new, all[5]), "the rest is not highlighted")
+    }
+
+    // MARK: Fix round 1
+
+    /// A mark over two lines cut by selecting "two": what stays is "One" on the first line, and "three"
+    /// with all of the second line, one quad for each line.
+    func testAMarkOverTwoLinesIsCutIntoPiecesWithALineEach() async throws {
+        let model = isolatedModel(bytes: TextMarkupTests.linesPage(["One two three", "four five six"]))
+        let u = UndoManager(); model.undoManager = u
+        await model.settle()
+        let all = try glyphs(model)
+        let one = try range(of: "One", in: model), two = try range(of: "two", in: model), three = try range(of: "three", in: model)
+        let four = try range(of: "four", in: model), six = try range(of: "six", in: model)
+        try await selectExactly(one.lowerBound..<six.upperBound, in: model)
+        let added = await model.markSelection(.underline)
+        XCTAssertTrue(added)
+        XCTAssertEqual(marks(model, .underline).first?.quads.count, 2, "one quad for each line")
+        try await select("two", in: model)
+        let removed = await model.markSelection(.underline)
+        XCTAssertTrue(removed)
+        let pieces = marks(model, .underline)
+        XCTAssertEqual(pieces.count, 2)
+        let before = try XCTUnwrap(pieces.first { covers($0, all[one.lowerBound]) })
+        let after = try XCTUnwrap(pieces.first { covers($0, all[three.lowerBound]) })
+        XCTAssertEqual(before.quads.count, 1)
+        XCTAssertEqual(after.quads.count, 2, "\"three\" and the second line")
+        for glyph in Array(three) + Array(four.lowerBound..<six.upperBound) where !all[glyph].text.allSatisfy(\.isWhitespace) {
+            XCTAssertTrue(covers(after, all[glyph]), "glyph \(glyph) lost its underline")
+        }
+        for glyph in two { XCTAssertFalse(pieces.contains { covers($0, all[glyph]) }) }
+        u.undo(); await model.settle()
+        XCTAssertEqual(marks(model, .underline).count, 1)
+    }
+
+    /// A mark taken off the middle of a word: "three" underlined, "hr" taken off, "t" and "ee" stay.
+    func testAMarkIsCutInsideAWord() async throws {
+        let (m, _) = await oneTwoThree()
+        let all = try glyphs(m)
+        let three = try range(of: "three", in: m)
+        try await select("three", in: m)
+        _ = await m.markSelection(.strikeOut)
+        let hr = (three.lowerBound + 1)..<(three.lowerBound + 3)
+        try await selectExactly(hr, in: m)
+        let removed = await m.markSelection(.strikeOut)
+        XCTAssertTrue(removed)
+        let pieces = marks(m, .strikeOut)
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertTrue(pieces.contains { covers($0, all[three.lowerBound]) }, "t lost its strikethrough")
+        for glyph in hr { XCTAssertFalse(pieces.contains { covers($0, all[glyph]) }, "glyph \(glyph) is still struck") }
+        for glyph in (three.lowerBound + 3)..<three.upperBound {
+            XCTAssertTrue(pieces.contains { covers($0, all[glyph]) }, "glyph \(glyph) lost its strikethrough")
+        }
+    }
+
+    /// On a page turned by `/Rotate 90` a word underlined, selected again and underlined again has none.
+    func testTheMarkComesOffOnARotatedPage() async throws {
+        let (m, u) = try makeModel(fixture: "rotated")
+        await m.settle()
+        XCTAssertEqual(m.pages[0].rotationDegrees, 90)
+        m.selection?.beginWord(page: 0, at: try firstGlyphCenter(m)); await m.selection?.waitUntilSettled()
+        let added = await m.markSelection(.underline)
+        XCTAssertTrue(added)
+        let mark = try XCTUnwrap(marks(m, .underline).first)
+        let quad = try XCTUnwrap(mark.quads.first)
+        XCTAssertGreaterThan(quad.height, quad.width, "the quad runs down the turned page")
+        m.selection?.beginWord(page: 0, at: try firstGlyphCenter(m)); await m.selection?.waitUntilSettled()
+        let removed = await m.markSelection(.underline)
+        XCTAssertTrue(removed)
+        XCTAssertTrue(marks(m, .underline).isEmpty)
+        XCTAssertEqual(u.undoActionName, Strings.removeUnderline)
+    }
+
+    /// A toggle worked out from the page's marks, queued behind the delete of one of them, is refused as
+    /// stale, as the reader is told, and leaves nothing: an add of what was not marked (the delete makes
+    /// "two" unmarked too), and a removal (its places would name other marks).
+    func testAToggleQueuedBehindADeleteOfAMarkIsRefused() async throws {
+        let (m, u) = await oneTwoThree()
+        let all = try glyphs(m)
+        let one = try range(of: "One", in: m), twoGlyphs = try range(of: "two", in: m), three = try range(of: "three", in: m)
+        try await select("two", in: m)
+        _ = await m.markSelection(.underline)
+        try await select("three", in: m)
+        _ = await m.markSelection(.underline)
+        XCTAssertEqual(marks(m, .underline).count, 2)
+        for (selection, what) in [(one.lowerBound..<three.upperBound, "an add"), (three, "a removal")] {
+            let two = try XCTUnwrap(marks(m, .underline).first { covers($0, all[twoGlyphs.lowerBound]) })
+            try await selectExactly(selection, in: m)
+            let delete = m.enqueue([.deleteAnnotations(page: 0, indices: [two.index])], named: Strings.actionDeleteAnnotation, touching: [0])
+            let toggled = await m.markSelection(.underline)
+            let deleted = await delete.value
+            XCTAssertTrue(deleted)
+            XCTAssertFalse(toggled, "\(what) queued behind the delete was made")
+            XCTAssertEqual(m.failure?.message, Strings.documentChangedTryAgain, what)
+            XCTAssertEqual(marks(m, .underline).count, 1, what)
+            XCTAssertEqual(u.undoActionName, Strings.actionDeleteAnnotation, "\(what) left an undo step")
+            m.failure = nil
+            u.undo(); await m.settle()
+            XCTAssertEqual(marks(m, .underline).count, 2)
+        }
+    }
+
+    /// A mark with replies is never cut short (the replies would go with it): taking it off part of its
+    /// text is refused with the reason, and taking it off all of its text removes it, as Delete does.
+    func testAMarkWithRepliesIsRemovedWholeOrNotAtAll() async throws {
+        let model = isolatedModel(bytes: Self.handMadeLine(annotations: [
+            "<< /Type /Annot /Subtype /Highlight /Rect [60 690 300 730] /C [1 1 0] /NM (h) "
+                + "/QuadPoints [60 730 300 730 60 690 300 690] >>",
+            "<< /Type /Annot /Subtype /Text /Rect [400 700 420 720] /Contents (reply) /IRT 6 0 R >>",
+        ]))
+        let u = UndoManager(); model.undoManager = u
+        await model.settle()
+        let mark = try XCTUnwrap(marks(model, .highlight).first)
+        XCTAssertTrue(mark.hasReplies)
+        try await select("two", in: model)
+        let cut = await model.markSelection(.highlight)
+        XCTAssertFalse(cut)
+        XCTAssertEqual(model.failure?.message, Strings.markHasReplies)
+        XCTAssertEqual(marks(model, .highlight), [mark])
+        XCTAssertFalse(u.canUndo)
+        model.failure = nil
+        let all = try range(of: "One", in: model).lowerBound..<(try range(of: "three", in: model).upperBound)
+        try await select(all, in: model)
+        let removed = await model.markSelection(.highlight)
+        XCTAssertTrue(removed)
+        XCTAssertTrue(marks(model, .highlight).isEmpty)
+        XCTAssertNil(model.failure)
+    }
+
+    /// When the page's text cannot be read again, a toggle that might have been a removal adds nothing;
+    /// a drag's add (`MarkIntent.add`) still marks the selection.
+    func testWithoutThePagesTextAToggleAddsNothing() async throws {
+        let (m, _) = try await makeFailingModel(failing: .setInfo)
+        let point = try firstGlyphCenter(m)
+        m.selection?.beginWord(page: 0, at: point); await m.selection?.waitUntilSettled()
+        _ = await m.markSelection(.highlight)
+        XCTAssertEqual(marks(m, .highlight).count, 1)
+        let document = try XCTUnwrap(m.document() as? FailingDocument)
+        document.pageTextFails = true
+        m.selection?.beginWord(page: 0, at: point); await m.selection?.waitUntilSettled()
+        let toggled = await m.markSelection(.highlight)
+        XCTAssertFalse(toggled)
+        XCTAssertEqual(marks(m, .highlight).count, 1, "the toggle added a highlight in place of a removal")
+        m.selection?.beginWord(page: 0, at: point); await m.selection?.waitUntilSettled()
+        let added = await m.markSelection(.highlight, intent: .add)
+        XCTAssertTrue(added)
+        XCTAssertEqual(marks(m, .highlight).count, 2)
+    }
+
+    /// One line, "One two three" in 24 pt Helvetica from (72, 700), with `annotations` (objects 6, 7, …).
+    static func handMadeLine(annotations: [String]) -> Data {
+        let content = "BT /F1 24 Tf 72 700 Td (One two three) Tj ET"
+        let refs = annotations.indices.map { "\($0 + 6) 0 R" }.joined(separator: " ")
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+                + "/Resources << /Font << /F1 5 0 R >> >> /Annots [\(refs)] >>",
+            "<< /Length \(content.utf8.count) >>\nstream\n\(content)\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ] + annotations
+        var pdf = "%PDF-1.4\n"
+        var offsets: [Int] = []
+        for (number, body) in objects.enumerated() {
+            offsets.append(pdf.utf8.count)
+            pdf += "\(number + 1) 0 obj\n\(body)\nendobj\n"
+        }
+        let table = pdf.utf8.count
+        pdf += "xref\n0 \(objects.count + 1)\n0000000000 65535 f \n"
+        for offset in offsets { pdf += String(format: "%010d 00000 n \n", offset) }
+        pdf += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(table)\n%%EOF\n"
+        return Data(pdf.utf8)
+    }
+
+    func testThePlanRefusesToCutAMarkWithReplies() {
+        let glyphs = line("aaa bbb ccc")
+        var mark = underline(index: 2, over: 0..<11)
+        mark.hasReplies = true
+        XCTAssertEqual(MarkupToggle.plan(.underline, selection: 4..<7, glyphs: glyphs, annotations: [mark]), .replies)
+        XCTAssertEqual(MarkupToggle.plan(.underline, selection: 0..<11, glyphs: glyphs, annotations: [mark]),
+                       .remove(deleting: [2], pieces: []), "a mark wholly inside the selection comes off")
+    }
+
+    /// The menu offers to take off only a mark it can take off: not one only locked marks give.
+    func testOnlyUnlockedMarksAreOfferedForRemoval() {
+        let glyphs = line("aaa bbb")
+        let locked = underline(index: 0, over: 0..<7, locked: true)
+        XCTAssertEqual(MarkupToggle.covers(.underline, selection: 0..<3, glyphs: glyphs, annotations: [locked]), false)
+        XCTAssertEqual(MarkupToggle.covers(.underline, selection: 0..<3, glyphs: glyphs,
+                                           annotations: [locked, underline(index: 1, over: 0..<3)]), true)
     }
 
     // MARK: The plan

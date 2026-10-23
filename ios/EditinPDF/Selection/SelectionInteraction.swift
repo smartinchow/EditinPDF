@@ -30,7 +30,8 @@ import UIKit
 /// when the zoom or the layout changes. The menu is presented once the finger is up, anchored on the
 /// selection, and is dismissed when the reader scrolls or zooms. It offers Copy, and Highlight, Underline
 /// and Strikethrough when the document may be marked, each as Remove Highlight, Remove Underline or
-/// Remove Strikethrough when all of the selection already has that mark.
+/// Remove Strikethrough when all of the selection already has that mark (from a mark the file does not
+/// lock); until that is known, Copy alone.
 @MainActor
 final class SelectionInteraction: NSObject {
     typealias Edge = SelectionHandleView.Edge
@@ -266,22 +267,28 @@ final class SelectionInteraction: NSObject {
         menu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: CGPoint(x: target.midX, y: target.minY)))
     }
 
-    /// Finds out, off the main actor, which kinds of mark all of the selection already has
-    /// (`DocumentModel.markedKinds`), unless that is known for it. The menu offers Highlight, Underline
-    /// and Strikethrough meanwhile; once it is known, the menu, if it is up, is built again with Remove
-    /// Highlight, Remove Underline or Remove Strikethrough in their place. Only when the menu is shown, so
-    /// a handle being dragged reads nothing. Says nothing for a selection that has changed meanwhile.
+    /// Finds out which kinds of mark the menu offers to take off the selection (`DocumentModel.markedKinds`:
+    /// all of it has the mark, and an unlocked mark gives it), unless that is known for it. At once when its
+    /// page has no such marks (`knownMarkedKinds`); otherwise off the main actor, and meanwhile the menu
+    /// offers Copy alone, so that no item reads Highlight where it would read Remove Highlight. Once it is
+    /// known, the menu, if it is up, is built again. Only when the menu is shown, so a handle being dragged
+    /// reads nothing. Says nothing for a selection that has changed meanwhile.
     func lookUpMarks() {
         guard let host, let selection = host.model.selection?.selection else { return }
         let model = host.model
         let revision = model.revision
         if let marked, marked.selection == selection, marked.revision == revision { return }
         markedLookUp?.cancel()
+        if let known = model.knownMarkedKinds(of: selection) {
+            marked = (selection, revision, known)
+            markedLookUp = nil
+            return
+        }
         markedLookUp = Task { [weak self] in
             let kinds = await model.markedKinds(of: selection)
             guard let self, !Task.isCancelled, model.selection?.selection == selection, model.revision == revision else { return }
             self.marked = (selection, revision, kinds)
-            if !kinds.isEmpty { self.menu.reloadVisibleMenu() }
+            self.menu.reloadVisibleMenu()
         }
     }
 
@@ -307,12 +314,22 @@ final class SelectionInteraction: NSObject {
         host?.model.selection?.copySelection()
     }
 
-    /// Marks the selected text with `kind`, or takes that mark off it when all of it has it
-    /// (`DocumentModel.markSelection`): what the menu's Highlight, Underline and Strikethrough, and their
-    /// Remove items, do. Says whether the change was made.
+    /// Marks the selected text with `kind` where it lacks it, or, `removing`, takes that mark off it
+    /// (`DocumentModel.markSelection`, `MarkIntent.add` and `.remove`): what the menu's Highlight, Underline
+    /// and Strikethrough, and their Remove items, do, so each does what its title says. Says whether the
+    /// change was made.
     @discardableResult
-    func mark(_ kind: MarkupKind) async -> Bool {
-        await host?.model.markSelection(kind) ?? false
+    func mark(_ kind: MarkupKind, removing: Bool = false) async -> Bool {
+        await host?.model.markSelection(kind, intent: removing ? .remove : .add) ?? false
+    }
+
+    /// The kinds of mark the menu offers to take off the selection, as `lookUpMarks` found them for it at
+    /// this revision (or as known without a look-up); nil while that is not known. None with nothing
+    /// selected.
+    private func markedKinds() -> Set<MarkupKind>? {
+        guard let model = host?.model, let selection = model.selection?.selection else { return [] }
+        if let marked, marked.selection == selection, marked.revision == model.revision { return marked.kinds }
+        return model.knownMarkedKinds(of: selection)
     }
 
     /// The marks the menu offers: those whose tool may be used on the selection's page (none before
@@ -355,14 +372,15 @@ extension SelectionInteraction: @preconcurrency UIEditMenuInteractionDelegate {
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration,
                              suggestedActions: [UIMenuElement]) -> UIMenu? {
         let copy = UIAction(title: Strings.copy) { [weak self] _ in self?.copySelection() }
-        let selection = host?.model.selection?.selection
-        let revision = host?.model.revision
-        let marked = self.marked.flatMap { $0.selection == selection && $0.revision == revision ? $0.kinds : nil } ?? []
+        // Until it is known which marks the selection has, no mark is offered: an item's title always
+        // says what it does.
+        guard let marked = markedKinds() else { return UIMenu(children: [copy]) }
         let marks = offeredMarks().map { kind in
             let tool = Tool(markupKind: kind)
-            let title = marked.contains(kind) ? Strings.removeMarkup(kind) : tool.title
+            let removing = marked.contains(kind)
+            let title = removing ? Strings.removeMarkup(kind) : tool.title
             return UIAction(title: title, image: UIImage(systemName: tool.systemImage)) { [weak self] _ in
-                Task { await self?.mark(kind) }
+                Task { await self?.mark(kind, removing: removing) }
             }
         }
         // Copy first. On a phone the menu shows two items before its arrow whatever their order (iPhone

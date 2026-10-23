@@ -18,10 +18,13 @@ import EditinPDFCore
 /// (`AnnotationInfo.quads`). The spaces between words, and glyphs with no box, do not count: a
 /// selection of two words marked one at a time is all marked. A mark the file locks is never deleted
 /// or cut short: when such marks are all that cover the selection, the change is refused (`locked`);
-/// when unlocked ones cover it too, those come off, and the locked ones stay.
+/// when unlocked ones cover it too, those come off, and the locked ones stay. A mark another comment
+/// replies to (`AnnotationInfo.hasReplies`) is never cut short, since adding back what stays of it would
+/// leave the replies deleted with it: when the selection would cut one, the change is refused
+/// (`replies`). One wholly inside the selection comes off, replies and all, as Delete takes it off.
 ///
-/// A drag with the tool only ever adds (`DocumentModel.markSelection(_:addingOnly:)`): it marks the glyphs
-/// without the mark and takes nothing off.
+/// A drag with the tool, and the menu's Highlight, Underline and Strikethrough, only ever add; the menu's
+/// Remove items only ever take off (`DocumentModel.MarkIntent`).
 ///
 /// Everything is in view space (PDF points from the page's top-left, y down), and glyphs are known by
 /// their index on the page, as the engine gives them at one revision.
@@ -48,6 +51,8 @@ enum MarkupToggle {
         case remove(deleting: [UInt32], pieces: [Piece])
         /// All of it has the mark, and only marks the file locks give it.
         case locked
+        /// All of it has the mark, and taking it off would cut short a mark that has replies.
+        case replies
         /// The page has more glyphs, marks or quads than the work allows.
         case tooMuch
     }
@@ -59,6 +64,7 @@ enum MarkupToggle {
         case mark([Rect])
         case remove(deleting: [UInt32], pieces: [(source: AnnotationInfo, boxes: [Rect], keepsContents: Bool)])
         case locked
+        case replies
         case tooMuch
 
         /// `plan`, for `page` of `document`. Calls into the engine: not on the main actor.
@@ -74,6 +80,8 @@ enum MarkupToggle {
                 })
             case .locked:
                 self = .locked
+            case .replies:
+                self = .replies
             case .tooMuch:
                 self = .tooMuch
             }
@@ -118,6 +126,7 @@ enum MarkupToggle {
             let after = left.filter { $0.lowerBound >= selection.upperBound }
             runCount += left.count
             if runCount > maxRuns { return .tooMuch }
+            if marks[position].info.hasReplies, !left.isEmpty { return .replies }
             for (side, runs) in [before, after].enumerated() where !runs.isEmpty {
                 let first = side == 0 || before.isEmpty
                 pieces.append(Piece(source: marks[position].info, runs: runs, keepsContents: first))
@@ -126,19 +135,22 @@ enum MarkupToggle {
         return .remove(deleting: unlocked.map { marks[$0].info.index }, pieces: pieces)
     }
 
-    /// Whether every glyph of `selection` that counts (see the type) has a mark of `kind`: what the
-    /// selection's menu offers to take off. False when none counts; nil when the work is too much to tell.
+    /// Whether every glyph of `selection` that counts (see the type) has a mark of `kind`, and a mark the
+    /// file does not lock is among those that give it: what the selection's menu offers to take off. False
+    /// when none counts; nil when the work is too much to tell.
     static func covers(_ kind: MarkupKind, selection: Range<Int>, glyphs: [TextGlyph], annotations: [AnnotationInfo]) -> Bool? {
         let page = PageGlyphs(glyphs)
         let marks = marks(of: kind, in: annotations)
         let selected = selection.clamped(to: 0..<glyphs.count).filter(page.isText)
         guard !marks.isEmpty, !selected.isEmpty else { return false }
         var budget = Budget()
+        var unlocked = false
         for glyph in selected {
             guard let found = page.marks(covering: glyph, of: marks, budget: &budget) else { return nil }
             if found.isEmpty { return false }
+            if !unlocked { unlocked = found.contains { !marks[$0].info.locked } }
         }
-        return true
+        return unlocked
     }
 
     /// Whether `annotations` has any mark of `kind` that tells which text it covers: with none, there is

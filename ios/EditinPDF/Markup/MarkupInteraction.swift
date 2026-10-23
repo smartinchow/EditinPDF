@@ -370,7 +370,7 @@ final class MarkupInteraction: NSObject {
             return false
         }
         // A drag only ever adds: over text that has the mark already it takes nothing off.
-        return await model.markSelection(stroke.kind, addingOnly: true)
+        return await model.markSelection(stroke.kind, intent: .add)
     }
 
     /// The drag was cancelled (a call coming in, the system taking the touch): nothing is marked, and
