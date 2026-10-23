@@ -148,8 +148,11 @@ final class DocumentModel {
     /// edit's; or, when every selected glyph already has a mark of that kind, takes that mark off the
     /// selected glyphs (`MarkupToggle`), as one change named `Strings.removeMarkup(kind)`. Marks of that
     /// kind already on some of the selection are not marked over again: only the rest is marked. Says
-    /// whether the change was made. A drag with a text tool ends here too, so dragging Underline across
-    /// underlined text takes the underline off it.
+    /// whether the change was made.
+    ///
+    /// `addingOnly` (a drag with a text tool, which ends here) never takes a mark off: a reader dragging
+    /// the highlighter over highlighted text means more highlight. It marks the selected glyphs without
+    /// the mark, and nothing when all of them have it (no change, nothing told, false).
     ///
     /// The selection goes either way: once the change is made, with every other change (`refresh`);
     /// when it is not (and the reader has not selected something else meanwhile), here, so that nothing
@@ -162,31 +165,33 @@ final class DocumentModel {
     /// One change of this kind waits for the one before it to be made: each works out what is marked from
     /// the document as the one before left it.
     @discardableResult
-    func markSelection(_ kind: MarkupKind) async -> Bool {
+    func markSelection(_ kind: MarkupKind, addingOnly: Bool = false) async -> Bool {
         guard let controller = selection, let selected = controller.selection else { return false }
-        return await toggle(selected, as: kind, in: controller).value
+        return await toggle(selected, as: kind, in: controller, addingOnly: addingOnly).value
     }
 
     /// The last change asked of `toggle`, which the next one waits for.
     @ObservationIgnored private var lastToggle: Task<Bool, Never>?
 
-    /// Marks `selected`, or takes the mark off it (see `markSelection`), once the change asked before it
-    /// is made.
-    private func toggle(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController) -> Task<Bool, Never> {
+    /// Marks `selected`, or takes the mark off it unless `addingOnly` (see `markSelection`), once the change
+    /// asked before it is made.
+    private func toggle(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController,
+                        addingOnly: Bool = false) -> Task<Bool, Never> {
         let before = lastToggle
         let selectedAt = revision
         let task = Task { [weak self] in
             _ = await before?.value
             guard let self else { return false }
-            return await self.mark(selected, as: kind, in: controller, selectedAt: selectedAt)
+            return await self.mark(selected, as: kind, in: controller, selectedAt: selectedAt, addingOnly: addingOnly)
         }
         lastToggle = task
         return task
     }
 
     /// Marks `selected`, text selected with `controller` at revision `selectedAt`, as `kind`, or takes
-    /// the mark off it (see `markSelection`).
-    private func mark(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController, selectedAt: UInt64) async -> Bool {
+    /// the mark off it unless `addingOnly` (see `markSelection`).
+    private func mark(_ selected: TextSelection, as kind: MarkupKind, in controller: SelectionController, selectedAt: UInt64,
+                      addingOnly: Bool) async -> Bool {
         let page = Int(selected.page)
         let rects = SelectionController.rects(of: selected).map { Rect(x: $0.minX, y: $0.minY, width: $0.width, height: $0.height) }
         let tool = Tool(markupKind: kind)
@@ -223,6 +228,12 @@ final class DocumentModel {
                     guard !boxes.isEmpty else { return refuse(nil) }
                     if let tooMany = Self.markupRefusal(boxes: boxes.count) { return refuse(tooMany) }
                     edits = [.addTextMarkup(page: selected.page, kind: kind, rects: boxes, color: color, contents: "")]
+                case .remove where addingOnly, .locked where addingOnly:
+                    // All of it has the mark already: a drag adds none over it.
+                    return refuse(nil)
+                case .tooMuch where addingOnly:
+                    // Too much to tell what is marked: the drag marks what it went over, as it always did.
+                    break
                 case .remove(let deleting, let pieces):
                     if let tooMany = pieces.lazy.compactMap({ Self.markupRefusal(boxes: $0.boxes.count) }).first { return refuse(tooMany) }
                     edits = [.deleteAnnotations(page: selected.page, indices: deleting)] + pieces.map { piece in

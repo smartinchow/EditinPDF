@@ -96,6 +96,18 @@ final class EditorSmokeTests: XCTestCase {
             line.start.press(forDuration: 0.05, thenDragTo: line.end)
             if undoWasOn { sleep(1) } else { XCTAssertTrue(undo.waitForEnabled(timeout: 5), "dragging with \(tool) marked nothing") }
         }
+        // A drag only ever adds: the highlighter dragged again over the highlighted line takes nothing
+        // off and adds nothing over it.
+        app.buttons["tool-highlight"].tap()
+        line.start.press(forDuration: 0.05, thenDragTo: line.end)
+        sleep(1)
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'commentRow-'"))
+        XCTAssertTrue(tapToolbarButton("commentsButton", titled: "Comments", in: app), "no Comments button")
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5), "the marks are not listed")
+        XCTAssertEqual(rows.count, 3, "each drag adds its mark, and the second highlight drag adds none")
+        XCTAssertEqual(rows.matching(NSPredicate(format: "label CONTAINS 'Highlight'")).count, 1, "the highlight was taken off or doubled")
+        app.buttons["commentsDoneButton"].tap()
+        XCTAssertTrue(rows.firstMatch.waitForNonExistence(timeout: 5), "Done did not put the list away")
         attach(app, "text-markup-tools")
         // One finger on the white of the page scrolls, text tool or not.
         let indicator = app.staticTexts["pageIndicator"]
@@ -109,14 +121,17 @@ final class EditorSmokeTests: XCTestCase {
         app.scrollViews["pageScrollView"].firstMatch.swipeDown(velocity: .fast)
         app.scrollViews["pageScrollView"].firstMatch.swipeDown(velocity: .fast)
         expect(indicator, toRead: "1 / 3", within: 5)
-        // Reading mode: a long press selects a word, and its menu changes its marks. The word is
-        // highlighted already (the drag above), so the menu offers to take the highlight off.
+        // The three marks taken back, so that the word has none: the menu's Highlight then adds one.
+        for _ in 0..<3 { XCTAssertTrue(tapToolbarButton("undoButton", titled: "Undo", in: app), "no Undo button"); sleep(1) }
+        XCTAssertTrue(undo.waitForDisabled(timeout: 5), "the marks were not all taken back")
+        // Reading mode: a long press selects a word, and its menu marks it.
         line.start.withOffset(CGVector(dx: 8, dy: 0)).press(forDuration: 1)
-        let highlight = app.menuItems["Remove Highlight"]
-        XCTAssertTrue(highlight.waitForExistence(timeout: 5), "the selection's menu offers no Remove Highlight")
+        let highlight = app.menuItems["Highlight"].exists ? app.menuItems["Highlight"] : app.buttons["Highlight"]
+        XCTAssertTrue(highlight.waitForExistence(timeout: 5), "the selection's menu offers no Highlight")
         attach(app, "text-markup-menu")
         highlight.tap()
         XCTAssertFalse(highlight.waitForExistence(timeout: 1) && highlight.isHittable, "the menu stayed")
+        XCTAssertTrue(undo.waitForEnabled(timeout: 5), "the menu's Highlight marked nothing")
         attach(app, "text-markup-menu-done")
     }
 
@@ -1268,6 +1283,12 @@ private extension XCUIElement {
     /// Waits up to `timeout` seconds for the element to exist and be enabled.
     func waitForEnabled(timeout: TimeInterval) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: self)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// Waits up to `timeout` seconds for the element to exist and be disabled.
+    func waitForDisabled(timeout: TimeInterval) -> Bool {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == false"), object: self)
         return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
     }
 }

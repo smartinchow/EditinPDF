@@ -245,6 +245,51 @@ final class MarkupToggleTests: XCTestCase {
         XCTAssertTrue(model.annotationIndex.annotations(onPage: 0).isEmpty)
     }
 
+    // MARK: A drag only adds
+
+    /// The centre of glyph `index` of page 0 in `makeController`'s content view.
+    private func contentPoint(ofGlyph index: Int, in model: DocumentModel) throws -> CGPoint {
+        let glyph = try glyphs(model)[index]
+        let scale: CGFloat = 400.0 / 612.0
+        return CGPoint(x: (glyph.rect.x + glyph.rect.width / 2) * scale, y: (glyph.rect.y + glyph.rect.height / 2) * scale)
+    }
+
+    /// Drags `tool` from glyph `first` to glyph `last` of page 0, as `TextMarkupTests` does, and says
+    /// whether a mark was made.
+    private func drag(_ tool: Tool, from first: Int, to last: Int, in controller: PageScrollViewController,
+                      model: DocumentModel) async throws -> Bool {
+        model.tool = tool
+        let markup = controller.markupInteraction
+        let start = try contentPoint(ofGlyph: first, in: model)
+        let end = try contentPoint(ofGlyph: last, in: model)
+        markup.begin(atContentPoint: start)
+        markup.move(toContentPoint: CGPoint(x: (start.x + end.x) / 2, y: start.y))
+        return await markup.end(atContentPoint: end)
+    }
+
+    /// "Page 1": the highlighter dragged over highlighted text leaves it highlighted and adds nothing; dragged on past
+    /// it, it adds a highlight over the rest only. (Picking Highlight over it would take it off.)
+    func testADragOverMarkedTextAddsOnlyWhereThereIsNone() async throws {
+        let (controller, model) = await makeController()
+        let all = try glyphs(model)
+        XCTAssertEqual(all.prefix(6).map(\.text).joined(), "Page 1")
+        let added = try await drag(.highlight, from: 0, to: 3, in: controller, model: model)
+        XCTAssertTrue(added)
+        let first = try XCTUnwrap(marks(model, .highlight).first)
+        let again = try await drag(.highlight, from: 0, to: 3, in: controller, model: model)
+        XCTAssertFalse(again, "a drag over highlighted text changed it")
+        XCTAssertEqual(marks(model, .highlight), [first], "the highlight was taken off or doubled")
+        XCTAssertNil(model.failure)
+        XCTAssertNil(model.selection?.selection)
+        let further = try await drag(.highlight, from: 0, to: 5, in: controller, model: model)
+        XCTAssertTrue(further)
+        let list = marks(model, .highlight)
+        XCTAssertEqual(list.count, 2)
+        let new = try XCTUnwrap(list.first { $0.index != first.index })
+        for glyph in 0..<4 { XCTAssertFalse(covers(new, all[glyph]), "glyph \(glyph) is highlighted twice") }
+        XCTAssertTrue(covers(new, all[5]), "the rest is not highlighted")
+    }
+
     // MARK: The plan
 
     /// Glyphs one point wide side by side on a line, one for each character of `text`.

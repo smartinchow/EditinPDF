@@ -20,6 +20,9 @@ import EditinPDFCore
 /// or cut short: when such marks are all that cover the selection, the change is refused (`locked`);
 /// when unlocked ones cover it too, those come off, and the locked ones stay.
 ///
+/// A drag with the tool only ever adds (`DocumentModel.markSelection(_:addingOnly:)`): it marks the glyphs
+/// without the mark and takes nothing off.
+///
 /// Everything is in view space (PDF points from the page's top-left, y down), and glyphs are known by
 /// their index on the page, as the engine gives them at one revision.
 ///
