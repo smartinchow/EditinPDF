@@ -93,7 +93,10 @@ final class SavingSmokeTests: XCTestCase {
     /// The question's Save As… puts up the exporter: cancelled, the document stays open and changed;
     /// exported, it closes, and the file is as it was while the copy has the change.
     func testSaveAsLeavesTheFileAsItWas() {
-        let app = launchAndOpen("sample.pdf", as: "save-as.pdf")
+        // A name of its own for each run, so that no copy an earlier run saved is in the way (the iPad's
+        // exporter then asks whether to replace it, and that question cannot be answered by the test).
+        let name = "save-as-\(UUID().uuidString.prefix(8))"
+        let app = launchAndOpen("sample.pdf", as: "\(name).pdf")
         deleteTheLastPage(in: app)
         goBack(in: app, choosing: "Save As…")
         XCTAssertTrue(waitForExporter(in: app), "no exporter")
@@ -106,11 +109,11 @@ final class SavingSmokeTests: XCTestCase {
         attach(app, "save-as-exporter")
         confirmExporter(in: app)
         expectClosed(app)
-        relaunchAndOpen("save-as.pdf", in: app)
+        relaunchAndOpen("\(name).pdf", in: app)
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
         tapBack(in: app)
         expectClosed(app)
-        openFromBrowser("save-as copy.pdf", in: app)
+        openFromBrowser("\(name) copy.pdf", in: app)
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 2", within: 10)
     }
 
@@ -195,10 +198,9 @@ final class SavingSmokeTests: XCTestCase {
 
     /// Waits for the system's exporter (a document picker) to come up.
     private func waitForExporter(in app: XCUIApplication) -> Bool {
-        let picker = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH 'DOC.'")).firstMatch
         let save = exporterConfirm(in: app)
         for _ in 0..<20 {
-            if save.exists || picker.exists { return true }
+            if save.exists, save.isHittable { return true }
             usleep(500_000)
         }
         return false
@@ -207,16 +209,32 @@ final class SavingSmokeTests: XCTestCase {
     /// The exporter's button that saves the copy where it shows (the app's folder, where the browser was
     /// left): "Save", or "Move" on some systems.
     private func exporterConfirm(in app: XCUIApplication) -> XCUIElement {
-        app.buttons.matching(NSPredicate(format: "label IN {'Save', 'Move', 'Export'} OR identifier IN {'Save', 'Move', 'Export'}")).firstMatch
+        // Not the toolbar's own Save, which a regular width shows in the bar beside it.
+        app.buttons.matching(NSPredicate(format: "(label IN {'Save', 'Move', 'Export'} OR identifier IN {'Save', 'Move', 'Export'}) AND identifier != 'saveButton'")).firstMatch
     }
 
+    /// Saves the copy with the exporter's button, and replaces the copy an earlier run of the test left
+    /// there. A tap while the exporter is still settling (seen on the iPad's full-screen one) is lost: the
+    /// button is tapped again while the exporter is still up, three times at most.
+    ///
+    /// The iPad's full-screen exporter does not always list its Save button (it is drawn at the trailing
+    /// end of the exporter's navigation bar, and the accessibility tree leaves it out): it is tapped
+    /// there then.
     private func confirmExporter(in app: XCUIApplication) {
         let save = exporterConfirm(in: app)
-        XCTAssertTrue(save.waitForExistence(timeout: 10), "no button in the exporter to save with")
-        save.tap()
-        // The copy an earlier run of the test saved is still there: replaced.
         let replace = app.buttons.matching(NSPredicate(format: "label == 'Replace'")).firstMatch
-        if replace.waitForExistence(timeout: 3) { replace.tap() }
+        let bar = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+        let indicator = app.staticTexts["pageIndicator"]
+        for _ in 0..<3 {
+            if save.waitForExistence(timeout: 3), save.isHittable {
+                save.tap()
+            } else if bar.exists {
+                bar.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -40, dy: 0)).tap()
+            }
+            if replace.waitForExistence(timeout: 3) { replace.tap() }
+            if indicator.waitForNonExistence(timeout: 8) { return }
+            attach(app, "save-as-exporter-still-up")
+        }
     }
 
     /// Cancels the exporter: by its close button where a tap reaches one, otherwise by swiping it down.

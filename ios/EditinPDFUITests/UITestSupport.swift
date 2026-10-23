@@ -31,8 +31,9 @@ extension XCTestCase {
         let location = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH 'DOC.sidebar.item.On My'")).firstMatch
         let folder = app.cells.matching(NSPredicate(format: "label BEGINSWITH 'EditinPDF'")).firstMatch
         let browse = app.buttons["Browse"].firstMatch
-        // Inside the app's folder, the browser's back button is named for the location above it.
-        let inFolder = app.buttons.matching(NSPredicate(format: "identifier == 'BackButton' AND label BEGINSWITH 'On My'")).firstMatch
+        // Inside the app's folder, the browser's back button is named for the location above it (a phone), or
+        // the folder's name is the title's menu (a tablet, whose back button is the browser's history).
+        let inFolder = app.buttons.matching(NSPredicate(format: "(identifier == 'BackButton' AND label BEGINSWITH 'On My') OR label BEGINSWITH 'EditinPDF, Actions Menu'")).firstMatch
         for _ in 0..<8 {
             if cell.waitForExistence(timeout: 2) { break }
             if inFolder.exists {
