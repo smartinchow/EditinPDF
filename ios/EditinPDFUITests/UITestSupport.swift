@@ -62,6 +62,40 @@ extension XCTestCase {
         }
     }
 
+    /// Taps the navigation bar's back button, back to the documents: the system's own, whose action the
+    /// app takes over to ask first when there are unsaved changes.
+    func tapBack(in app: XCUIApplication) {
+        let back = app.navigationBars.buttons["BackButton"]
+        (back.exists ? back : app.navigationBars.buttons.firstMatch).tap()
+    }
+
+    /// The question Back asks with unsaved changes ("Save changes to “name”?"). The system alert passes no
+    /// identifiers on, so it is found by its title, and its buttons by theirs.
+    func saveQuestion(in app: XCUIApplication) -> XCUIElement {
+        app.alerts.matching(NSPredicate(format: "label BEGINSWITH 'Save changes to'")).firstMatch
+    }
+
+    /// Back, then `choice` ("Save", "Save As…", "Discard Changes", "Cancel") in the question it asks.
+    func goBack(in app: XCUIApplication, choosing choice: String, file: StaticString = #filePath, line: UInt = #line) {
+        tapBack(in: app)
+        let question = saveQuestion(in: app)
+        XCTAssertTrue(question.waitForExistence(timeout: 10), "Back asked nothing", file: file, line: line)
+        question.buttons[choice].firstMatch.tap()
+    }
+
+    /// Waits until the document has closed, back to the documents.
+    func expectClosed(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close", file: file, line: line)
+    }
+
+    /// A fresh launch of the app, without staging a sample again (the file as it was left), opening `file`.
+    func relaunchAndOpen(_ file: String, in app: XCUIApplication) {
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        openFromBrowser(file, in: app)
+    }
+
     /// Taps the toolbar button `identifier`, or, when the bar has moved it into its More menu, the
     /// menu's item `title` (the menu's copies have no identifiers). False if it is in neither.
     func tapToolbarButton(_ identifier: String, titled title: String, in app: XCUIApplication) -> Bool {

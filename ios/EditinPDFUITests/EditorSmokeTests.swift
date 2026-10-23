@@ -246,10 +246,10 @@ final class EditorSmokeTests: XCTestCase {
         attach(app, "ink-zoomed-added")
     }
 
-    /// Strokes left waiting (no Done) when the reader goes back to the documents are in the file: the
-    /// document, opened again in a fresh launch of the app, shows them. And ⌘Z on a hardware keyboard
-    /// takes back strokes waiting, as the Undo button does.
-    func testStrokesLeftWaitingAreKeptWhenTheDocumentIsClosed() throws {
+    /// Strokes left waiting (no Done) when the reader goes back to the documents are a change Back asks
+    /// about, and its Save puts them in the file: the document, opened again in a fresh launch of the app,
+    /// shows them. And ⌘Z on a hardware keyboard takes back strokes waiting, as the Undo button does.
+    func testStrokesLeftWaitingAreSavedFromTheQuestionBackAsks() throws {
         let app = launchAndOpen("sample.pdf", as: "ink-closed.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
         XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
@@ -273,9 +273,9 @@ final class EditorSmokeTests: XCTestCase {
         pagePoint(CGPoint(x: 150, y: 300), pageWidth: 612, in: app)
             .press(forDuration: 0.05, thenDragTo: pagePoint(CGPoint(x: 450, y: 300), pageWidth: 612, in: app))
         XCTAssertTrue(done.waitForExistence(timeout: 5), "nothing was drawn")
-        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
-        back.tap()
-        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        // Back asks, what waited counted as a change to save; Save writes it and closes.
+        goBack(in: app, choosing: "Save")
+        expectClosed(app)
         sleep(2)
 
         // A fresh launch, without staging the sample again: the file as saved.
@@ -518,9 +518,10 @@ final class EditorSmokeTests: XCTestCase {
         return CGRect(x: area.minX + box.minX / scale, y: area.minY + box.minY / scale, width: box.width / scale, height: box.height / scale)
     }
 
-    /// Text still being typed (no tap elsewhere, no Done) when the reader goes back to the documents is
-    /// in the file: the document, opened again in a fresh launch of the app, shows it.
-    func testTextLeftBeingTypedIsKeptWhenTheDocumentIsClosed() throws {
+    /// Text still being typed (no tap elsewhere, no Done) when the reader goes back to the documents is a
+    /// change Back asks about, and its Save puts it in the file: the document, opened again in a fresh
+    /// launch of the app, shows it.
+    func testTextLeftBeingTypedIsSavedFromTheQuestionBackAsks() throws {
         let app = launchAndOpen("sample.pdf", as: "text-closed.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
         XCTAssertTrue(tapToolbarButton("markupButton", titled: "Markup", in: app), "no Markup button")
@@ -532,9 +533,9 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "no box to type in")
         dismissKeyboardIntroduction(in: app)
         type("Kept", into: editor)
-        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
-        back.tap()
-        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        // Back asks, what waited counted as a change to save; Save writes it and closes.
+        goBack(in: app, choosing: "Save")
+        expectClosed(app)
         sleep(2)
 
         // A fresh launch, without staging the sample again: the file as saved.
@@ -933,7 +934,7 @@ final class EditorSmokeTests: XCTestCase {
     }
 
     /// `form.pdf`: the hint says how to fill the form in; a tap on the name field brings up its editor,
-    /// "Ada" and Return fill it in, and a tap on the check box turns it on. Closed with Back and opened
+    /// "Ada" and Return fill it in, and a tap on the check box turns it on. Closed with Back (Save) and opened
     /// again, the field reads "Ada" and the box is checked (read off the widgets' accessibility values).
     func testFillAFormAndToggleACheckbox() {
         let app = launchAndOpen("form.pdf", as: "form-filled.pdf")
@@ -959,9 +960,9 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(app.buttons["undoButton"].isEnabled)
         attach(app, "form-filled")
 
-        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
-        back.tap()
-        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        // Back asks, what waited counted as a change to save; Save writes it and closes.
+        goBack(in: app, choosing: "Save")
+        expectClosed(app)
         sleep(2)
         // A fresh launch, without staging the form again: the file as saved.
         app.terminate()
@@ -1010,8 +1011,9 @@ final class EditorSmokeTests: XCTestCase {
         }
     }
 
-    /// `form.pdf`: text typed in a field and left there, the document closed with Back, is in the file.
-    func testTextLeftInAFieldIsKeptWhenTheDocumentIsClosed() {
+    /// `form.pdf`: text typed in a field and left there is a change Back asks about, and its Save puts it
+    /// in the file.
+    func testTextLeftInAFieldIsSavedFromTheQuestionBackAsks() {
         let app = launchAndOpen("form.pdf", as: "form-closed.pdf")
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 1", within: 10)
         let hint = app.staticTexts["formHint"]
@@ -1023,9 +1025,9 @@ final class EditorSmokeTests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 5), "no editor for the name field")
         dismissKeyboardIntroduction(in: app)
         type("Kept", into: editor)
-        let back = app.navigationBars.buttons["BackButton"].exists ? app.navigationBars.buttons["BackButton"] : app.navigationBars.buttons.firstMatch
-        back.tap()
-        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 10), "the document did not close")
+        // Back asks, what waited counted as a change to save; Save writes it and closes.
+        goBack(in: app, choosing: "Save")
+        expectClosed(app)
         sleep(2)
         app.terminate()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]

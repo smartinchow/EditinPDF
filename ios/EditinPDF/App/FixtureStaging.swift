@@ -84,7 +84,10 @@ enum FixtureStaging {
             return
         }
         do {
-            try stage(name, as: requestedName(in: arguments), into: folder)
+            let staged = try stage(name, as: requestedName(in: arguments), into: folder)
+            // A fresh copy has no unsaved changes of an earlier run to offer (`RecoveryStore`): the copy
+            // keeps the bundle's date, which can be older than a recovery copy an earlier test left.
+            RecoveryStore.shared.delete(key: RecoveryStore.key(for: staged))
         } catch {
             log.error("could not stage \(name, privacy: .public): \(String(describing: error), privacy: .public)")
         }

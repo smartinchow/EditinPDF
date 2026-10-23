@@ -272,23 +272,6 @@ final class PageScrollViewController: UIViewController, UIScrollViewDelegate {
         window.addGestureRecognizer(observer)
     }
 
-    /// Tells the document, as UIKit keeps it (the `UIDocumentViewController` SwiftUI shows it in), that
-    /// it has a change it has not saved, now: a change handed over as a finger goes down outside the
-    /// pages (`MarkupInteraction.fingerWentDown`). The undo manager tells it too, but only as it closes
-    /// the run loop turn's undo group, at the end of the turn. When the main thread is slow to handle
-    /// the finger going down (the keyboard being put away waits on the keyboard's own process; a slow
-    /// device), the finger lifting from Back is handled in the same turn: the document closes then,
-    /// and a document that counts no change by then closes without saving, and the change is lost (the
-    /// text left in a text box or a field, on the CI runner). A document that counts a change already
-    /// is left as it is. The undo manager's count comes on top of this one: the document may count one
-    /// change more than it has until it is next saved, which costs at most a save more.
-    func countChangeNow() {
-        var responder: UIResponder? = self
-        while let current = responder, !(current is UIDocumentViewController) { responder = current.next }
-        guard let document = (responder as? UIDocumentViewController)?.document, !document.hasUnsavedChanges else { return }
-        document.updateChangeCount(.done)
-    }
-
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         let observer = markupInteraction.fingersDown

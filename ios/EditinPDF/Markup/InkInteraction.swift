@@ -20,10 +20,9 @@ import UIKit
 ///   Done, when a touch starts on another page, before any other change and before Undo or Redo
 ///   (the model's), when the scene leaves the screen, when the pages are laid out again, when the
 ///   screen goes, and when a finger goes down anywhere outside the pages
-///   (`MarkupInteraction.fingerWentDown`: the toolbar, the palette, the back button). That last one is
-///   what keeps them when the document is closed: the scene closes the file as soon as the back button
-///   is tapped, before the screen hears it is going, and saves it only if a change has been registered
-///   by then. Each is worked out against the revision it was drawn on: one drawn while a turn of its
+///   (`MarkupInteraction.fingerWentDown`: the toolbar, the palette, the back button). Back adds them
+///   too before it asks whether to save (`DocumentScreen.goBack`), and Save before it writes
+///   (`DocumentModel.save`). Each is worked out against the revision it was drawn on: one drawn while a turn of its
 ///   page was on its way is refused as stale, leaves nothing on the screen, and the reader is told it
 ///   was not added. One refused as stale while its page stayed as it was (another page turned, pages
 ///   added after it) is put back on the canvas, waiting (`putBack`), or added again.

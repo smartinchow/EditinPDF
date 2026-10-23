@@ -518,21 +518,17 @@ final class MarkupInteraction: NSObject {
     // MARK: What waits to be added
 
     /// A finger went down on `view`: anywhere but the pages (the toolbar, the palette, the back button,
-    /// a bar over the pages), the strokes waiting are added. Going back to the documents closes the
-    /// file at once, saving it only if it has a change by then; the finger going down on the back
-    /// button is the last moment the strokes can become one.
-    /// So is the text being typed in a text box, or in a form field: a finger on the box or the field's
-    /// editor itself, or on the pages, is not outside them.
-    /// The document is told of the change at once (`PageScrollViewController.countChangeNow`): the
-    /// finger lifting from Back can be handled in this same turn of the run loop, before the undo
-    /// manager would have told it. A path that may close the document: the strokes drawn are added even
+    /// a bar over the pages), the strokes waiting are added. So is the text being typed in a text box,
+    /// or in a form field: a finger on the box or the field's editor itself, or on the pages, is not
+    /// outside them. Back adds what waits too, before it looks for unsaved changes
+    /// (`DocumentScreen.goBack`). A path that may close the document: the strokes drawn are added even
     /// while a stroke is being drawn (`DocumentModel.commitPendingInk(closing:)`).
     func fingerWentDown(on view: UIView?) {
         guard let host, model.hasPendingInk || textBoxes.textEditor != nil || model.isEditingField else { return }
         if let view, view.isDescendant(of: host.scrollView) { return }
         // The colour picker the box being typed in waits for (More Colors…), over the pages.
         if textBoxes.isPickingColor, let picker = host.presentedViewController, let view, view.isDescendant(of: picker.view) { return }
-        if model.commitPendingInk(closing: true) { host.countChangeNow() }
+        model.commitPendingInk(closing: true)
     }
 
     /// Listens for focus moving: VoiceOver's and Switch Control's (an element focused), and the focus
