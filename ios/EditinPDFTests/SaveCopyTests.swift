@@ -4,7 +4,7 @@ import UIKit
 import XCTest
 @testable import EditinPDF
 
-/// Save a Copy: the bytes of the copy (`DocumentModel.copyBytes`) are what autosave would write, with
+/// Save a Copy: the bytes of the copy (`DocumentModel.copyBytes`) are what Save writes, with
 /// everything waiting added first and every change on its way made, and the document stays open and as
 /// it was: still changed (nothing tells the engine it saved), with the same changes.
 @MainActor

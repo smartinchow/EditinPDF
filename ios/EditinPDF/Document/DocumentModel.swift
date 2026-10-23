@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// What SwiftUI shows for one document: whether it is open, locked behind a password or could not
 /// be read; its pages; which page the reader is on; its search; and the text selected in it. And
 /// the changes made to it: every edit, undo and redo goes through one serial queue (`EditQueue`),
-/// off the main actor, and is registered with the scene's `UndoManager`; after each one the
+/// off the main actor, and is registered with the model's own `UndoManager`; after each one the
 /// document's state (pages, annotations, form fields, what may be edited) is read again, off the
 /// main actor too, and published here with the revision it belongs to.
 /// Everything lives on the main actor, since views read it directly.
@@ -380,6 +380,70 @@ final class DocumentModel {
 
     /// How many changes have been handed over (`enqueue`) since the model was made.
     @ObservationIgnored private(set) var changesHandedOver = 0
+
+    // MARK: Unsaved changes (see DocumentSaving.swift)
+
+    /// Where the document is in its history: one more for each change and redo made, one less for each
+    /// undo, counted as the engine makes them. The document as opened (or restored) is at 0.
+    private(set) var historyPosition = 0
+    /// Where in its history the document was when it was last saved (or opened); nil when that state
+    /// cannot be reached again (a change made over an undone one after it, a step that failed half way, a
+    /// recovery copy restored): then the document has unsaved changes until it is saved.
+    private(set) var savedPosition: Int? = 0
+    /// Where Save writes the file: the scene's document (`SceneDocumentWriter`), or a test's.
+    @ObservationIgnored weak var fileWriter: (any DocumentFileWriter)?
+    /// Whether Save is writing.
+    private(set) var isSaving = false
+    /// Where the recovery copy is kept (`RecoveryStore`), and its key for this document's file; nil
+    /// (no file known) keeps none.
+    @ObservationIgnored var recovery = RecoveryStore.shared
+    @ObservationIgnored var recoveryKey: String?
+    /// Moves on with every Save, Discard and Save As, so a recovery copy written meanwhile is not left
+    /// behind (`writeRecovery`).
+    @ObservationIgnored var recoveryEpoch = 0
+    /// Moves on when the document is replaced by its recovery copy: the screen shows its pages again.
+    private(set) var documentGeneration = 0
+    /// Set once the reader chose how the document closes (Discard, Save As): no recovery copy is written
+    /// after that (`writeRecovery`).
+    @ObservationIgnored var isClosing = false
+    /// What ⌘S does for this document (`FrontDocument.save`): set by its screen, which shows how Save went.
+    @ObservationIgnored var saveRequested: (() -> Void)?
+
+    /// The history moved `steps` (a change or redo +1, an undo -1). A new change (`branching`) drops the
+    /// changes undone before it, and with them the state last saved, when that was one of them.
+    private func historyDidMove(by steps: Int, branching: Bool) {
+        if branching, let saved = savedPosition, saved > historyPosition { savedPosition = nil }
+        historyPosition += steps
+    }
+
+    /// Saved at `position`: it is the state with nothing to save.
+    func markSaved(at position: Int) {
+        savedPosition = position
+    }
+
+    /// Starts Save: false when one is already on its way.
+    func beginSaving() -> Bool {
+        guard !isSaving else { return false }
+        isSaving = true
+        return true
+    }
+
+    /// Save is over.
+    func endSaving() {
+        isSaving = false
+    }
+
+    /// The document was replaced by its recovery copy (`restoreRecoveredChanges`): a history of its own,
+    /// whose every change is unsaved, and pages to show again.
+    func didRestore() {
+        undoManager?.removeAllActions()
+        liveChanges.removeAllObjects()
+        lastShifts = Shifts()
+        pageMoves = PageMoves()
+        historyPosition = 0
+        savedPosition = nil
+        documentGeneration += 1
+    }
 
     // MARK: Form fields being typed in
 
@@ -791,12 +855,19 @@ final class DocumentModel {
         return Task { false }
     }
 
-    /// The scene's undo manager, which the screen hands over (`@Environment(\.undoManager)`). With
-    /// none, changes are still made, and cannot be undone. It keeps as many steps as the engine does
-    /// (`undoLimit`), so an Undo past them is never a tap that does nothing.
+    /// The undo manager each change is registered with: the model's own (`ownUndoManager`), or a test's.
+    /// Not the scene's (`@Environment(\.undoManager)`): that one is the scene's document's, which counts
+    /// every change registered with it as one to save and saves it on its own (on a timer, as the document
+    /// closes, as the app goes to the background), and the file is written only when the reader chooses
+    /// Save (ADR 0002, section 3). The toolbar's Undo and Redo and the Edit menu's (⌘Z, ⇧⌘Z) act on this
+    /// one, through `undo` and `redo`. With none, changes are still made, and cannot be undone. It keeps
+    /// as many steps as the engine does (`undoLimit`), so an Undo past them is never a tap that does
+    /// nothing.
     @ObservationIgnored weak var undoManager: UndoManager? {
         didSet { undoManager?.levelsOfUndo = Self.undoLimit }
     }
+    /// The model's own undo manager, which `undoManager` is unless a test gives another.
+    @ObservationIgnored private let ownUndoManager = UndoManager()
     /// How many changes the undo manager keeps: the engine's history, `MAX_UNDO` (100) in the pinned
     /// PdfCraft release (`PdfDocument.undo`). A group of the undo manager can hold more than one change
     /// (typing in a field, then a tap on a checkbox, in one turn of the run loop): then it holds more
@@ -885,6 +956,8 @@ final class DocumentModel {
         self.toolStyles = toolStyles ?? ToolStyleStore()
         self.signatures = signatures ?? .shared
         (state, pages) = Self.resolve(outcome)
+        undoManager = ownUndoManager
+        ownUndoManager.levelsOfUndo = Self.undoLimit
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
         if let document = document() { engine.adopt(document) }
@@ -904,12 +977,17 @@ final class DocumentModel {
         let outcome = await Task.detached(priority: .userInitiated) { open(bytes, password) }.value
         guard case .locked = state else { return document() != nil }
         install(outcome)
+        if document() != nil { openedWithPassword = password }
         return document() != nil
     }
 
+    /// The password the document was opened with, kept in memory only (never written or logged), to open
+    /// its recovery copy with (`restoreRecoveredChanges`): the copy keeps the file's password.
+    @ObservationIgnored private(set) var openedWithPassword: String?
+
     /// Takes what opening the file came to: the state, the pages, and a search and a selection for an
     /// open document.
-    private func install(_ outcome: OpenOutcome) {
+    func install(_ outcome: OpenOutcome) {
         (state, pages) = Self.resolve(outcome)
         search = document().map(SearchController.init(document:))
         selection = document().map(SelectionController.init(document:))
@@ -1114,6 +1192,7 @@ final class DocumentModel {
         switch result {
         case .success(let state):
             token.applied = true
+            historyDidMove(by: 1, branching: true)
             // The reader stays on the page they were reading when pages before it go, move or arrive.
             // (An undo or redo does not say where pages went: there, the index is only kept in range.)
             currentPage = OrganizeMath.readerPage(currentPage, after: edits, pagesAdded: state.pages.count - self.pages.count)
@@ -1175,6 +1254,7 @@ final class DocumentModel {
         }
         switch result {
         case .success(let state):
+            historyDidMove(by: step == .undo ? -1 : 1, branching: false)
             refresh(state, touching: token.pages, shift: token.shift, pageEffect: token.pageEffect)
         case .failure(EditError.NothingToUndo), .failure(EditError.NothingToRedo):
             // Past the engine's history: this change has no step there any more. The document is as it
@@ -1192,6 +1272,8 @@ final class DocumentModel {
     private func refreshIfMoved(_ document: PdfDocument) async {
         guard case .success(let state) = await EditQueue.offMain({ EngineState.read(document) }),
               state.revision != revision else { return }
+        // Changed by a step that failed half way: which saved state it is at cannot be told any more.
+        savedPosition = nil
         refresh(state, touching: nil, shift: .all, pageEffect: .everything)
     }
 

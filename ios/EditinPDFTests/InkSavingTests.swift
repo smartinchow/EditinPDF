@@ -4,13 +4,13 @@ import UIKit
 import XCTest
 @testable import EditinPDF
 
-/// Strokes drawn with Draw reach the file: a document closed with strokes waiting keeps them.
+/// Strokes drawn with Draw reach the file: strokes left waiting are added before Save writes, and
+/// before Back asks whether to save.
 ///
-/// The document scene closes the file when its back button is tapped, before the screen hears it is
-/// going, and saves it only if a change has been registered by then: a touch outside the pages (the
-/// back button is one) adds the strokes as it goes down. A save then waits for the changes handed
-/// over to reach the engine, so it writes them. (The whole path, drawing then going back without
-/// Done, is `EditorSmokeTests.testStrokesLeftWaitingAreKeptWhenTheDocumentIsClosed`.)
+/// A touch outside the pages (the back button is one) adds the strokes as it goes down, and Back adds
+/// what waits before it looks for unsaved changes (`DocumentScreen.goBack`). A save then waits for the
+/// changes handed over to reach the engine, so it writes them. (The whole path, drawing then going back
+/// without Done and choosing Save, is `EditorSmokeTests.testStrokesLeftWaitingAreSavedFromTheQuestionBackAsks`.)
 @MainActor
 final class InkSavingTests: XCTestCase {
     // MARK: Saving waits for the changes handed over
@@ -42,7 +42,7 @@ final class InkSavingTests: XCTestCase {
         await model.settle()
         let snapshot = try file.snapshot(contentType: .pdf)
         model.enqueueInk(page: 0, strokes: [[CGPoint(x: 100, y: 100), CGPoint(x: 200, y: 150)]])
-        let bytes = try await Task.detached { try file.savedBytes(of: snapshot) }.value
+        let bytes = try await Task.detached { try file.savedBytes(of: snapshot.document) }.value
         let saved = try PdfDocument.open(bytes: bytes, password: nil)
         XCTAssertEqual(saved.annotations().map(\.kind), [.ink])
     }
@@ -93,38 +93,6 @@ final class InkSavingTests: XCTestCase {
         XCTAssertFalse(model.hasPendingInk, "outside the pages: added")
         await model.settle()
         XCTAssertEqual(model.annotationIndex.annotations(onPage: 0).map(\.kind), [.ink])
-    }
-
-    /// What the finger going down outside the pages adds, the document counts as a change at once, not
-    /// only when the undo manager closes the run loop turn's group: the finger lifting from Back can be
-    /// handled in the same turn when the main thread is slow (the keyboard being put away), and the
-    /// document closes then, saving only if it counts a change (seen on the CI runner: the text left in
-    /// a text box or a form field was not in the file). With nothing waiting it counts none.
-    func testAFingerOutsideThePagesTellsTheDocumentOfTheChangeAtOnce() async throws {
-        let (controller, model) = await makeController()
-        let undoManager = UndoManager()
-        model.undoManager = undoManager
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("counted-\(UUID().uuidString).pdf")
-        try fixtureData("sample").write(to: url)
-        defer { try? FileManager.default.removeItem(at: url) }
-        let document = DocumentStandIn(fileURL: url)
-        let opened = await withCheckedContinuation { done in document.open { done.resume(returning: $0) } }
-        XCTAssertTrue(opened)
-        document.undoManager = undoManager
-        // The screen in the view controller UIKit keeps the document in, as SwiftUI's document scene has it.
-        let documentController = UIDocumentViewController(document: document)
-        documentController.addChild(controller)
-        documentController.view.addSubview(controller.view)
-        controller.didMove(toParent: documentController)
-
-        controller.markupInteraction.fingerWentDown(on: UIView())
-        XCTAssertFalse(document.hasUnsavedChanges, "nothing waited: no change")
-        try draw(on: controller)
-        controller.markupInteraction.fingerWentDown(on: UIView())
-        XCTAssertFalse(model.hasPendingInk)
-        XCTAssertTrue(document.hasUnsavedChanges, "counted in the turn the finger went down")
-        await model.settle()
-        _ = await withCheckedContinuation { done in document.close { done.resume(returning: $0) } }
     }
 
     /// The screen's window tells the markup of every finger going down, without taking it.
@@ -184,7 +152,7 @@ final class InkSavingTests: XCTestCase {
         file.engine.editWillStart()          // one that never arrives
         defer { file.engine.editDidFinish() }
         let started = Date()
-        let bytes = try await Task.detached { try file.savedBytes(of: snapshot, waitingAtMost: 1) }.value
+        let bytes = try await Task.detached { try file.savedBytes(of: snapshot.document, waitingAtMost: 1) }.value
         XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.9, "it waited")
         XCTAssertEqual(bytes, try fixtureData("hello"), "and wrote the document as the engine had it")
         // What a save waits for at most: long enough for a change on a big document to arrive.
@@ -220,13 +188,4 @@ final class InkSavingTests: XCTestCase {
         XCTAssertEqual(ink.page, 1)
         XCTAssertEqual(ink.undoManager?.canUndo, false, "moved to another page: the history goes")
     }
-}
-
-/// A document as UIKit keeps one, for the count of its changes: it reads its file and writes nothing of
-/// its own.
-private final class DocumentStandIn: UIDocument {
-    override func load(fromContents contents: Any, ofType typeName: String?) throws {}
-    override func contents(forType typeName: String) throws -> Any { Data() }
-    override func writeContents(_ contents: Any, andAttributes additionalFileAttributes: [AnyHashable: Any]? = nil,
-                                safelyTo url: URL, for saveOperation: UIDocument.SaveOperation) throws {}
 }

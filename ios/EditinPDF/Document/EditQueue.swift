@@ -7,7 +7,7 @@ import Observation
 /// after it go through one queue, so they reach the engine in the order the reader made them, and an
 /// undo tapped while an edit is still running undoes that edit, never an older one. Nothing here
 /// calls the engine on the main actor: the bridge's `save` holds the document's lock for the whole
-/// write, so a call made there during an autosave would freeze the screen until the save is done.
+/// write, so a call made there during a save would freeze the screen until the save is done.
 ///
 /// A job is a chain link: it waits for the job before it to finish (whether it succeeded or not),
 /// then runs. `submit` links the job at once, synchronously, which is what keeps the order of jobs

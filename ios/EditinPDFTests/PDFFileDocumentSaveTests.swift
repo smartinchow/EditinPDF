@@ -3,14 +3,14 @@ import UniformTypeIdentifiers
 import XCTest
 @testable import EditinPDF
 
-/// What autosave writes: the engine's incremental save of the open document, and nothing for a
-/// document that is locked or could not be read.
+/// What Save writes: the engine's incremental save of the open document, and nothing for a document
+/// that is locked or could not be read. (A write Save did not ask for: `SavingTests`.)
 @MainActor final class PDFFileDocumentSaveTests: XCTestCase {
     func testSnapshotOfUntouchedDocumentWritesTheOriginalBytes() throws {
         let bytes = try fixtureData("hello")
         let file = PDFFileDocument(bytes: bytes)
         let snap = try file.snapshot(contentType: .pdf)
-        XCTAssertEqual(try snap.save(mode: .incremental), bytes)
+        XCTAssertEqual(try snap.document.save(mode: .incremental), bytes)
     }
 
     func testSnapshotAfterAnEditReopensWithTheEdit() throws {
@@ -19,7 +19,7 @@ import XCTest
         _ = try doc.apply(edit: .rotatePages(pages: [0], degrees: 90), baseRevision: 0)
         // What fileWrapper writes (WriteConfiguration has no public init; the write itself is covered
         // by Task 11's UI test reopening the file).
-        let data = try file.snapshot(contentType: .pdf).save(mode: .incremental)
+        let data = try file.snapshot(contentType: .pdf).document.save(mode: .incremental)
         XCTAssertEqual(try PdfDocument.open(bytes: data, password: nil).pageInfo(page: 0)?.rotationDegrees, 90)
     }
 
@@ -55,7 +55,7 @@ import XCTest
         }
     }
 
-    /// The model and the file share one handle: what the screen edits is what autosave writes.
+    /// The model and the file share one handle: what the screen edits is what Save writes.
     func testTheModelEditsTheDocumentTheFileSaves() throws {
         let file = PDFFileDocument(bytes: try fixtureData("hello"))
         XCTAssertTrue(file.model.document() === file.engine.document)

@@ -29,23 +29,14 @@ enum CopyFailure: Error, Equatable {
 extension DocumentModel {
     private static let copyLog = Logger(subsystem: Diagnostics.subsystem, category: "copy")
 
-    /// The bytes of a copy of the document as the reader sees it, for Save a Copy: what the file's own
-    /// save writes (`PDFFileDocument.savedBytes`: the file as opened with one appended update holding
-    /// every change, a password-protected file still protected by its password).
-    ///
-    /// What waits is added first, through the closing path (`commitPendingInk(closing: true)`: the
-    /// strokes drawn, the text box and the form field being typed in), and so is the note being written,
-    /// as when the scene leaves (`saveNoteDraftOnLeaving`); then every change, undo and redo handed over
-    /// is waited for (`settle`). Strokes refused as stale while their page stayed as it was come back on
-    /// the canvas, waiting (`InkInteraction.putBack`): they are handed over once more. When what waited
-    /// was refused all the same (`failure` set since, or something still waiting), no copy is made
-    /// (`.waitingNotAdded`): it would leave out what the reader sees. The save runs off the main actor:
-    /// the bridge holds the document's lock for the whole write.
-    ///
-    /// Nothing tells the engine it saved, so the document stays changed and is saved to its own file as
-    /// before: only a copy is made. Fails with `.signed` when the bridge refuses the save for the
-    /// document's signatures, `.failed` when the document is not open or the engine cannot write it.
-    func copyBytes() async -> Result<Data, CopyFailure> {
+    /// Adds what waits, through the closing path (`commitPendingInk(closing: true)`: the strokes drawn,
+    /// the text box and the form field being typed in), and the note being written, as when the scene
+    /// leaves (`saveNoteDraftOnLeaving`); then waits for every change, undo and redo handed over
+    /// (`settle`). Strokes refused as stale while their page stayed as it was come back on the canvas,
+    /// waiting (`InkInteraction.putBack`): they are handed over once more. Says whether all of it was
+    /// added: false when something was refused all the same (`failure` set since, or something still
+    /// waiting), so that a copy or a save would leave out what the reader sees.
+    func addEverythingWaiting() async -> Bool {
         let failureBefore = failure?.id
         commitPendingInk(closing: true)
         saveNoteDraftOnLeaving()
@@ -54,9 +45,22 @@ extension DocumentModel {
             commitPendingInk(closing: true)
             await settle()
         }
-        if hasPendingEdit || failure.map({ $0.id != failureBefore }) == true {
-            return .failure(.waitingNotAdded)
-        }
+        return !(hasPendingEdit || failure.map({ $0.id != failureBefore }) == true)
+    }
+
+    /// The bytes of a copy of the document as the reader sees it, for Save a Copy and Save As: what Save
+    /// writes (`PDFFileDocument.savedBytes`: the file as opened with one appended update holding
+    /// every change, a password-protected file still protected by its password).
+    ///
+    /// What waits is added first (`addEverythingWaiting`); when some of it was refused, no copy is made
+    /// (`.waitingNotAdded`): it would leave out what the reader sees. The save runs off the main actor:
+    /// the bridge holds the document's lock for the whole write.
+    ///
+    /// Nothing tells the engine it saved, so the document stays changed, its changes unsaved in its own
+    /// file: only a copy is made. Fails with `.signed` when the bridge refuses the save for the
+    /// document's signatures, `.failed` when the document is not open or the engine cannot write it.
+    func copyBytes() async -> Result<Data, CopyFailure> {
+        guard await addEverythingWaiting() else { return .failure(.waitingNotAdded) }
         guard let document = document() else { return .failure(.failed) }
         let saved = await EditQueue.offMain { try document.save(mode: .incremental) }
         switch saved {

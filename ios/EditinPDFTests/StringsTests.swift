@@ -236,6 +236,22 @@ final class StringsTests: XCTestCase {
         XCTAssertEqual(Strings.copyWaitingNotAddedMessage, "Some of your latest changes could not be added, so no copy was made. Check the page, then try again.")
     }
 
+    func testSavingWording() {
+        XCTAssertEqual(Strings.saveDocument, "Save")
+        XCTAssertEqual(Strings.saveAs, "Save As…")
+        XCTAssertEqual(Strings.discardChanges, "Discard Changes")
+        XCTAssertEqual(Strings.saveChangesTitle("Report"), "Save changes to “Report”?")
+        XCTAssertEqual(Strings.saveChangesMessage, "Your changes will be lost if you don't save them.")
+        XCTAssertEqual(Strings.edited, "Edited")
+        XCTAssertEqual(Strings.saveFailedTitle, "The document could not be saved.")
+        XCTAssertEqual(Strings.saveWaitingNotAddedMessage, "Some of your latest changes could not be added, so nothing was saved. Check the page, then try again.")
+        XCTAssertEqual(Strings.saveFailedMessage, "Your changes are still here. Try again, or use Save As… to save them somewhere else.")
+        XCTAssertEqual(Strings.restoreTitle, "Restore unsaved changes?")
+        XCTAssertEqual(Strings.restoreMessage("Report"), "EditinPDF closed before the changes to “Report” were saved.")
+        XCTAssertEqual(Strings.restore, "Restore")
+        XCTAssertEqual(Strings.discardRecovered, "Discard")
+    }
+
     func testSendFeedbackWording() {
         XCTAssertEqual(Strings.sendFeedback, "Send Feedback")
         XCTAssertEqual(Strings.feedbackSubject(version: "1.2", build: "3"), "EditinPDF feedback (1.2, build 3)")

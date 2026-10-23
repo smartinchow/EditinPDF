@@ -189,6 +189,75 @@ enum Strings {
         String(localized: "The changes could not be saved.", comment: "Reason shown when the edits to a PDF could not be written to its file")
     }
 
+    // MARK: Saving
+
+    /// The More menu's item (and ⌘S) that writes the changes to the document's file, and the choice of
+    /// the question Back asks. Its own key: the note editor's Save may be translated otherwise.
+    static var saveDocument: String {
+        String(localized: "saveDocument", defaultValue: "Save", comment: "More menu item and keyboard command, and a button of the question asked when going back with unsaved changes: writes the changes to the PDF's own file")
+    }
+
+    /// The choice of the question Back asks that saves the changes in a copy and leaves the file as it is.
+    static var saveAs: String {
+        String(localized: "Save As…", comment: "Button of the question asked when going back to the documents with unsaved changes: saves them in a copy, in a folder and under a name the reader chooses, and leaves the original file as it was")
+    }
+
+    /// The choice of the question Back asks that lets the changes go.
+    static var discardChanges: String {
+        String(localized: "Discard Changes", comment: "Destructive button of the question asked when going back to the documents with unsaved changes: closes the document without saving them")
+    }
+
+    /// The question Back asks when the document has unsaved changes; `name` is the document's.
+    static func saveChangesTitle(_ name: String) -> String {
+        String(localized: "Save changes to “\(name)”?", comment: "Title of the question asked when going back to the documents with unsaved changes: the document's name")
+    }
+
+    /// What the question Back asks says under its title.
+    static var saveChangesMessage: String {
+        String(localized: "Your changes will be lost if you don't save them.", comment: "Message of the question asked when going back to the documents with unsaved changes")
+    }
+
+    /// Under the document's name while it has changes not saved yet.
+    static var edited: String {
+        String(localized: "Edited", comment: "Shown under the document's name while it has changes that are not saved yet")
+    }
+
+    /// The title of the alert when Save wrote nothing.
+    static var saveFailedTitle: String {
+        String(localized: "The document could not be saved.", comment: "Title of the alert shown when Save could not write the changes to the PDF's file")
+    }
+
+    /// Why Save wrote nothing when something waiting to be added (strokes, typed text) was refused.
+    static var saveWaitingNotAddedMessage: String {
+        String(localized: "Some of your latest changes could not be added, so nothing was saved. Check the page, then try again.", comment: "Message of the alert when Save wrote nothing because strokes or typed text waiting to be added to the document were refused")
+    }
+
+    /// What the alert says when Save could not write the file.
+    static var saveFailedMessage: String {
+        String(localized: "Your changes are still here. Try again, or use Save As… to save them somewhere else.", comment: "Message of the alert when Save could not write the PDF's file; the changes are still in the open document")
+    }
+
+    /// The question asked when a document opens with changes kept from a time the app was stopped
+    /// before they were saved.
+    static var restoreTitle: String {
+        String(localized: "Restore unsaved changes?", comment: "Title of the question asked when a document opens and changes made to it earlier, never saved, were kept when the app stopped")
+    }
+
+    /// What that question says under its title; `name` is the document's.
+    static func restoreMessage(_ name: String) -> String {
+        String(localized: "EditinPDF closed before the changes to “\(name)” were saved.", comment: "Message of the question asked when a document opens with unsaved changes kept from before: the app stopped before they were saved; the document's name")
+    }
+
+    /// The choice that brings the kept changes back, unsaved.
+    static var restore: String {
+        String(localized: "Restore", comment: "Button that brings back the unsaved changes kept when the app stopped, as changes still to be saved")
+    }
+
+    /// The choice that lets the kept changes go. Its own key: Discard Changes says it in full elsewhere.
+    static var discardRecovered: String {
+        String(localized: "discardRecovered", defaultValue: "Discard", comment: "Button that deletes the unsaved changes kept when the app stopped; the document opens as its file is")
+    }
+
     // MARK: Save a Copy
 
     /// The More menu's item that saves a copy of the document where the reader chooses.

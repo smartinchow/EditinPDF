@@ -11,12 +11,16 @@ import os
 /// Until then it is nil, and a file that is locked or could not be read is never written.
 ///
 /// It also counts the changes, undos and redos handed over to the model's queue that have not reached
-/// the engine yet, so a save can wait for them (`waitForEdits`): the scene saves as the document closes,
-/// on a queue of its own, while a change handed over a moment before (the strokes added as the back
-/// button goes down) may still be on its way.
+/// the engine yet, so a save can wait for them (`waitForEdits`): the scene writes on a queue of its own,
+/// while a change handed over a moment before may still be on its way.
+///
+/// And it says whether the reader asked for a save (`beginExplicitSave`): only a save asked for with Save
+/// writes the engine's changes to the file. Any other write the system makes (an automatic save) writes
+/// the file as it is (`PDFFileDocument.bytesToWrite`).
 final class EngineHandle: Sendable {
     private let state: OSAllocatedUnfairLock<PdfDocument?>
     private let edits = EditsOnTheirWay()
+    private let explicitSaves = OSAllocatedUnfairLock(initialState: 0)
 
     init(_ document: PdfDocument? = nil) {
         state = OSAllocatedUnfairLock(initialState: document)
@@ -30,6 +34,21 @@ final class EngineHandle: Sendable {
     /// Makes `document` the one that is saved from now on.
     func adopt(_ document: PdfDocument) {
         state.withLock { $0 = document }
+    }
+
+    /// Save is writing the file: until `endExplicitSave`, a write writes the engine's changes.
+    func beginExplicitSave() {
+        explicitSaves.withLock { $0 += 1 }
+    }
+
+    /// The write Save asked for is over (written or not).
+    func endExplicitSave() {
+        explicitSaves.withLock { $0 = max($0 - 1, 0) }
+    }
+
+    /// Whether Save is writing the file now.
+    var isSavingExplicitly: Bool {
+        explicitSaves.withLock { $0 > 0 }
     }
 
     /// A change, undo or redo has been handed over: it is on its way to the engine.

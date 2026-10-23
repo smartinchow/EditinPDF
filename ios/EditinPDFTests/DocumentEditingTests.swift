@@ -223,7 +223,7 @@ final class DocumentEditingTests: XCTestCase {
         XCTAssertEqual(m.failure?.message, Strings.signedDocumentDamaged)
         XCTAssertFalse(u.canUndo)
         let snapshot = try file.snapshot(contentType: .pdf)
-        let saved = try await Task.detached { try file.savedBytes(of: snapshot, waitingAtMost: 1) }.value
+        let saved = try await Task.detached { try file.savedBytes(of: snapshot.document, waitingAtMost: 1) }.value
         XCTAssertEqual(saved, bytes, "the file as it was opened, signatures and all")
     }
 
