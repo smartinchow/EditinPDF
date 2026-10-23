@@ -1,9 +1,9 @@
 # ADR 0002: How edits, undo and saving fit together (M2–M3)
 
 - Status: accepted
-- Date: 2026-10-21
+- Date: 2026-10-21 (section 3 revised 2026-10-24: saving is the reader's choice, no autosave)
 - Context: M2 and M3 of the design spec turn the viewer into an editor: page organizing, markup, forms and
-  signing, with Undo and Redo and an autosave that must never damage the user's file. Spec:
+  signing, with Undo and Redo and a save that must never damage the user's file. Spec:
   `docs/superpowers/specs/2026-10-15-editinpdf-ios-design.md` (section "M2–M3 scope update"). Plan:
   `docs/superpowers/plans/2026-10-18-m2-m3-editor.md`.
 
@@ -12,8 +12,10 @@
 Three things pull against each other.
 
 - **SwiftUI's document scene wants a simple contract.** `DocumentGroup` with a `ReferenceFileDocument` asks for a
-  snapshot, then writes it with `fileWrapper`, and autosaves when the undo manager says the document changed. It
-  has no idea that the real document lives in a Rust engine behind a lock.
+  snapshot, then writes it with `fileWrapper`, and autosaves (on a timer, as the document closes, as the app goes
+  to the background) whenever its undo manager says the document changed. It has no idea that the real document
+  lives in a Rust engine behind a lock. The owner wants no autosave at all: the file changes only when the reader
+  chooses Save (section 3).
 - **The engine keeps its own history.** `PdfDocument.undo()` and `redo()` (`core/editinpdf-core/src/document.rs`)
   take no argument: they move the engine's stack, whatever is on top. The app's undo manager has to stay in
   step with it.
@@ -42,7 +44,8 @@ queue too, so the first read of a document comes before any change handed over m
 1. It makes an `EditToken` (`applied = false`, the pages the change touches).
 2. It **registers the undo manager entry right then**, on the main actor, with the token as the entry's target
    (`registerStep`). The undo manager's stack and the engine's history therefore get the changes in the same
-   order, however fast the reader taps, and the registration is what makes `DocumentGroup` autosave.
+   order, however fast the reader taps. The undo manager is the model's own, not the scene's, so the
+   registration does **not** make `DocumentGroup` autosave (section 3).
 3. It hands the edit to the queue. When its turn comes, `apply` asks the engine. On success it sets
    `token.applied = true` and publishes. On refusal it shows an `EditFailure` and **takes the entry off again**
    with `removeAllActions(withTarget: token)`.
@@ -93,28 +96,79 @@ an entry the engine has no step for, and that the order of entries is the order 
 `EngineHandle.editWillStart` and `editDidFinish` count the jobs handed over and not finished, so that a save can
 wait for them (section 3).
 
-### 3. The snapshot is the engine object, and the bytes are written off the main thread
+### 3. Saving is the reader's choice: Save, Save As or Discard
 
-`PDFFileDocument.Snapshot` is `PdfDocument` itself (`ios/EditinPDF/Document/PDFFileDocument.swift`).
-`snapshot(contentType:)` returns it, so taking a snapshot costs nothing and the file's bytes are held once, by the
-engine. Copying them at snapshot time would be a whole save, and the bridge's `save` holds the state lock for the
-whole write (`document.rs`).
+Nothing is written to the user's file but by **Save** (the More menu, ⌘S). Back with unsaved changes asks
+"Save changes to “name”?" with **Save** (write, then close), **Save As…** (Save a Copy's exporter; once the copy
+is saved the document closes and its file is as it was; cancelled, the document stays open), **Discard Changes**
+(close; the file is as it was at the last Save) and **Cancel**. Back with nothing to save closes at once. "Edited"
+under the document's name (`UINavigationItem.subtitle`, iOS 26; beside the page indicator before) says a Save is
+needed.
 
-The write is `fileWrapper(snapshot:configuration:)`, which calls `save(mode: .incremental)`; SwiftUI calls it on a
-background queue (observed to run off the main thread on the iOS 26.5 simulator). The bridge's lock means the
-write sees whole edits. A snapshot is therefore a live reference, not a frozen copy: a save writes the document as
-it is when the write runs. That is what an autosave should write. To make a save taken just after a change (the
-strokes added as the back button goes down) include it, `savedBytes(of:)` waits, off the main thread only, for up
-to 10 s for the jobs counted by `EngineHandle` (it waits only while one is on its way), and logs a warning if it
-gave up. The document saves as it closes only if it counts a change by then, and the undo manager has it count one
-only as it closes the run loop turn's undo group; when the main thread is slow (the keyboard being put away waits on
-the keyboard's process), the finger lifting from Back is handled in the turn the finger went down in, so the change
-handed over then is counted at once (`PageScrollViewController.countChangeNow`). A file that is locked or could not
-be read has no engine document in the handle, and its snapshot is refused with our own message, so it is never
-written.
+**What counts as unsaved.** `DocumentModel.historyPosition` moves +1 for each change and redo the engine makes
+and -1 for each undo; `savedPosition` is where it was at the last Save (0 when opened). Unsaved means the two
+differ, so undoing back to the saved state counts as no change. A new change made over undone ones drops the saved
+state when it was among them (`savedPosition = nil`: it cannot come back), and so does a step that failed half
+way and moved the revision on (`refreshIfMoved`) or a recovery copy restored. `needsSave` adds what waits to be
+added (strokes, typed text): Back and Save add it first (`commitPendingInk(closing: true)`, then
+`addEverythingWaiting`, shared with Save a Copy), so Save, Save As and the recovery copy include it.
+
+**The mechanism, and why.** `DocumentGroup`'s `UIDocument` (`FileWrapperPlatformDocument`, observed on the iOS
+26.5 and 27.0 simulators) saves whenever its change count says it is edited, and that count is fed by its undo
+manager, which is the scene's `@Environment(\.undoManager)`. Three ways were weighed:
+
+- (a) keep the scene's undo manager, and have every write the user did not ask for return the last-saved bytes.
+  The system would still rewrite the file (a new modification date, a sync of the same bytes to the file's
+  provider, a coordinated write while the reader works), and the last-saved bytes would have to be held in
+  memory or read back.
+- (b) **chosen:** the model registers its changes with an undo manager of its own (`DocumentModel.undoManager`,
+  `ownUndoManager`), so the scene's document never counts an edit, never looks edited, and never saves on its own:
+  not on its timer, not as the document closes, not in the background. Save asks it to write
+  (`SceneDocumentWriter`: `UIDocument.save(to:for: .forOverwriting)`). The toolbar's Undo and Redo and the Edit
+  menu's (⌘Z, ⇧⌘Z, `UndoRedoCommands`) already went through the model; the screen now reads the model's undo
+  manager for their state. Lost: the system's own undo gestures (shake, three-finger swipe), which act on the
+  responder chain's undo manager; they never went through the model's rule for what waits anyway.
+- (a) is kept as a second line of defence: the snapshot carries whether Save asked for the write
+  (`EngineHandle.beginExplicitSave`, read in `snapshot(contentType:)`), and `fileWrapper` hands any other write
+  the existing file as it is (`PDFFileDocument.bytesToWrite`, `leavesTheFile`). Only a file not written yet (a
+  new document's first write) gets the engine's bytes without Save.
+
+**Back.** The navigation bar's back button is the system's (look, name, `BackButton` identifier, reach by
+VoiceOver and keyboards are unchanged). Its action is taken over: `DocumentHost` finds the
+`UIDocumentViewController` up the responder chain, keeps its `navigationItem.backAction` and puts one of its own
+in its place (taken over again whenever SwiftUI sets a new one); once the reader has chosen, the system's action is
+run with `UIControl.sendAction(_:)` and closes the document the system's way. The document's controller is the
+only one in its navigation stack, so no edge swipe pops it past the question. Where no such action is found (a
+system that presents documents otherwise), Back stays the system's and closes without asking; the recovery copy
+keeps the changes then. This replaces 05aaefc's `countChangeNow`, which told the `UIDocument` of a change as Back
+went down so that its close-time autosave would include it: there is no such save any more, and Back adds what
+waits before it asks.
+
+**The write.** The snapshot is the engine document (`PDFFileDocument.Snapshot.document`), so taking it costs
+nothing; the write, `save(mode: .incremental)`, runs in `fileWrapper`, which SwiftUI calls on a background queue
+(observed off the main thread on the iOS 26.5 simulator). The bridge's lock means the write sees whole edits. Save
+adds what waits and waits for the queue (`settle`) first; `savedBytes(of:)` still waits, off the main thread only,
+up to 10 s for jobs counted by `EngineHandle` that arrive as the write starts, and logs a warning if it gave up.
+Changes made while Save writes stay unsaved (Save marks the position it settled at). A failed write leaves
+everything unsaved and says so (`Strings.saveFailedTitle`). A file that is locked or could not be read has no
+engine document in the handle, and its snapshot is refused with our own message, so it is never written.
+
+**Recovery.** iOS can end the app in the background, and a scene can be closed from the app switcher or a
+window's close button with no prompt, so unsaved changes are also kept in a recovery copy (`RecoveryStore`):
+`Application Support/Recovery/<SHA-256 of the file's path>.pdf`, the engine's incremental save (a protected
+file's copy keeps its password), with complete file protection, excluded from backup. It is written two seconds
+after the last change, undo or redo, and as the scene leaves the active state or the screen (what waits added
+first, in a background task); never with nothing unsaved. When the same file opens again and a copy newer than
+the file is there, the app asks "Restore unsaved changes?": **Restore** opens the copy (with the password the
+file was opened with) in place of the document, every change unsaved, the file still unwritten; **Discard**
+deletes it. Save, Discard Changes and a saved Save As delete it (`recoveryEpoch` drops one being written
+meanwhile); a copy older than the file goes; copies older than 30 days are swept at launch. Nothing of a document
+is logged. The copy is found by the file's path, so a file renamed or moved while the app was stopped is not
+matched (its copy is swept after 30 days).
 
 `EngineHandle` (`ios/EditinPDF/Document/EngineHandle.swift`) is what the file document and the model share: a
-lock-guarded slot for the document and the counter. The model fills the slot when the file opens and on `unlock`.
+lock-guarded slot for the document, the counter of jobs on their way, and whether Save is writing. The model
+fills the slot when the file opens, on `unlock`, and when a recovery copy is restored.
 
 ### 4. There is no `markSaved`
 
@@ -125,7 +179,7 @@ bridge deliberately does not expose it. `PdfDocument.save` says so: it "does not
 
 So **every save is the file as it was opened plus one appended update holding every change made since**
 (`Session::save_bytes`, "an incremental update of the file as opened/last saved"). The user's original bytes are a
-prefix of what is written, which is what makes autosave safe for files the app did not make. An unchanged document
+prefix of what is written, which is what makes Save safe for files the app did not make. An unchanged document
 comes back as the engine holds it: the bytes as opened, except for an XFA form, which the engine may lay out or
 fill in from its XFA data as it opens it, and holds with that appended (the original bytes still come first). The
 other consequence is the safety property: nothing ever tells the engine that a write succeeded, so a write that
@@ -134,8 +188,8 @@ not. The next save simply writes all of them again. The cost is that an update h
 rather than only the newest, which is small next to rewriting the file (`SaveMode.full` exists in the bridge for a
 later "optimized copy", and refuses a signed document; the app does not use it yet). Save a Copy (`DocumentModel.copyBytes`) writes this same incremental save, once what waits is
 added through the closing path and the changes on their way are made, to a file the reader picks with the system's
-exporter: the copy of a password-protected file keeps its password, and the document stays open, changed, saved to
-its own file as before.
+exporter: the copy of a password-protected file keeps its password, and the document stays open, its changes
+still unsaved in its own file (or, from Back's Save As…, closes with its file as it was).
 
 One kind of file is the exception. When the file's cross-reference data cannot be read, the object layer rebuilds
 it from the objects' headers as the file opens (`pdfcraft_cos`), which leaves no revision to append to, and its
@@ -341,19 +395,19 @@ Highlight, Underline and Strikethrough work like a word processor's (`ios/Editin
 
 ## Consequences
 
-- Undo, redo and autosave stay consistent however fast the reader taps, and a refused change is never on the undo
+- Undo, redo and the unsaved count stay consistent however fast the reader taps, and a refused change is never on the undo
   stack. The price is a protocol with several moving parts (token, entry, queue, counter) that has to be kept
   whole: a new kind of change goes through `enqueue`, never straight to the engine. A failure of the engine's own
   undo empties the undo manager's stack rather than guessing, so the reader loses their Undo history there.
 - Changes, undos and redos and the reads after them never call the engine on the main actor, and the write was
-  observed to run off the main thread, so a long autosave does not freeze the screen. A few quick calls do run on
+  observed to run off the main thread, so a long save does not freeze the screen. A few quick calls do run on
   the main thread: `SelectionWorker.init` reads the revision when the document opens, and a new blank document is
   made there. A change is published only after the jobs before it, so the screen can lag behind the reader's taps
   by the queue's length.
 - The user's file keeps its original bytes, and a failed write loses nothing; the exception is a file whose
   cross-reference data had to be rebuilt, which is written out in full the first time it changes (and is read-only
-  when signed: section 4). A long session's autosaves each write the original plus the whole update; shrinking it
-  would take a full save, which the app does not offer yet.
+  when signed: section 4). Each Save writes the original plus the whole session's update; shrinking it would take a
+  full save, which the app does not offer yet.
 - Every addressed edit is right for exactly one revision. Most are rebased and a few are refused as `Stale`, the
   alert being the price for never editing the wrong page or comment; strokes and typed text refused so are kept
   (section 6). The rebase rule is a list of what can shift an index or a point: **a new `Edit` must be added to
@@ -366,9 +420,14 @@ Highlight, Underline and Strikethrough work like a word processor's (`ios/Editin
   (`pdfcraft_annot::delete_annotation`); `core/editinpdf-core/tests/delete_annotations.rs` pins the cases (pop-ups
   and replies listed before the comment, locked comments, encrypted files), and `make update-upstream` re-runs it.
 - A snapshot is live, not a copy. SwiftUI can ask for one, and write it a little later, while a change is on its
-  way. The wait in `savedBytes` covers the changes the app knows about, for up to 10 s; one that arrives after the
-  wait is in the next autosave, and when the document is closing there is none, which is why the wait is long (it
-  waits only while a change is on its way, and off the main thread).
+  way. Save settles the queue before it writes, and the wait in `savedBytes` covers a change handed over as the
+  write starts, for up to 10 s; one that arrives after the wait stays unsaved, and Back asks about it.
+- The file changes only with Save. The price: a reader used to autosave can lose changes by choosing Discard,
+  and an app stopped or a scene closed without a choice relies on the recovery copy, offered on the next open
+  of the same path. Back's interception depends on SwiftUI's document scene putting its close action in
+  `UINavigationItem.backAction` of a `UIDocumentViewController` (iOS 26.5 and 27.0 simulators); without it Back
+  closes without asking and the recovery copy is the only net. The system's shake and three-finger undo no
+  longer reach the document's history.
 - No script a document carries is run. Every engine session the bridge makes has the engine's JavaScript off
   (`document::session`): with it on, every fill would run the field's keystroke, validate, calculate and format
   scripts, and an XFA form its scripts as it opens, with no time or memory limit, under the document's lock. The

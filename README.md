@@ -43,9 +43,16 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
 - **Select and copy** text: long-press a word, drag the handles to extend the selection, then Copy.
 - **Organize pages**: select several pages, drag to reorder, rotate, delete, insert a blank page, insert the
   pages of another PDF, and extract pages to a new PDF to share or save.
-- **Undo and redo** every change (the last 100); changes **save automatically** back to the original file, as an
-  incremental update that keeps the original bytes (a damaged file is the exception: see Known issues). A new
-  blank document can be started from the file browser.
+- **Undo and redo** every change (the last 100). A new blank document can be started from the file browser.
+- **You choose when to save.** Nothing is written to the original file until you choose **Save** (in the More
+  menu, or ⌘S with a keyboard); "Edited" under the document's name says there is something to save. Save writes
+  an incremental update that keeps the original bytes (a damaged file is the exception: see Known issues). Going
+  **Back** with unsaved changes asks whether to **Save**, **Save As…** (a copy where you choose, leaving the
+  original as it was), **Discard Changes** (the original stays as it was at the last Save) or Cancel. If the app
+  is stopped before you choose (iOS ends it in the background, or you close it from the app switcher), your
+  unsaved changes are kept on your device, in the app's own folder with file protection and excluded from
+  backups, and offered when you open the same document again (**Restore** or **Discard**); kept changes not
+  reopened within 30 days are deleted.
 - **Mark up**: a Markup mode with a tool palette (a bar at the bottom on iPhone, a side palette on iPad). Each
   tool remembers its colour and line width.
   - **Text markup**: highlight, underline and strikethrough over text you drag across. With text selected,
