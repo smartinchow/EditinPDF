@@ -864,7 +864,15 @@ struct DocumentScreen: View {
                 CopyExporter.present(file, over: presenter) { saved in
                     guard closingOnceSaved, saved else { return }
                     model.copyWasSaved()
-                    close()
+                    // The exporter is told the copy was saved before it has gone, and a document whose
+                    // window still presents it does not close (the iPad's full-screen exporter): closed
+                    // once it has gone, a few seconds at most.
+                    Task {
+                        for _ in 0..<60 where presenter.presentedViewController != nil {
+                            try? await Task.sleep(for: .milliseconds(50))
+                        }
+                        close()
+                    }
                 }
             case .failure(let error):
                 // Nothing of the document in the readable log.

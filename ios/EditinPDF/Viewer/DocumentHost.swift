@@ -30,6 +30,12 @@ final class DocumentHost {
     private(set) var writer: SceneDocumentWriter?
     /// What the back button does: set by the screen.
     var goBack: (() -> Void)?
+    /// Whether "Edited" is to be shown (`showEdited`).
+    private var edited = false
+    /// Watches the navigation item: the document's view controller sets its own line under the name and
+    /// its back action again as it updates its navigation item (seen as a document opens on the iPad), and
+    /// ours are put back then.
+    private var watches: [NSKeyValueObservation] = []
 
     /// The identifier of the back action that is ours.
     static let backIdentifier = UIAction.Identifier("app.editinpdf.back")
@@ -44,8 +50,25 @@ final class DocumentHost {
             controller = found
             systemBack = nil
             writer = found.document.map(SceneDocumentWriter.init(document:))
+            watch(found.navigationItem)
         }
         interceptBack()
+        applyEdited()
+    }
+
+    /// Puts the back action and the line under the name back whenever the navigation item's change.
+    private func watch(_ item: UINavigationItem) {
+        let reapply: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in
+                self?.interceptBack()
+                self?.applyEdited()
+            }
+        }
+        var watches = [item.observe(\.backAction) { _, _ in reapply() }]
+        if #available(iOS 26, *) {
+            watches.append(item.observe(\.subtitle) { _, _ in reapply() })
+        }
+        self.watches = watches
     }
 
     /// Makes the back button run `goBack`, keeping the system's action to close with. Does nothing when
@@ -62,6 +85,11 @@ final class DocumentHost {
     /// Says "Edited" under the document's name in the navigation bar while it has something to save
     /// (iOS 26 and later, where the bar has a line for it; the page indicator says it before).
     func showEdited(_ edited: Bool) {
+        self.edited = edited
+        applyEdited()
+    }
+
+    private func applyEdited() {
         guard #available(iOS 26, *), let item = controller?.navigationItem else { return }
         let subtitle = edited ? Strings.edited : nil
         if item.subtitle != subtitle { item.subtitle = subtitle }
