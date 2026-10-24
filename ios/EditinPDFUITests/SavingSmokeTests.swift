@@ -93,9 +93,9 @@ final class SavingSmokeTests: XCTestCase {
     /// The question's Save As… puts up the exporter: cancelled, the document stays open and changed;
     /// exported, it closes, and the file is as it was while the copy has the change.
     func testSaveAsLeavesTheFileAsItWas() {
-        // A name of its own for each run, so that no copy an earlier run saved is in the way (the iPad's
-        // exporter then asks whether to replace it, and that question cannot be answered by the test).
-        let name = "save-as-\(UUID().uuidString.prefix(8))"
+        // Staging the sample removes the copy an earlier run saved (`FixtureStaging`): the iPad's exporter
+        // would ask whether to replace it, a question the test cannot answer there.
+        let name = "save-as"
         let app = launchAndOpen("sample.pdf", as: "\(name).pdf")
         deleteTheLastPage(in: app)
         goBack(in: app, choosing: "Save As…")

@@ -34,14 +34,18 @@ extension XCTestCase {
         // Inside the app's folder, the browser's back button is named for the location above it (a phone), or
         // the folder's name is the title's menu (a tablet, whose back button is the browser's history).
         let inFolder = app.buttons.matching(NSPredicate(format: "(identifier == 'BackButton' AND label BEGINSWITH 'On My') OR label BEGINSWITH 'EditinPDF, Actions Menu'")).firstMatch
-        for _ in 0..<8 {
+        var drags = 0
+        for _ in 0..<24 {
             if cell.waitForExistence(timeout: 2) { break }
             if inFolder.exists {
                 // In the folder, but the file is further down than the browser's half-height sheet
                 // shows (the folder fills up with the documents earlier tests and walks left there).
-                // The sheet is in the lower part of the screen: the drag scrolls its list.
-                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85))
-                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
+                // The sheet is in the lower part of the screen: the drag scrolls its list, down first,
+                // then back up (the browser may have been left scrolled past the file).
+                let (from, to): (CGFloat, CGFloat) = drags < 12 ? (0.85, 0.55) : (0.55, 0.85)
+                drags += 1
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: from))
+                    .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: to)))
             } else if location.exists, location.isHittable {
                 location.tap()
                 _ = folder.waitForExistence(timeout: 4)
