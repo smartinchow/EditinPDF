@@ -92,6 +92,11 @@ enum FixtureStaging {
             // A fresh copy has no unsaved changes of an earlier run to offer (`RecoveryStore`): the copy
             // keeps the bundle's date, which can be older than a recovery copy an earlier test left.
             RecoveryStore.shared.delete(key: RecoveryStore.key(for: staged))
+            // Nor a copy an earlier run saved of it with Save As (`Strings.copyName`): the exporter would ask
+            // whether to replace it.
+            let copy = staged.deletingLastPathComponent()
+                .appendingPathComponent(CopyFiles.fileName(Strings.copyName(of: staged.deletingPathExtension().lastPathComponent)))
+            try? FileManager.default.removeItem(at: copy)
         } catch {
             log.error("could not stage \(name, privacy: .public): \(String(describing: error), privacy: .public)")
         }

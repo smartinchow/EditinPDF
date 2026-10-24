@@ -115,6 +115,14 @@ final class DocumentHost {
         }
     }
 
+    /// Whether the document is still open and on screen: its document not closed (or closing), its view
+    /// controller in a window. (The screen's own disappearance can come late, after the close.)
+    var isStillShowingTheDocument: Bool {
+        guard let controller, controller.viewIfLoaded?.window != nil else { return false }
+        guard let document = controller.document else { return true }
+        return !document.documentState.contains(.closed)
+    }
+
     /// Takes the back action over and says "Edited" again, should the navigation item have been set anew.
     func reapply() {
         interceptBack()

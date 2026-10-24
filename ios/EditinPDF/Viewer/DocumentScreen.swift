@@ -342,8 +342,8 @@ struct DocumentScreen: View {
         // Still on screen a moment later (no way to close was found): the document is not closing after
         // all, and its changes are kept in the recovery copy again.
         Task {
-            try? await Task.sleep(for: .seconds(2))
-            guard !hasGone else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !hasGone, host.isStillShowingTheDocument else { return }
             model.isClosing = false
             await model.writeRecovery()
         }
