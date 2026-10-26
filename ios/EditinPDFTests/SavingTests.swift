@@ -345,6 +345,57 @@ final class SavingTests: XCTestCase {
         XCTAssertFalse(model.recoveryHeld)
     }
 
+    /// While a copy kept from before is unanswered, this session keeps its own copy beside it (the next
+    /// slot), so a crash loses neither; on the next open both are offered, the newest first, one at a time,
+    /// and after a Restore the other only as a copy.
+    func testASessionKeepsItsOwnCopyBesideAnUnansweredOne() async throws {
+        let store = isolatedRecovery()
+        let original = try fixtureData("sample")
+        let file = try temporaryFile(original)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -600)], ofItemAtPath: file.path)
+        let (first, _) = try makeModel()
+        first.recovery = store
+        first.recoveryKey = "both"
+        await first.settle()
+        let turned = await rotate(first)
+        XCTAssertTrue(turned)
+        await first.writeRecovery()
+        XCTAssertEqual(first.recoveryOwnedKey, "both")
+
+        // Opened again, the offer put away: this session's changes go beside the copy kept.
+        let (second, _) = try makeModel()
+        second.recovery = store
+        second.recoveryKey = "both"
+        let kind = await second.findRecoveredChanges(fileURL: file)
+        XCTAssertEqual(kind, .restorable)
+        await second.settle()
+        let turnedTwice = await rotate(second, by: 180)
+        XCTAssertTrue(turnedTwice)
+        await second.writeRecovery()
+        XCTAssertEqual(second.recoveryOwnedKey, "both-2", "beside the copy kept, not over it")
+        XCTAssertNotNil(store.copy(key: "both", newerThan: nil))
+        XCTAssertNotNil(store.copy(key: "both-2", newerThan: nil))
+
+        // The next open: the newest first.
+        let (third, _) = try makeModel()
+        third.recovery = store
+        third.recoveryKey = "both"
+        let newest = await third.findRecoveredChanges(fileURL: file)
+        XCTAssertEqual(newest, .restorable)
+        XCTAssertEqual(third.offeredRecoveryKey, "both-2")
+        let restored = await third.restoreRecoveredChanges()
+        XCTAssertTrue(restored)
+        XCTAssertEqual(third.document()?.pageInfo(page: 0)?.rotationDegrees, 180, "this session's changes")
+        let older = await third.findRecoveredChanges(fileURL: file)
+        XCTAssertEqual(older, .earlierVersion, "after a Restore the other is only offered as a copy")
+        XCTAssertEqual(third.offeredRecoveryKey, "both")
+        third.discardRecoveredChanges()
+        XCTAssertNil(store.copy(key: "both", newerThan: nil))
+        let none = await third.findRecoveredChanges(fileURL: file)
+        XCTAssertNil(none)
+        XCTAssertFalse(third.recoveryHeld)
+    }
+
     /// A password-protected document's recovery copy keeps its password, and is restored with the password
     /// the document was opened with.
     func testAnEncryptedDocumentsChangesAreRestored() async throws {

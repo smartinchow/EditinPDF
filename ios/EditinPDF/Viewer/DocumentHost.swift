@@ -139,6 +139,10 @@ final class DocumentHost {
     @discardableResult
     func close() -> Bool {
         guard let systemBack else { return false }
+        #if DEBUG
+        // For a UI test: the system's back action doing nothing, to see the screen close another way.
+        if ProcessInfo.processInfo.arguments.contains(FixtureStaging.systemCloseDoesNothingArgument) { return true }
+        #endif
         // `UIControl.sendAction(_:)` runs an action's handler, as a tap on a control holding it would.
         UIButton(type: .system).sendAction(systemBack)
         return true

@@ -27,6 +27,9 @@ enum FixtureStaging {
     /// as it closes, as the system would on its own: a UI test checks that such a write leaves the file as
     /// last saved.
     static let dirtyAfterSaveArgument = "-dirtySceneDocumentAfterSave"
+    /// Makes the system's back action do nothing when the app closes a document (`DocumentHost.close`): a
+    /// UI test checks that the document closes all the same (`DocumentScreen.close`).
+    static let systemCloseDoesNothingArgument = "-systemCloseDoesNothing"
 
     enum StagingError: Error {
         /// The name is empty or has a path in it: only the name of a bundled file is accepted.

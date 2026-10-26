@@ -40,6 +40,12 @@ struct RecoveryStore: Sendable {
         return SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// The keys a document's copies are kept under: `key` itself, then further slots for a session that
+    /// keeps its own copy while one kept from before is still unanswered there.
+    static func slots(of key: String) -> [String] {
+        [key, key + "-2", key + "-3"]
+    }
+
     /// Where the copy for `key` is kept.
     func url(key: String) -> URL {
         directory.appendingPathComponent(key, isDirectory: false).appendingPathExtension("pdf")

@@ -184,19 +184,28 @@ struct DocumentScreen: View {
             }
             .alert(Strings.restoreTitle, isPresented: showsRecoveryOffer(.restorable)) {
                 Button(Strings.restore) {
-                    Task { if await !model.restoreRecoveredChanges() { showsRestoreFailure = true } }
+                    Task {
+                        if await !model.restoreRecoveredChanges() { showsRestoreFailure = true }
+                        await offerNextRecoveredChanges()
+                    }
                 }
                 .accessibilityIdentifier("restoreRecoveredButton")
-                Button(Strings.discardRecovered, role: .destructive) { model.discardRecoveredChanges() }
-                    .accessibilityIdentifier("discardRecoveredButton")
+                Button(Strings.discardRecovered, role: .destructive) {
+                    model.discardRecoveredChanges()
+                    Task { await offerNextRecoveredChanges() }
+                }
+                .accessibilityIdentifier("discardRecoveredButton")
             } message: {
                 Text(Strings.restoreMessage(documentName))
             }
             .alert(Strings.earlierVersionTitle, isPresented: showsRecoveryOffer(.earlierVersion)) {
                 Button(Strings.saveAs) { exportRecoveredCopy() }
                     .accessibilityIdentifier("exportRecoveredButton")
-                Button(Strings.discardRecovered, role: .destructive) { model.discardRecoveredChanges() }
-                    .accessibilityIdentifier("discardRecoveredButton")
+                Button(Strings.discardRecovered, role: .destructive) {
+                    model.discardRecoveredChanges()
+                    Task { await offerNextRecoveredChanges() }
+                }
+                .accessibilityIdentifier("discardRecoveredButton")
             } message: {
                 Text(Strings.earlierVersionMessage(documentName))
             }
@@ -332,9 +341,10 @@ struct DocumentScreen: View {
     }
 
     /// Back to the documents, with nothing written: the scene's document has no change to save of its
-    /// own (ADR 0002, section 3). A recovery copy left (changes undone back to the file) goes, but for one
-    /// offered and put away unanswered. Through the system's back action (`DocumentHost.close`), or, where
-    /// there is none, `dismiss`.
+    /// own (ADR 0002, section 3). This session's recovery copy goes when nothing is unsaved (changes undone
+    /// back to the file); copies kept from before stay. Through the system's back action
+    /// (`DocumentHost.close`), or `dismiss` where there is none or it left the document on screen; the
+    /// reader is never left with a document that will not close and no recovery copy.
     private func close() {
         if !model.needsSave { model.deleteRecovery() }
         model.isClosing = true
@@ -342,6 +352,11 @@ struct DocumentScreen: View {
         // Still on screen a moment later (no way to close was found): the document is not closing after
         // all, and its changes are kept in the recovery copy again.
         Task {
+            try? await Task.sleep(for: .seconds(3))
+            guard !hasGone, host.isStillShowingTheDocument else { return }
+            // The system's back action did nothing: SwiftUI's own way to close the document, and only
+            // when that leaves it on screen too, it stays open, its changes kept in the recovery copy.
+            closeDocument()
             try? await Task.sleep(for: .seconds(3))
             guard !hasGone, host.isStillShowingTheDocument else { return }
             model.isClosing = false
@@ -356,6 +371,14 @@ struct DocumentScreen: View {
     private func offerRecoveredChanges() async {
         guard isOpen, !recoveryLookedFor else { return }
         recoveryLookedFor = true
+        await offerNextRecoveredChanges()
+    }
+
+    /// Offers the next copy kept from before, once one is answered (there can be two: one put away
+    /// unanswered, and the copy of the session after it, kept beside it).
+    private func offerNextRecoveredChanges() async {
+        // The alert just answered goes first, or the next would not come up.
+        try? await Task.sleep(for: .milliseconds(400))
         recoveryOffer = await model.findRecoveredChanges(fileURL: fileURL)
     }
 
@@ -376,7 +399,9 @@ struct DocumentScreen: View {
                 return
             }
             CopyExporter.present(file, over: presenter) { saved in
-                if saved { model.discardRecoveredChanges() }
+                guard saved else { return }
+                model.discardRecoveredChanges()
+                Task { await offerNextRecoveredChanges() }
             }
         }
     }

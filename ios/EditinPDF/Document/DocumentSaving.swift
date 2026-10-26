@@ -133,17 +133,24 @@ extension DocumentModel {
 
     // MARK: Recovery
 
+    /// Whether a copy kept from before is still unanswered.
+    var recoveryHeld: Bool { !recoveryHeldKeys.isEmpty }
+
+    /// Whether this session has a recovery copy of its own.
+    var recoveryOwned: Bool { recoveryOwnedKey != nil }
+
     /// Writes the recovery copy: the document as the engine holds it, unsaved changes and all, off the
     /// main actor. With `addingWhatWaits` (the scene going to the background, the screen going), what
     /// waits is added first (`addEverythingWaiting`, the note being written included), so the copy has it.
-    /// Nothing is written without unsaved changes, without a key, while the document closes
-    /// (`isClosing`), for a document saved the system's way, or over a copy kept from before that the
-    /// reader has not answered yet (`recoveryHeld`). A copy written while Save, Discard or Save As happened
-    /// is removed again: it would be offered over a file that has those changes, or after the reader let
-    /// them go.
+    /// It goes under this session's key (`recoveryOwnedKey`): `recoveryKey`, or, while a copy kept from
+    /// before is unanswered there, the next free slot (`RecoveryStore.slots`), so that a crash loses
+    /// neither. Nothing is written without unsaved changes, without a key, while the document closes
+    /// (`isClosing`), or for a document saved the system's way. A copy written while Save, Discard or Save
+    /// As happened is removed again: it would be offered over a file that has those changes, or after the
+    /// reader let them go.
     func writeRecovery(addingWhatWaits: Bool = false) async {
         if addingWhatWaits { _ = await addEverythingWaiting() } else { await settle() }
-        guard let key = recoveryKey, hasUnsavedChanges, !isClosing, !recoveryHeld, savingMode != .automatic,
+        guard hasUnsavedChanges, !isClosing, savingMode != .automatic, let key = sessionRecoveryKey(),
               let document = document() else { return }
         let epoch = recoveryEpoch
         let store = recovery
@@ -152,7 +159,7 @@ extension DocumentModel {
         }
         switch written {
         case .success:
-            recoveryOwned = true
+            recoveryOwnedKey = key
         case .failure:
             // Nothing of the document, nor of the error (it may quote the file), in the readable log.
             Self.saveLog.error("the recovery copy could not be written")
@@ -160,45 +167,68 @@ extension DocumentModel {
         if recoveryEpoch != epoch { store.delete(key: key) }
     }
 
-    /// Removes this session's recovery copy (`recoveryOwned`), now and any being written
-    /// (`recoveryEpoch`). A copy kept from before and not answered yet stays.
+    /// The key this session's copy goes under: the one it has, or the first slot that holds no copy kept
+    /// from before. Nil without a document key, or when every slot holds one.
+    private func sessionRecoveryKey() -> String? {
+        if let recoveryOwnedKey { return recoveryOwnedKey }
+        guard let recoveryKey else { return nil }
+        return RecoveryStore.slots(of: recoveryKey).first { slot in
+            !recoveryHeldKeys.contains(slot) && recovery.copy(key: slot, newerThan: nil) == nil
+        }
+    }
+
+    /// Removes this session's recovery copy (`recoveryOwnedKey`), now and any being written
+    /// (`recoveryEpoch`). Copies kept from before and not answered yet stay.
     func deleteRecovery() {
         recoveryEpoch += 1
-        guard let key = recoveryKey, recoveryOwned, !recoveryHeld else { return }
+        guard let key = recoveryOwnedKey else { return }
         recovery.delete(key: key)
-        recoveryOwned = false
+        recoveryOwnedKey = nil
     }
 
-    /// Looks for a recovery copy of this document kept from before, as it opens, and says what it is for
-    /// the file at `fileURL` as it is now (`RecoveredCopyKind`); nil when there is none. The copy found is
-    /// held (`recoveryHeld`) until the reader answers. Reads both off the main actor.
+    /// Looks for the next recovery copy of this document kept from before, as it opens (the newest first,
+    /// one at a time: the screen asks again once the reader has answered), and says what it is for the
+    /// file at `fileURL` as it is now (`RecoveredCopyKind`); nil when there is none left. Every copy found is
+    /// held (`recoveryHeldKeys`) until the reader answers it. After a Restore, the others are only offered as
+    /// copies (`.earlierVersion`): restoring one more would replace the first. Reads off the main actor.
     func findRecoveredChanges(fileURL: URL?) async -> RecoveredCopyKind? {
-        guard let key = recoveryKey, let url = recovery.copy(key: key, newerThan: nil) else { return nil }
-        let kind = await EditQueue.offMain { () throws -> RecoveredCopyKind in
-            let copy = try Data(contentsOf: url)
-            let copyDate = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        guard let recoveryKey else { return nil }
+        let store = recovery
+        let candidates = RecoveryStore.slots(of: recoveryKey).filter { $0 != recoveryOwnedKey }
+        let found = await EditQueue.offMain { () throws -> (String, RecoveredCopyKind, [String])? in
+            let copies = candidates.compactMap { key -> (String, URL, Date)? in
+                guard let url = store.copy(key: key, newerThan: nil) else { return nil }
+                let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return (key, url, date)
+            }.sorted { $0.2 > $1.2 }
+            guard let newest = copies.first else { return nil }
+            let copy = try Data(contentsOf: newest.1)
             let file = fileURL.flatMap { try? Data(contentsOf: $0) }
             let fileDate = fileURL.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
-            return RecoveredCopyKind.of(copy: copy, copyDate: copyDate, file: file, fileDate: fileDate)
+            let kind = RecoveredCopyKind.of(copy: copy, copyDate: newest.2, file: file, fileDate: fileDate)
+            return (newest.0, kind, copies.map(\.0))
         }
-        guard case .success(let found) = kind else { return nil }
-        recoveryHeld = true
-        return found
+        guard case .success(let next?) = found else {
+            offeredRecoveryKey = nil
+            return nil
+        }
+        recoveryHeldKeys.formUnion(next.2)
+        offeredRecoveryKey = next.0
+        return restoredThisSession ? .earlierVersion : next.1
     }
 
-    /// Restore: the document becomes its recovery copy, opened off the main actor (with the password the
-    /// document was opened with), every change in it unsaved; the file is not written until Save. The copy
-    /// is this session's from then on. Says whether it was restored: a copy that cannot be read or opened
-    /// leaves the document as it is, and goes (the screen says so).
+    /// Restore: the document becomes the copy offered (`offeredRecoveryKey`), opened off the main actor
+    /// (with the password the document was opened with), every change in it unsaved; the file is not
+    /// written until Save. The copy is this session's from then on. Says whether it was restored: a copy
+    /// that cannot be read or opened leaves the document as it is, and goes (the screen says so).
     func restoreRecoveredChanges() async -> Bool {
-        guard let key = recoveryKey, let url = recovery.copy(key: key, newerThan: nil) else {
-            recoveryHeld = false
-            return false
-        }
+        guard let key = offeredRecoveryKey else { return false }
+        recoveryHeldKeys.remove(key)
+        offeredRecoveryKey = nil
+        guard let url = recovery.copy(key: key, newerThan: nil) else { return false }
         await settle()
         let password = openedWithPassword
         let opened = await EditQueue.offMain { OpenOutcome(bytes: try Data(contentsOf: url), password: password) }
-        recoveryHeld = false
         guard case .success(let outcome) = opened, case .open = outcome else {
             Self.saveLog.error("the recovery copy could not be opened")
             recovery.delete(key: key)
@@ -206,22 +236,24 @@ extension DocumentModel {
         }
         install(outcome)
         didRestore()
-        recoveryOwned = true
+        if let recoveryOwnedKey, recoveryOwnedKey != key { recovery.delete(key: recoveryOwnedKey) }
+        recoveryOwnedKey = key
+        restoredThisSession = true
         return true
     }
 
-    /// The bytes of the recovery copy kept from before, for Save As of one from an earlier version of the
-    /// file; nil when it cannot be read.
+    /// The bytes of the copy offered, for Save As of one from an earlier version of the file; nil when it
+    /// cannot be read.
     func recoveredCopyBytes() async -> Data? {
-        guard let key = recoveryKey, let url = recovery.copy(key: key, newerThan: nil) else { return nil }
+        guard let key = offeredRecoveryKey, let url = recovery.copy(key: key, newerThan: nil) else { return nil }
         return try? await EditQueue.offMain { try Data(contentsOf: url) }.get()
     }
 
-    /// The reader declined the recovery copy kept from before, or saved it as a copy: it goes, and the
-    /// document stays as its file is.
+    /// The reader declined the copy offered, or saved it as a copy: it goes, and the document stays as it is.
     func discardRecoveredChanges() {
-        recoveryHeld = false
-        guard let key = recoveryKey else { return }
+        guard let key = offeredRecoveryKey else { return }
+        recoveryHeldKeys.remove(key)
+        offeredRecoveryKey = nil
         recovery.delete(key: key)
     }
 }

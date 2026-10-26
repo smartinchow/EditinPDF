@@ -401,13 +401,18 @@ final class DocumentModel {
     /// Moves on with every Save, Discard and Save As, so a recovery copy written meanwhile is not left
     /// behind (`writeRecovery`).
     @ObservationIgnored var recoveryEpoch = 0
-    /// Whether the recovery copy at `recoveryKey` is this session's: written by it, or restored into it.
-    /// Only such a copy is deleted (`deleteRecovery`).
-    @ObservationIgnored var recoveryOwned = false
-    /// Whether a copy kept from before is at `recoveryKey`, offered and not answered yet (Restore,
-    /// Discard, or Save As for one from an earlier version of the file): it is neither overwritten nor
+    /// The key of this session's recovery copy (written by it, or restored into it), once there is one:
+    /// `recoveryKey`, or a further slot of it while a copy kept from before sits there unanswered
+    /// (`RecoveryStore.slots`). Only this copy is deleted (`deleteRecovery`).
+    @ObservationIgnored var recoveryOwnedKey: String?
+    /// The keys of copies kept from before, found as the document opened and not answered yet (Restore,
+    /// Discard, or Save As for one from an earlier version of the file): they are neither overwritten nor
     /// deleted until the reader answers.
-    @ObservationIgnored var recoveryHeld = false
+    @ObservationIgnored var recoveryHeldKeys: Set<String> = []
+    /// The copy kept from before the reader is being asked about (`findRecoveredChanges`), and whether one
+    /// was restored this session (the others are then only offered as copies).
+    @ObservationIgnored var offeredRecoveryKey: String?
+    @ObservationIgnored var restoredThisSession = false
     /// How the document is saved: chosen once its screen has found the scene's document controller
     /// (`SavingMode.decide`); nil until then.
     private(set) var savingMode: SavingMode?

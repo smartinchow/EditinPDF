@@ -180,13 +180,18 @@ was opened with) in place of the document, every change unsaved, the file still 
 opened says so); **Discard** deletes it. Otherwise (the file changed on disk since, or was rewritten in full) the
 app says "Unsaved changes from an earlier version of this file were kept" and offers **Save As…** (the copy as it
 is, through the exporter) or **Discard**. Put away with the system's Cancel, either offer keeps the copy
-(`recoveryHeld`): this session neither overwrites nor deletes it, and it is offered again on the next open (after
-a Save it is from an earlier version). A session deletes only a copy it wrote or restored (`recoveryOwned`): on
+(`recoveryHeldKeys`): this session neither overwrites nor deletes it, and writes its own copy beside it, under the
+next slot of the key (`RecoveryStore.slots`: `<key>`, `<key>-2`, `<key>-3`), so a crash loses neither; on the
+next open every copy is offered, the newest first, one at a time, and after a Restore the others only as copies
+(Save As… or Discard). A session deletes only a copy it wrote or restored (`recoveryOwnedKey`): on
 Save, Discard Changes, a saved Save As, or closing with nothing unsaved (`recoveryEpoch` drops one being written
 meanwhile). Copies older than 30 days are swept at launch. Nothing of a document is logged. The copy is found by
 the file's path, so a file renamed or moved while the app was stopped is not matched (its copy is swept after 30
-days). While the document closes (`isClosing`, set only as the close starts) no copy is written; a close that
-leaves the screen up after all clears it again.
+days). While the document closes (`isClosing`, set only as the close starts) no copy is written. If the
+system's back action leaves the document open (3 s later its controller is still in a window and its document not
+closed), SwiftUI's `dismiss` is tried; only if that leaves it open too is `isClosing` cleared and the copy written
+again, so the reader is never stuck in a document that will not close (UI test with a DEBUG hook that makes the
+system's action do nothing).
 
 `EngineHandle` (`ios/EditinPDF/Document/EngineHandle.swift`) is what the file document and the model share: a
 lock-guarded slot for the document, the counter of jobs on their way, whether Save is writing, and whether every

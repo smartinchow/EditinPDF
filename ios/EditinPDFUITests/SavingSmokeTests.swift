@@ -235,6 +235,15 @@ final class SavingSmokeTests: XCTestCase {
         expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
     }
 
+    /// When the system's back action does nothing (a DEBUG hook stands in for a system where it fails),
+    /// the document closes all the same: the reader is never left stuck in it.
+    func testTheDocumentClosesWhenTheSystemsBackActionDoesNothing() {
+        let app = launchAndOpen("sample.pdf", as: "save-close-fallback.pdf", arguments: ["-systemCloseDoesNothing"])
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        tapBack(in: app)
+        XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 15), "the document stayed open")
+    }
+
     // MARK: Helpers
 
     /// "Edited", under the document's name (iOS 26 and later: it may be read as part of the name's menu
