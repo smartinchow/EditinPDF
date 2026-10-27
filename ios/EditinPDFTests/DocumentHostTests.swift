@@ -8,6 +8,7 @@ import XCTest
 @MainActor
 final class DocumentHostTests: XCTestCase {
     /// Counts the runs of the system's back action.
+    @MainActor
     private final class Runs {
         var count = 0
     }
@@ -155,5 +156,112 @@ final class DocumentHostTests: XCTestCase {
         host.detach()
         try await Task.sleep(for: DocumentHost.fallbackDelay + .milliseconds(500))
         XCTAssertNil(host.decided)
+    }
+
+    // MARK: Two screens alive at once
+
+    /// The second screen attaches while the first is still attached (their lives overlap, or the first's
+    /// going comes late): once the item's watchers have run, the second's Back is in place and stays, the
+    /// first has been taken over and no longer sets the item, and the first's going leaves it alone.
+    func testTwoHostsAliveAtOnceDoNotFightOverBack() async throws {
+        let runs = Runs()
+        let controller = makeController(runs: runs)
+        let kept = DocumentHost.keptSystemBacks
+        let first = DocumentHost()
+        var firstAsked = 0
+        first.goBack = { firstAsked += 1 }
+        first.attach(from: controller)
+        first.decide()
+        first.showEdited(true)
+        let second = DocumentHost()
+        var secondAsked = 0
+        second.goBack = { secondAsked += 1 }
+        second.attach(from: controller)
+        second.decide()
+        second.showEdited(false)
+        // The watchers run on later turns of the main actor.
+        let sets = Runs()
+        let counting = controller.navigationItem.observe(\.backAction) { _, _ in
+            MainActor.assumeIsolated { sets.count += 1 }
+        }
+        defer { counting.invalidate() }
+        let installed = controller.navigationItem.backAction?.identifier
+        for _ in 0..<10 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        XCTAssertEqual(sets.count, 0, "the hosts set Back again and again")
+        XCTAssertEqual(controller.navigationItem.backAction?.identifier, installed)
+        XCTAssertTrue(second.interceptsBack, "the second screen's Back was taken away")
+        XCTAssertFalse(first.interceptsBack)
+        XCTAssertEqual(second.decided, .explicit)
+        if #available(iOS 26, *) {
+            XCTAssertNil(controller.navigationItem.subtitle, "the first screen put its \"Edited\" back")
+        }
+        first.detach()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(second.interceptsBack, "the first screen's going took the second's Back away")
+        try tapBack(controller)
+        XCTAssertEqual(secondAsked, 1)
+        XCTAssertEqual(firstAsked, 0)
+        XCTAssertTrue(second.close())
+        XCTAssertEqual(runs.count, 1, "the second screen did not close with the system's action")
+        second.detach()
+        XCTAssertEqual(DocumentHost.keptSystemBacks, kept, "a system's back action is kept after its screens went")
+    }
+
+    /// A host taken over closes nothing (the controller shows the other screen's document).
+    func testAHostTakenOverClosesNothing() async throws {
+        let runs = Runs()
+        let controller = makeController(runs: runs)
+        let first = DocumentHost()
+        first.attach(from: controller)
+        let second = DocumentHost()
+        second.attach(from: controller)
+        first.reapply()
+        XCTAssertTrue(first.superseded)
+        XCTAssertFalse(first.close())
+        XCTAssertEqual(runs.count, 0)
+        first.detach()
+        second.detach()
+    }
+
+    /// Each screen's system action is kept only while its action is on an item: many documents opened and
+    /// closed in turn keep none.
+    func testSystemActionsAreNotKeptAfterTheScreensGo() {
+        let controller = makeController(runs: Runs())
+        let kept = DocumentHost.keptSystemBacks
+        for _ in 0..<20 {
+            let host = DocumentHost()
+            host.attach(from: controller)
+            XCTAssertEqual(DocumentHost.keptSystemBacks, kept + 1)
+            host.detach()
+        }
+        // Each taking the last one's over, the last one never gone.
+        for _ in 0..<20 {
+            DocumentHost().attach(from: controller)
+        }
+        XCTAssertEqual(DocumentHost.keptSystemBacks, kept + 1)
+    }
+
+    /// Gone undecided and come back, the screen waits its full moment again before falling back: the first
+    /// wait was cancelled as it went.
+    func testFallingBackWaitsAgainAfterTheScreenCameBack() async throws {
+        let host = DocumentHost()
+        host.attach(from: UIViewController())
+        host.decide()
+        try await Task.sleep(for: .milliseconds(1500))
+        host.detach()
+        host.resume()
+        host.attach(from: UIViewController())
+        host.decide()
+        try await Task.sleep(for: .milliseconds(1000))
+        XCTAssertNil(host.decided, "fell back on the first appearance's wait")
+        var waited = Duration.zero
+        while host.decided == nil, waited < DocumentHost.fallbackDelay + .seconds(2) {
+            try await Task.sleep(for: .milliseconds(100))
+            waited += .milliseconds(100)
+        }
+        XCTAssertEqual(host.decided, .automatic)
     }
 }

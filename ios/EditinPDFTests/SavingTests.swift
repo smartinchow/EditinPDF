@@ -475,6 +475,59 @@ final class SavingTests: XCTestCase {
         _ = await withCheckedContinuation { done in host.close { done.resume(returning: $0) } }
     }
 
+    /// A change made before the decision (on the model's own undo manager), then the system's way: the
+    /// scene's document is told of it, so it saves it as it closes; the change is not lost.
+    func testAChangeMadeBeforeFallingBackIsSavedTheSystemsWay() async throws {
+        let original = try fixtureData("sample")
+        let url = try temporaryFile(original)
+        let file = PDFFileDocument(bytes: original)
+        let model = file.model
+        model.recovery = isolatedRecovery()
+        let host = DocumentStandIn(fileURL: url, file: file)
+        let opened = await withCheckedContinuation { done in host.open { done.resume(returning: $0) } }
+        XCTAssertTrue(opened)
+        await model.settle()
+        let turned = await rotate(model)
+        XCTAssertTrue(turned)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(model.savingMode)
+        XCTAssertFalse(host.hasUnsavedChanges, "the scene's document heard of a change on the model's undo manager")
+        model.adopt(.automatic, sceneUndoManager: try XCTUnwrap(host.undoManager), sceneDocument: host)
+        XCTAssertTrue(host.hasUnsavedChanges, "the scene's document was not told of the change made before")
+        let autosaved = await withCheckedContinuation { done in host.autosave { done.resume(returning: $0) } }
+        XCTAssertTrue(autosaved)
+        XCTAssertEqual(try PdfDocument.open(bytes: try Data(contentsOf: url), password: nil).pageInfo(page: 0)?.rotationDegrees, 90,
+                       "the change made before the decision was lost")
+        _ = await withCheckedContinuation { done in host.close { done.resume(returning: $0) } }
+    }
+
+    /// Decided `.explicit`, or with nothing unsaved, the scene's document is told of nothing.
+    func testNothingIsToldWithoutAChangeOrWhenSavedBySave() async throws {
+        let original = try fixtureData("sample")
+        let url = try temporaryFile(original)
+        let file = PDFFileDocument(bytes: original)
+        file.model.recovery = isolatedRecovery()
+        let host = DocumentStandIn(fileURL: url, file: file)
+        let opened = await withCheckedContinuation { done in host.open { done.resume(returning: $0) } }
+        XCTAssertTrue(opened)
+        await file.model.settle()
+        file.model.adopt(.automatic, sceneUndoManager: host.undoManager, sceneDocument: host)
+        XCTAssertFalse(host.hasUnsavedChanges)
+        _ = await withCheckedContinuation { done in host.close { done.resume(returning: $0) } }
+
+        let other = PDFFileDocument(bytes: original)
+        other.model.recovery = isolatedRecovery()
+        let otherHost = DocumentStandIn(fileURL: try temporaryFile(original), file: other)
+        let otherOpened = await withCheckedContinuation { done in otherHost.open { done.resume(returning: $0) } }
+        XCTAssertTrue(otherOpened)
+        await other.model.settle()
+        let turned = await rotate(other.model)
+        XCTAssertTrue(turned)
+        other.model.adopt(.explicit, sceneUndoManager: otherHost.undoManager, sceneDocument: otherHost)
+        XCTAssertFalse(otherHost.hasUnsavedChanges, "an explicitly saved document was made to save on its own")
+        _ = await withCheckedContinuation { done in otherHost.close { done.resume(returning: $0) } }
+    }
+
     // MARK: Helpers
 
     /// Turns page 0 by `degrees`, as one change; says whether it was made.

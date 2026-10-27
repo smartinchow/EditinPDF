@@ -453,7 +453,11 @@ final class DocumentModel {
 
     /// Takes `mode` (once): `.automatic` registers changes with the scene's undo manager from now on, so the
     /// system saves them as it always did, and every write writes them (`EngineHandle.writesAutomatically`).
-    func adopt(_ mode: SavingMode, sceneUndoManager: UndoManager?) {
+    /// Changes made before (the decision can come a moment after the document opened,
+    /// `DocumentHost.fallbackDelay`) were registered with the model's own undo manager, which the scene's
+    /// document never heard of: it is told of them (`sceneDocument`), so that it saves them as it closes.
+    /// Their undo goes with the model's undo manager.
+    func adopt(_ mode: SavingMode, sceneUndoManager: UndoManager?, sceneDocument: UIDocument? = nil) {
         guard savingMode == nil else { return }
         savingMode = mode
         guard mode == .automatic else { return }
@@ -461,6 +465,9 @@ final class DocumentModel {
         if let sceneUndoManager, sceneUndoManager !== undoManager {
             undoManager?.removeAllActions()
             undoManager = sceneUndoManager
+        }
+        if hasUnsavedChanges, let sceneDocument, !sceneDocument.hasUnsavedChanges {
+            sceneDocument.updateChangeCount(.done)
         }
     }
 

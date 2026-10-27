@@ -140,7 +140,8 @@ manager, which is the scene's `@Environment(\.undoManager)`. Three ways were wei
   only iOS 26.5 and 27.0 were available to test). The decision is `.explicit` as soon as all three are found,
   whenever that is after the screen appears (its updates and the item's KVO look again); only when they are still
   missing `DocumentHost.fallbackDelay` (2 s) after it appeared is it `.automatic`, and a DEBUG build logs which
-  was missing (category `host`). Then the model
+  was missing (category `host`); a change made in those 2 s is told to the scene's document
+  (`updateChangeCount(.done)` in `DocumentModel.adopt`), so it is saved, though its undo is lost. Then the model
   registers with the scene's undo manager (`DocumentModel.adopt`), every write writes the changes
   (`EngineHandle.writesAutomatically`), Back is the system's and 05aaefc's `countChangeNow` tells the document of
   what Back hands over; no "Edited", no Save item, no recovery copy. A reader is never left unable to save.
@@ -159,9 +160,12 @@ whenever the toolbar changes (`DocumentHostAnchor.toolbarState`) and whenever th
 The scene shows every document it opens in the same `UIDocumentViewController`, its navigation item as the last
 screen left it (0.3.0 build 8: a second document opened without leaving the app found the first screen's back
 action there, took nothing over, and was saved the system's way, with no Save, no "Edited" and no question). So
-the system's action is kept with each action of ours (`DocumentHost.systemBacks`) for the next screen to find under
-it, and a screen gives the item back as it found it as it goes (`DocumentHost.detach`, from `onDisappear`: the
-system's back action, no "Edited", its KVO watches ended), leaving alone whatever a newer screen has put there.
+each host's action has an identifier of its own and the system's action is kept by it (`DocumentHost.systemBacks`,
+one entry per screen whose action is on an item) for the next screen to find under it, and a screen gives the item
+back as it found it as it goes (`DocumentHost.detach`, from `onDisappear`: the system's back action, no "Edited",
+its KVO watches ended), leaving alone whatever a newer screen has put there. Should two screens be alive at once (the
+next attaching before the last one's `onDisappear`), the one whose action the other's has replaced is taken over
+(`superseded`): it stops watching the item and never sets Back or "Edited" again, so they never set it in turn.
 Where no such action is found, the document is saved the system's way (above). For an explicitly saved document
 05aaefc's `countChangeNow` is not needed (there is no close-time autosave, and Back adds what waits before it
 asks); it is kept for the automatic case.

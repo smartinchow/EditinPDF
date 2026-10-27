@@ -259,7 +259,7 @@ struct DocumentScreen: View {
         host.goBack = { goBack() }
         let undoManager = sceneUndoManager
         host.onDecided = { mode in
-            model.adopt(mode, sceneUndoManager: undoManager)
+            model.adopt(mode, sceneUndoManager: undoManager, sceneDocument: host.controller?.document)
             readUndoState(nil)
         }
     }

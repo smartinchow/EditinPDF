@@ -16,6 +16,21 @@ final class SavingSmokeTests: XCTestCase {
         expectClosed(app)
     }
 
+    /// Organize Pages opened and put away with no change: nothing to save, and Back closes at once.
+    func testOrganizeWithNoChangeThenBackClosesAtOnce() {
+        let app = launchAndOpen("sample.pdf", as: "save-organize-none.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("organizeButton", titled: "Organize Pages", in: app), "no Organize button")
+        let done = app.buttons["organizeDone"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "the Organize grid did not come up")
+        done.tap()
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 5)
+        XCTAssertFalse(editedIndicator(in: app).exists, "an unchanged document says it was edited")
+        tapBack(in: app)
+        XCTAssertFalse(saveQuestion(in: app).waitForExistence(timeout: 2), "Back asked about an unchanged document")
+        expectClosed(app)
+    }
+
     /// A change shows "Edited"; Back asks, with Save, Save As…, Discard Changes and Cancel; Cancel stays in
     /// the document, changed.
     func testBackWithChangesAsksAndCancelStays() {
