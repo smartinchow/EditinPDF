@@ -129,6 +129,9 @@ struct DocumentScreen: View {
             // action, where it could not be taken over) are kept in the recovery copy.
             .onDisappear {
                 hasGone = true
+                // The scene shows the next document in the same view controller: its back action and
+                // the line under its name are given back as they were found.
+                host.detach()
                 model.commitPendingInk(closing: true)
                 FrontDocument.shared.leave(model)
                 if model.needsSave, !model.isClosing {
@@ -248,6 +251,7 @@ struct DocumentScreen: View {
     /// As the screen appears: shows what can be undone and redone, names the recovery copy after the
     /// file, and wires ⌘S and the back button to this screen.
     private func appear() {
+        host.resume()
         readUndoState(nil)
         model.recoveryKey = fileURL.map(RecoveryStore.key(for:))
         model.saveRequested = { save() }

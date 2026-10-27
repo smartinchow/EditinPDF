@@ -135,9 +135,12 @@ manager, which is the scene's `@Environment(\.undoManager)`. Three ways were wei
   menu's (⌘Z, ⇧⌘Z, `UndoRedoCommands`) already went through the model; the screen now reads the model's undo
   manager for their state. Lost: the system's own undo gestures (shake, three-finger swipe), which act on the
   responder chain's undo manager; they never went through the model's rule for what waits anyway.
-- Where that cannot work, saving is the system's, as before (`SavingMode.automatic`, decided once by
-  `DocumentHost.decide` as the screen first appears): when no `UIDocumentViewController`, document or back action
-  is found (a system that shows documents otherwise; only iOS 26.5 and 27.0 were available to test), the model
+- Where that cannot work, saving is the system's, as before (`SavingMode.automatic`, `DocumentHost.decide`):
+  when no `UIDocumentViewController`, document or back action is found (a system that shows documents otherwise;
+  only iOS 26.5 and 27.0 were available to test). The decision is `.explicit` as soon as all three are found,
+  whenever that is after the screen appears (its updates and the item's KVO look again); only when they are still
+  missing `DocumentHost.fallbackDelay` (2 s) after it appeared is it `.automatic`, and a DEBUG build logs which
+  was missing (category `host`). Then the model
   registers with the scene's undo manager (`DocumentModel.adopt`), every write writes the changes
   (`EngineHandle.writesAutomatically`), Back is the system's and 05aaefc's `countChangeNow` tells the document of
   what Back hands over; no "Edited", no Save item, no recovery copy. A reader is never left unable to save.
@@ -153,6 +156,12 @@ in its place (taken over again whenever SwiftUI sets a new one); once the reader
 run with `UIControl.sendAction(_:)` and closes the document the system's way. The document's controller is the
 only one in its navigation stack, so no edge swipe pops it past the question. The back action is looked at again
 whenever the toolbar changes (`DocumentHostAnchor.toolbarState`) and whenever the item's back action is set (KVO).
+The scene shows every document it opens in the same `UIDocumentViewController`, its navigation item as the last
+screen left it (0.3.0 build 8: a second document opened without leaving the app found the first screen's back
+action there, took nothing over, and was saved the system's way, with no Save, no "Edited" and no question). So
+the system's action is kept with each action of ours (`DocumentHost.systemBacks`) for the next screen to find under
+it, and a screen gives the item back as it found it as it goes (`DocumentHost.detach`, from `onDisappear`: the
+system's back action, no "Edited", its KVO watches ended), leaving alone whatever a newer screen has put there.
 Where no such action is found, the document is saved the system's way (above). For an explicitly saved document
 05aaefc's `countChangeNow` is not needed (there is no close-time autosave, and Back adds what waits before it
 asks); it is kept for the automatic case.

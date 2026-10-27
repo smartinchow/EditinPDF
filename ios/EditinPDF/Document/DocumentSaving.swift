@@ -33,7 +33,7 @@ enum SaveFailure: Error, Equatable {
 /// scene owns the document.
 @MainActor
 final class SceneDocumentWriter: DocumentFileWriter {
-    private weak var document: UIDocument?
+    private(set) weak var document: UIDocument?
 
     init(document: UIDocument) {
         self.document = document

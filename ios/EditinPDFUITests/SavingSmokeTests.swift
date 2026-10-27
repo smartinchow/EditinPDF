@@ -244,7 +244,111 @@ final class SavingSmokeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["pageIndicator"].waitForNonExistence(timeout: 15), "the document stayed open")
     }
 
+    // MARK: Opening again without leaving the app
+    //
+    // The documents are named to come after `form-kinds.pdf` in the browser: listed before it, they pushed it
+    // out of reach of the browser on the device's side (`testTheKeyboardDoesNotCoverTheFieldBeingFilled`).
+
+    /// Saved from the question, then opened again in the same run of the app, the document is still saved
+    /// by Save: a change shows "Edited", Save is in the More menu, and Back asks. And a third time.
+    func testOpenedAgainAfterSaveStillAsks() {
+        let app = launchAndOpen("sample.pdf", as: "reopen-save.pdf")
+        changeExpectingSave(in: app, then: "Save", session: 1)
+        expectClosed(app)
+        openFromBrowser("reopen-save.pdf", in: app)
+        changeExpectingSave(in: app, then: "Discard Changes", session: 2)
+        expectClosed(app)
+        openFromBrowser("reopen-save.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toReadAPageOf: 2, within: 10)
+        changeExpectingSave(in: app, then: "Save", session: 3)
+        expectClosed(app)
+    }
+
+    /// Discarded, then opened again in the same run of the app: still saved by Save.
+    func testOpenedAgainAfterDiscardStillAsks() {
+        let app = launchAndOpen("sample.pdf", as: "reopen-discard.pdf")
+        changeExpectingSave(in: app, then: "Discard Changes", session: 1)
+        expectClosed(app)
+        openFromBrowser("reopen-discard.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toReadAPageOf: 3, within: 10)
+        changeExpectingSave(in: app, then: "Discard Changes", session: 2)
+        expectClosed(app)
+    }
+
+    /// Saved as a copy from the question, then opened again in the same run of the app: still saved by Save.
+    func testOpenedAgainAfterSaveAsStillAsks() {
+        let app = launchAndOpen("sample.pdf", as: "reopen-save-as.pdf")
+        changeExpectingSave(in: app, then: "Save As…", session: 1)
+        XCTAssertTrue(waitForExporter(in: app), "no exporter")
+        confirmExporter(in: app)
+        expectClosed(app)
+        openFromBrowser("reopen-save-as.pdf", in: app)
+        expect(app.staticTexts["pageIndicator"], toReadAPageOf: 3, within: 10)
+        changeExpectingSave(in: app, then: "Discard Changes", session: 2)
+        expectClosed(app)
+    }
+
+    /// Saved, then another document opened in the same run of the app: that one is saved by Save too.
+    func testAnotherDocumentOpenedAfterSaveStillAsks() {
+        // The other document, staged by a launch of its own (each launch stages one).
+        let staging = XCUIApplication()
+        staging.launchArguments = ["-openFixture", "sample.pdf", "-fixtureName", "reopen-other-b.pdf", "-ApplePersistenceIgnoreState", "YES"]
+        staging.launch()
+        staging.terminate()
+        let app = launchAndOpen("sample.pdf", as: "reopen-other-a.pdf")
+        changeExpectingSave(in: app, then: "Save", session: 1)
+        expectClosed(app)
+        openFromBrowser("reopen-other-b.pdf", in: app)
+        changeExpectingSave(in: app, then: "Discard Changes", session: 2)
+        expectClosed(app)
+    }
+
+    /// Closed without a change, then opened again in the same run of the app: a change is saved by Save.
+    func testOpenedAgainAfterNoChangeStillAsks() {
+        let app = launchAndOpen("sample.pdf", as: "reopen-none.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        tapBack(in: app)
+        expectClosed(app)
+        openFromBrowser("reopen-none.pdf", in: app)
+        changeExpectingSave(in: app, then: "Discard Changes", session: 2)
+        expectClosed(app)
+    }
+
     // MARK: Helpers
+
+    /// Deletes the document's last page, then checks that it is saved by Save: "Edited" shows, Save is
+    /// offered (in the bar or its More menu), and Back asks; then answers `choice`.
+    private func changeExpectingSave(in app: XCUIApplication, then choice: String, session: Int,
+                                     file: StaticString = #filePath, line: UInt = #line) {
+        let indicator = app.staticTexts["pageIndicator"]
+        XCTAssertTrue(indicator.waitForExistence(timeout: 10), "session \(session): the document did not open", file: file, line: line)
+        expect(indicator, toReadAPageOf: pageCount(of: indicator), within: 10, file: file, line: line)
+        deleteTheLastPage(in: app, leaving: pageCount(of: indicator) - 1, file: file, line: line)
+        XCTAssertTrue(editedIndicator(in: app).waitForExistence(timeout: 5), "session \(session): no \"Edited\"", file: file, line: line)
+        XCTAssertTrue(saveIsOffered(in: app), "session \(session): no Save", file: file, line: line)
+        attach(app, "session-\(session)-edited")
+        goBack(in: app, choosing: choice, file: file, line: line)
+    }
+
+    /// How many pages the page indicator ("N / count") says the document has; 0 when it says none.
+    private func pageCount(of indicator: XCUIElement) -> Int {
+        Int(indicator.label.components(separatedBy: " / ").last ?? "") ?? 0
+    }
+
+    /// Whether Save is offered: in the toolbar, or in its More menu (which is put away again).
+    private func saveIsOffered(in app: XCUIApplication) -> Bool {
+        if app.buttons["saveButton"].waitForExistence(timeout: 2) { return true }
+        let more = app.buttons["OverflowBarButtonItem"]
+        guard more.waitForExistence(timeout: 3) else { return false }
+        more.tap()
+        let item = app.buttons.matching(NSPredicate(format: "label == 'Save'")).firstMatch
+        let found = item.waitForExistence(timeout: 3)
+        // The menu goes with a tap outside it, which goes no further.
+        let organize = app.buttons.matching(NSPredicate(format: "label == 'Organize Pages'")).firstMatch
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.7)).tap()
+        _ = organize.waitForNonExistence(timeout: 3)
+        return found
+    }
 
     /// "Edited", under the document's name (iOS 26 and later: it may be read as part of the name's menu
     /// button) or beside the page indicator (before).
