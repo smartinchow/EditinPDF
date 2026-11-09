@@ -2,7 +2,7 @@
   --bg: #ffffff;
   --text: #1d1d1f;
   --muted: #5f6368;
-  --accent: #c0392b;
+  --accent: #2f6ae6;
   --rule: #e3e3e6;
   color-scheme: light dark;
 }
@@ -11,7 +11,7 @@
     --bg: #111113;
     --text: #f2f2f4;
     --muted: #a1a1a8;
-    --accent: #ff6b5b;
+    --accent: #7aa2ff;
     --rule: #2c2c30;
   }
 }
@@ -34,3 +34,7 @@ a { color: var(--accent); }
 ul { padding-left: 22px; }
 li { margin: 4px 0; }
 footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 14px; }
+nav { align-items: center; }
+nav .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text); margin-right: auto; }
+nav .brand img { border-radius: 6px; }
+.hero-logo { display: block; margin: 0 0 20px; border-radius: 25px; box-shadow: 0 6px 24px rgba(47, 106, 230, 0.25); }
