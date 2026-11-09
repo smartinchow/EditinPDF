@@ -2,9 +2,9 @@
 
 A free, native iOS app for reading, organizing and annotating PDFs — fully offline, no account, no telemetry.
 
-**Status: pre-release, in TestFlight (0.3.1).** The viewer, page organizing, mark-up, form filling and signing
-work, and the Licenses screen (More menu) lists the open-source work inside the app. The App Store release (M4) is
-still to come. Nothing is on the App Store yet.
+**Status: 1.0, submitted to the App Store.** The viewer, page organizing, mark-up, form filling and signing
+work, and the Licenses screen (More menu) lists the open-source work inside the app. Website, privacy policy and
+support: [smartinchow.github.io/EditinPDF](https://smartinchow.github.io/EditinPDF/).
 
 [![CI](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml/badge.svg)](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml)
 
@@ -82,7 +82,7 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
   version, the system and the device model, and nothing of your documents. Your own mail app sends it (where none is
   set up, the app shows the address to copy); EditinPDF itself sends nothing.
 
-Still to come: the App Store release (M4). The privacy manifest ships already: no tracking and no data collected.
+The privacy manifest declares no tracking and no data collected; the App Store listing says "Data Not Collected".
 The More menu's Licenses item shows `docs/THIRD-PARTY-NOTICES.md`, which is bundled into the app.
 
 ## Known issues
