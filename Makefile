@@ -68,12 +68,20 @@ update-upstream: ## Move the engine submodule to release TAG=vX.Y.Z and re-run t
 	cd $(CORE) && cargo test
 	@echo "Engine now at $(TAG). Commit the submodule pointer: git add upstream/pdfcraft && git commit"
 
-# Not implemented yet: the Licenses screen and docs/THIRD-PARTY-NOTICES.md arrive with milestone M4, and the
-# generator (cargo about or cargo deny list, see the design spec, section 7) with them. Fails rather than
-# pretending to have written the file.
-notices: ## (milestone M4, not implemented yet) Regenerate docs/THIRD-PARTY-NOTICES.md
-	@echo "make notices: not implemented until milestone M4; docs/THIRD-PARTY-NOTICES.md is a stub until then." >&2
-	@exit 1
+# Needs cargo-about (installed on first use) and python3. `cargo about` reads core/Cargo.lock and lists the
+# crates linked into the iOS static library (normal dependencies, the two iOS targets); the script adds the
+# engine's notices, the fonts and data it compiles in, and EditinPDF's own license, and writes Markdown. The
+# result is deterministic: a second run changes nothing. The file is bundled into the app (ios/project.yml) and
+# shown by its Licenses screen; commit it whenever Cargo.lock or the engine changes. docs/ is only written
+# when both steps succeeded.
+NOTICES_JSON := $(CORE)/target/notices-crates.json
+notices: ## Regenerate docs/THIRD-PARTY-NOTICES.md (the Licenses screen's text) from Cargo.lock and the engine's license files
+	@command -v cargo-about >/dev/null 2>&1 || cargo install cargo-about --locked --features cli
+	mkdir -p $(CORE)/target
+	cd $(CORE) && cargo about generate --locked -c ../scripts/notices/about.toml --manifest-path editinpdf-core/Cargo.toml --format json > target/notices-crates.json
+	python3 -I scripts/generate-notices.py $(NOTICES_JSON) > $(CORE)/target/THIRD-PARTY-NOTICES.md
+	mv $(CORE)/target/THIRD-PARTY-NOTICES.md docs/THIRD-PARTY-NOTICES.md
+	@echo "wrote docs/THIRD-PARTY-NOTICES.md"
 
 clean:
 	cd $(CORE) && cargo clean

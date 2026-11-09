@@ -346,6 +346,18 @@ enum Strings {
         String(localized: "Device: \(model)", comment: "Line of the feedback email: the device's model identifier, e.g. iPhone17,1")
     }
 
+    // MARK: Licenses
+
+    /// The More menu's item, and the title of its screen: the licenses of the work inside the app.
+    static var licenses: String {
+        String(localized: "Licenses", comment: "More menu item and screen title: the licenses and credits of the open-source work inside the app")
+    }
+
+    /// What the Licenses screen says when the app does not carry the list.
+    static var licensesUnavailable: String {
+        String(localized: "The list of licenses could not be opened.", comment: "Shown on the Licenses screen when the bundled list of licenses is missing or cannot be read")
+    }
+
     /// The title of the alert shown when no mail app could write the feedback email.
     static var feedbackNoMailTitle: String {
         String(localized: "Email Your Feedback", comment: "Title of the alert shown when the device has no mail app set up to write the feedback email")

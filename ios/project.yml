@@ -27,6 +27,9 @@ targets:
       # app that carries them, not the UI-test bundle. Check a Release build's .app for *.pdf after
       # touching this.
       - { path: EditinPDFUITests/Fixtures, buildPhase: resources }
+      # The Licenses screen's text, made by `make notices`. It is the one copy: the screen reads it from
+      # the app bundle (Support/Notices.swift) and the tests read the same file there.
+      - { path: ../docs/THIRD-PARTY-NOTICES.md, buildPhase: resources }
     dependencies: [{ package: EditinPDFCore }, { sdk: PencilKit.framework }, { sdk: MessageUI.framework }]
     info:
       path: EditinPDF/Info.plist

@@ -89,6 +89,8 @@ struct DocumentScreen: View {
     @State private var copyFailure: CopyFailure?
     /// Set by Send Feedback; the feedback sender acts on it and clears it (`feedbackSender`).
     @State private var feedbackRequested = false
+    /// Whether the Licenses screen is up (the More menu's Licenses).
+    @State private var showsLicenses = false
     /// The view controller the scene shows the document in: its back button and its document
     /// (`DocumentHost`).
     @State private var host = DocumentHost()
@@ -564,6 +566,7 @@ struct DocumentScreen: View {
                 // Send Feedback: Mail's composer, prefilled with the app's version and the device, and
                 // nothing of the document; or a mailto: link; or the address to copy.
                 .feedbackSender(isRequested: $feedbackRequested)
+                .sheet(isPresented: $showsLicenses) { LicensesView() }
                 .sheet(isPresented: $showsSearch) {
                     if let search = model.search {
                         SearchSheet(search: search, scrollTarget: $scrollTarget, revealRect: $revealRect)
@@ -748,7 +751,7 @@ struct DocumentScreen: View {
     /// iPhone simulator). iOS can also move trailing items into its More menu, and not leading ones.
     /// On a compact width the bar is short of room: Comments, Thumbnails and Organize Pages are in the
     /// bar's own menu of further actions there, listed with their titles. On a regular one all are shown.
-    /// Save, Save As and Send Feedback are in that menu at every width.
+    /// Save, Save As, Send Feedback and Licenses are in that menu at every width.
     @ToolbarContentBuilder private var toolbarItems: some ToolbarContent {
         if horizontalSizeClass == .compact {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -765,6 +768,7 @@ struct DocumentScreen: View {
                 organizeButton
                 saveCopyButton
                 feedbackButton
+                licensesButton
             }
         } else {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -782,6 +786,7 @@ struct DocumentScreen: View {
                 if model.savingMode != .automatic { saveButton }
                 saveCopyButton
                 feedbackButton
+                licensesButton
             }
         }
     }
@@ -921,6 +926,16 @@ struct DocumentScreen: View {
         }
         .disabled(model.pageCount == 0 || makingCopy)
         .accessibilityIdentifier("saveCopyButton")
+    }
+
+    /// Opens the Licenses screen: the licenses and credits of the work inside the app.
+    private var licensesButton: some View {
+        Button {
+            showsLicenses = true
+        } label: {
+            Label(Strings.licenses, systemImage: "doc.text")
+        }
+        .accessibilityIdentifier("licensesButton")
     }
 
     /// Writes an email of feedback to the app's makers (`feedbackSender`).

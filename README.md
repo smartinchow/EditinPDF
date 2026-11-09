@@ -3,7 +3,8 @@
 A free, native iOS app for reading, organizing and annotating PDFs — fully offline, no account, no telemetry.
 
 **Status: pre-release, in TestFlight (0.3.1).** The viewer, page organizing, mark-up, form filling and signing
-work. The Licenses screen and the App Store release (M4) are still to come. Nothing is on the App Store yet.
+work, and the Licenses screen (More menu) lists the open-source work inside the app. The App Store release (M4) is
+still to come. Nothing is on the App Store yet.
 
 [![CI](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml/badge.svg)](https://github.com/smartinchow/EditinPDF/actions/workflows/ci.yml)
 
@@ -81,8 +82,8 @@ On iPhone and iPad (iOS 17 and later; tested on the iOS 26.5 and 27.1 simulators
   version, the system and the device model, and nothing of your documents. Your own mail app sends it (where none is
   set up, the app shows the address to copy); EditinPDF itself sends nothing.
 
-Still to come: the Licenses screen and the App Store release (M4). The privacy manifest ships already: no
-tracking and no data collected.
+Still to come: the App Store release (M4). The privacy manifest ships already: no tracking and no data collected.
+The More menu's Licenses item shows `docs/THIRD-PARTY-NOTICES.md`, which is bundled into the app.
 
 ## Known issues
 
@@ -149,7 +150,7 @@ output, not committed: run `make xcframework` again after changing anything in `
 | `make release-check` | Builds Release for the simulator and fails if the app contains any PDF (the UI tests' sample documents are Debug-only) |
 | `make update-upstream TAG=v0.8.0` | Moves the engine to a newer PdfCraft release and re-runs the bridge tests |
 | `make clean` | Removes the build output |
-| `make notices` | Not implemented until milestone M4: prints a message and exits with an error. `docs/THIRD-PARTY-NOTICES.md` is a stub until then |
+| `make notices` | Rewrites `docs/THIRD-PARTY-NOTICES.md`, the text of the Licenses screen: every Rust crate linked into the iOS app (`cargo about`, normal dependencies, iOS targets; installed on first use), PdfCraft's license files and NOTICE, the fonts and data the engine compiles in, the vendored `num_threads`, and EditinPDF's own license, with each license text once. The output is the same on every run; run it again and commit the file after `Cargo.lock` or the engine changes |
 
 The Xcode targets print only warnings and errors (`-quiet`); `make test XCFLAGS=` prints everything.
 
@@ -223,5 +224,5 @@ iOS.
 ## License
 
 EditinPDF's own code is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-The PdfCraft engine and the fonts and other assets it bundles keep their own licenses. The full list will ship in
-the app's Licenses screen and in `docs/THIRD-PARTY-NOTICES.md` with milestone M4; the file is a stub until then.
+The PdfCraft engine and the fonts and other assets it bundles keep their own licenses. The full list is in
+the app's Licenses screen and in [`docs/THIRD-PARTY-NOTICES.md`](docs/THIRD-PARTY-NOTICES.md) (made by `make notices`).

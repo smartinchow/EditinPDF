@@ -1,0 +1,17 @@
+# Settings for `cargo about`, run by `make notices` (scripts/generate-notices.py turns its JSON into
+# docs/THIRD-PARTY-NOTICES.md). A crate whose license is not in `accepted` makes the run fail, so a new
+# kind of license is looked at by a person before it ships. Where a crate offers a choice, the first
+# accepted license of its expression is the one listed.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+]
+# What is linked into the app: the two iOS targets, normal dependencies only.
+targets = ["aarch64-apple-ios", "aarch64-apple-ios-sim"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true

@@ -150,6 +150,28 @@ final class ViewerSmokeTests: XCTestCase {
         XCTAssertFalse(app.alerts.firstMatch.exists, "a cancelled copy says nothing")
     }
 
+    /// Licenses is in the More menu, next to Send Feedback. It shows the bundled notices: a heading for the
+    /// list, one for the engine (PdfCraft) further down, and Done goes back to the document.
+    func testLicensesShowTheNoticesFromTheMoreMenu() {
+        let app = launchAndOpen("sample.pdf")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 10)
+        XCTAssertTrue(tapToolbarButton("licensesButton", titled: "Licenses", in: app), "no Licenses item")
+        XCTAssertTrue(app.navigationBars["Licenses"].waitForExistence(timeout: 10), "the Licenses screen did not come up")
+        XCTAssertTrue(app.staticTexts["Third-party notices"].waitForExistence(timeout: 10), "no heading for the notices")
+        let engine = app.staticTexts["PdfCraft, the PDF engine"]
+        for _ in 0..<6 where !engine.exists { app.swipeUp() }
+        XCTAssertTrue(engine.exists, "no heading for the PdfCraft engine")
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "licenses"
+        shot.lifetime = .keepAlways
+        add(shot)
+        let done = app.buttons["Done"].firstMatch
+        XCTAssertTrue(done.exists, "no Done")
+        done.tap()
+        XCTAssertTrue(app.navigationBars["Licenses"].waitForNonExistence(timeout: 5), "Done did not close the screen")
+        expect(app.staticTexts["pageIndicator"], toRead: "1 / 3", within: 5)
+    }
+
     /// Send Feedback is in the More menu. The simulator cannot send mail: Mail's composer comes up where
     /// a mail account is set up, else the mailto: link opens a mail app, else (the simulator, which has
     /// no Mail app) an alert gives the address, with a button that copies it.
